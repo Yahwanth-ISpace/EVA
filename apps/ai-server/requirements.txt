@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+whisper
+torch
+pydantic
+python-multipart
+ollama

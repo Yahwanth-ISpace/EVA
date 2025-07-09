@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  fullName  String
+  role      Role     @default(PATIENT)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relation to Patient (if the user is a patient)
+  patient   Patient?
+}
+
+model Patient {
+  id                String   @id @default(cuid())
+  fullName          String
+  dob               String
+  insuranceProvider String
+  memberId          String
+  createdAt         DateTime @default(now())
+
+  // Relation to user
+  userId            String?  @unique
+  user              User?    @relation(fields: [userId], references: [id])
+
+  verifications     Verification[]
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  patientId  String
+  patient    Patient  @relation(fields: [patientId], references: [id])
+  coverage   String
+  deductible String
+  copay      String
+  validity   String
+  createdAt  DateTime @default(now())
+}
+
+enum Role {
+  ADMIN
+  CLINIC
+  AGENT
+  PATIENT
+}
