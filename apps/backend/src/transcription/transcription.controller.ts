@@ -35,6 +35,13 @@ export class TranscriptionController {
     }),
   )
   async transcribe(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      return {
+        error:
+          'No file received. Ensure the field name is "file" and content type is multipart/form-data.',
+      };
+    }
+
     const transcriptResult = await this.transcriptionService.transcribeAudio(
       file.path,
     );

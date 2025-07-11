@@ -38,13 +38,8 @@ export class VerificationController {
       storage: diskStorage({
         destination: './uploads',
         filename: (req, file, cb) => {
-          try {
-            const ext = path.extname(file?.originalname || 'default.mp3');
-            cb(null, `${uuidv4()}${ext}`);
-          } catch (error) {
-            console.error('❌ Multer filename error:', error);
-            cb(error, 'fallback.mp3');
-          }
+          const ext = path.extname(file.originalname);
+          cb(null, `${uuidv4()}${ext}`);
         },
       }),
     }),
@@ -53,28 +48,18 @@ export class VerificationController {
     @Param('patientId') patientId: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    const transcriptResult = await this.transcriptionService.transcribeAudio(
+    const verification = await this.verificationService.verifyFromAudio(
+      patientId,
       file.path,
     );
-
-    if (transcriptResult.error) {
-      return { error: transcriptResult.error };
-    }
-
-    const verification = await this.verificationService.simulateVerification(
-      patientId,
-      transcriptResult.transcript,
-    );
-
     return {
-      transcript: transcriptResult.transcript,
+      saved: true,
       extracted: {
         coverage: verification.coverage,
         deductible: verification.deductible,
         copay: verification.copay,
         validity: verification.validity,
       },
-      saved: true,
     };
   }
 
