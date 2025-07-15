@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { TranscriptionService } from 'src/transcription/transcription.service';
@@ -11,38 +11,62 @@ export class VerificationService {
     private readonly transcriptionService: TranscriptionService,
   ) {}
 
-  async simulateVerification(patientId: string, transcript: string) {
-    const patient = await this.prisma.patient.findUnique({
-      where: { id: patientId },
+  async simulateVerification(payeeId: string, transcript: string) {
+    const payee = await this.prisma.payee.findUnique({
+      where: { id: payeeId },
     });
-    if (!patient) throw new Error('Patient not found');
+    if (!payee) throw new NotFoundException('Payee not found');
 
     const extracted = await this.aiService.extractInsuranceDetails(transcript);
 
     return this.prisma.verification.create({
       data: {
-        patientId,
-        ...extracted,
+        payeeId,
+        coverage: extracted.coverage,
+        deductible: extracted.deductible,
+        copay: extracted.copay,
+        validity: extracted.validity,
+        transcript,
       },
+      include: { payee: true },
     });
   }
 
-  async verifyFromAudio(patientId: string, filePath: string) {
-  const { transcript, error } = await this.transcriptionService.transcribeAudio(filePath);
-  if (error) throw new Error(error);
+  async verifyFromAudio(payeeId: string, filePath: string) {
+    const { transcript, error } =
+      await this.transcriptionService.transcribeAudio(filePath);
+    if (error) throw new Error(error);
 
-  const extracted = await this.aiService.extractInsuranceDetails(transcript);
+    const extracted = await this.aiService.extractInsuranceDetails(transcript);
 
-  return this.prisma.verification.create({
-    data: {
-      patientId,
-      ...extracted,
-    },
-  });
-}
-
+    return this.prisma.verification.create({
+      data: {
+        payeeId,
+        coverage: extracted.coverage,
+        deductible: extracted.deductible,
+        copay: extracted.copay,
+        validity: extracted.validity,
+        transcript,
+      },
+      include: { payee: true },
+    });
+  }
 
   async findAll() {
-    return this.prisma.verification.findMany({ include: { patient: true } });
+    return this.prisma.verification.findMany({
+      include: { payee: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findOne(id: string) {
+    const verification = await this.prisma.verification.findUnique({
+      where: { id },
+      include: { payee: true },
+    });
+
+    if (!verification) throw new NotFoundException('Verification not found');
+
+    return verification;
   }
 }

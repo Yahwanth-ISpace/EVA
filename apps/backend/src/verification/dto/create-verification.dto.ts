@@ -1,6 +1,8 @@
-import { IsString } from 'class-validator';
-
 export class CreateVerificationDto {
-  @IsString()
-  patientId: string;
+  payeeId: string;
+  coverage: string;
+  deductible: string;
+  copay: string;
+  validity: string;
+  transcript: string;
 }

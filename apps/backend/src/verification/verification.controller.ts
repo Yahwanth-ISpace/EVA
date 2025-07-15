@@ -9,7 +9,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { VerificationService } from './verification.service';
-import { JwtAuthGuard } from 'src/auth/jwtAuthGuard';
+import { JwtAuthGuard } from 'src/auth/guards/jwtAuthGuard';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { TranscriptionService } from 'src/transcription/transcription.service';
 import { diskStorage } from 'multer';
@@ -24,15 +24,15 @@ export class VerificationController {
     private readonly transcriptionService: TranscriptionService,
   ) {}
 
-  @Post(':patientId')
-  async verifyPatient(
-    @Param('patientId') id: string,
+  @Post(':payeeId')
+  async verifyPayee(
+    @Param('payeeId') id: string,
     @Body('transcript') transcript: string,
   ) {
     return this.verificationService.simulateVerification(id, transcript);
   }
 
-  @Post('from-audio/:patientId')
+  @Post('from-audio/:payeeId')
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
@@ -45,11 +45,11 @@ export class VerificationController {
     }),
   )
   async verifyFromAudio(
-    @Param('patientId') patientId: string,
+    @Param('payeeId') payeeId: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
     const verification = await this.verificationService.verifyFromAudio(
-      patientId,
+      payeeId,
       file.path,
     );
     return {

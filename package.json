@@ -1,0 +1,13 @@
+{
+  "name": "claimbot",
+  "version": "1.0.0",
+  "scripts": {
+    "start:backend": "cd apps/backend && npm run start:dev",
+    "start:client": "cd apps/client && npm start",
+    "ai-server": "cd ./ai-server && ./venv/Scripts/python.exe -m uvicorn main:app --host 0.0.0.0 --port 5001",
+    "dev": "concurrently \"npm run start:backend\" \"npm run start:client\" \"npm run ai-server\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

@@ -10,7 +10,7 @@ import { diskStorage } from 'multer';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { TranscriptionService } from './transcription.service';
-import { JwtAuthGuard } from '../auth/jwtAuthGuard';
+import { JwtAuthGuard } from '../auth/guards/jwtAuthGuard';
 import { AiService } from '../ai/ai.service';
 import { Express } from 'express';
 

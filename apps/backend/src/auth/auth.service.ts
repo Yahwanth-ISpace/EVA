@@ -1,6 +1,10 @@
 // src/auth/auth.service.ts
 
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
@@ -14,26 +18,34 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (existingUser) {
+      throw new BadRequestException('Email is already registered');
+    }
+
     const hashedPassword = await bcrypt.hash(dto.password, 10);
-    const role = dto.role || 'PATIENT';
+    const role = dto.role || 'PAYEE';
 
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
         password: hashedPassword,
-        fullName: dto.fullName,
         role,
-        patient: role === 'PATIENT' ? {
-          create: {
-            fullName: dto.fullName,
-            dob: dto.dob || '',
-            insuranceProvider: dto.insuranceProvider || '',
-            memberId: dto.memberId || '',
-          }
-        } : undefined
+        payee:
+          role === 'PAYEE'
+            ? {
+                create: {
+                  firstName: dto.firstName,
+                  lastName: dto.lastName
+                },
+              }
+            : undefined,
       },
       include: {
-        patient: true,
+        payee: true,
       },
     });
 
@@ -43,13 +55,16 @@ export class AuthService {
         id: user.id,
         email: user.email,
         role: user.role,
-        patientId: user.patient?.id,
-      }
+        payeeId: user.payee?.id,
+      },
     };
   }
 
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email }, include: { patient: true } });
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+      include: { payee: true },
+    });
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
     const isValid = await bcrypt.compare(dto.password, user.password);
@@ -67,8 +82,8 @@ export class AuthService {
         id: user.id,
         email: user.email,
         role: user.role,
-        patientId: user.patient?.id,
-      }
+        patientId: user.payee?.id,
+      },
     };
   }
 
