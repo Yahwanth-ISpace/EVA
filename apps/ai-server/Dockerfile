@@ -13,8 +13,9 @@ COPY . .
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose FastAPI port
-EXPOSE 5001
+# Expose a dummy port (won’t matter for Railway)
+EXPOSE 8000
 
-# Run the FastAPI app with Uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5001"]
+# Use Railway-provided PORT environment variable
+CMD ["python", "main.py"]
+

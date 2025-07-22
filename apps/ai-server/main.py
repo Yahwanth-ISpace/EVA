@@ -13,8 +13,19 @@ app = FastAPI(
     redoc_url="/redoc",     # ReDoc UI
 )
 
+# ✅ CORS Middleware (for public access from frontend)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Use a specific domain in production for security
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ✅ Load Whisper model
 model = whisper.load_model("tiny")
 
+# ✅ Upload folder setup
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
@@ -40,3 +51,9 @@ async def transcribe(file: UploadFile = File(...)):
     finally:
         if os.path.exists(filepath):
             os.remove(filepath)
+
+# ✅ Dynamic port binding for Railway or any cloud host
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
