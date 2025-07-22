@@ -33,13 +33,18 @@ export class TwilioService {
   // STEP 2: Generate TwiML that Twilio fetches
   generateTwiML(payeeId: string): string {
     return `
-      <Response>
-        <Say voice="alice">Hello. This is Springfield Clinic. We are verifying insurance coverage for your payee.</Say>
-        <Pause length="5"/>
-        <Say>Please provide insurance coverage details now.</Say>
-        <Record maxLength="60" action="${backendBaseUrl}/twilio/call-recording?payeeId=${payeeId}" method="POST" />
-      </Response>
-    `.trim();
+    <Response>
+      <Say voice="alice">Hello. This is Springfield Clinic. We are verifying, insurance coverage, for your payee.</Say>
+      <Pause length="2"/>
+      <Say>Please provide insurance coverage details now.</Say>
+      <Record
+        maxLength="60"
+        action="${backendBaseUrl}/twilio/recording-done?payeeId=${payeeId}"
+        method="POST"
+        playBeep="true"
+      />
+    </Response>
+  `.trim();
   }
 
   // STEP 3: Called when recording is done — downloads and uploads to backend
