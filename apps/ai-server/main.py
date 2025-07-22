@@ -29,7 +29,7 @@ logging.basicConfig(level=logging.INFO)
 # Try loading the model
 try:
     # ✅ Load Whisper model
-    model = whisper.load_model("base")
+    model = whisper.load_model("tiny")
     logging.info("Whisper model loaded successfully")
 except Exception as e:
     logging.exception("Failed to load Whisper model")
@@ -54,7 +54,8 @@ async def transcribe(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, buffer)
 
     try:
-        result = model.transcribe(filepath)
+        # result = model.transcribe(filepath)
+        result = model.transcribe(filepath, task="transcribe")
         return {"text": result["text"]}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
