@@ -39,7 +39,7 @@ export class AuthService {
             ? {
                 create: {
                   firstName: dto.firstName,
-                  lastName: dto.lastName
+                  lastName: dto.lastName,
                 },
               }
             : undefined,
@@ -82,7 +82,7 @@ export class AuthService {
         id: user.id,
         email: user.email,
         role: user.role,
-        patientId: user.payee?.id,
+        payeeId: user.payee?.id,
       },
     };
   }

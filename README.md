@@ -8,8 +8,9 @@ ClaimBot is a monorepo that automates the process of verifying dental insurance 
 claimBot/
 ├── apps/
 │   ├── backend/            # NestJS backend
-│   └── ai-server/          # FastAPI server for Whisper + Ollama
-└── client/                 # React frontend with Tailwind CSS
+│   ├── ai-server/          # FastAPI server for Whisper + Ollama
+│   └── clinet/             # React frontend with Tailwind CSS
+└── Docker/                 # Docker file for Whisper is available
 ```
 
 ---
@@ -35,27 +36,26 @@ npm install
 # OLLAMA_URL="http://localhost:11434"
 
 npx prisma generate
-npx prisma migrate dev --name init
 
 npm run start:dev
 ```
 
 ### 3. AI Server (FastAPI)
 
+`🐳 Run the Whisper-based AI server entirely through Docker:`
+
 ```bash
-cd apps/ai-server
+cd claimBot
 
-# Create a virtual environment
-python -m venv venv
-source venv/bin/activate  # or venv\\Scripts\\activate on Windows
+# This will create a image in local docker to give you whisper services
+docker build -f Docker/Dockerfile -t whisper-ai-server .
+docker run -p 5001:5001 whisper-ai-server
 
-pip install -r requirements.txt
-
-# Make sure Ollama is running:
+# Make sure Ollama is running (if installed run this from terminal/cmd):
 ollama run mistral
 
-# Start FastAPI server
-uvicorn main:app --host 0.0.0.0 --port 5001
+# Find the FastAPI docs with this URL:
+http://localhost:5001/redoc
 ```
 
 ### 4. Frontend (React + Tailwind)

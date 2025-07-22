@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -43,18 +44,6 @@ model Payer {
   Payee          Payee[]
 }
 
-model Appointment {
-  id         String   @id @default(uuid()) @map("_id")
-  payee      Payee    @relation(fields: [payeeId], references: [id])
-  payeeId    String
-  provider   Provider @relation(fields: [providerId], references: [id])
-  providerId String
-  office     Office   @relation(fields: [officeId], references: [id])
-  officeId   String
-  date       DateTime
-  notes      String?
-}
-
 model Provider {
   id           String        @id @default(uuid()) @map("_id")
   firstName    String
@@ -78,6 +67,18 @@ model Office {
   provider     Provider      @relation(fields: [providerId], references: [id])
   providerId   String
   appointments Appointment[]
+}
+
+model Appointment {
+  id         String   @id @default(uuid()) @map("_id")
+  payee      Payee    @relation(fields: [payeeId], references: [id])
+  payeeId    String
+  provider   Provider @relation(fields: [providerId], references: [id])
+  providerId String
+  office     Office   @relation(fields: [officeId], references: [id])
+  officeId   String
+  date       DateTime
+  notes      String?
 }
 
 model Verification {

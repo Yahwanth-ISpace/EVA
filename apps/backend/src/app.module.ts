@@ -12,6 +12,7 @@ import { PayerModule } from './payer/payer.module';
 import { AppointmentModule } from './appointment/appointment.module';
 import { OfficeModule } from './offices/office.module';
 import { ProviderModule } from './providers/provider.module';
+import { TwilioModule } from './twilio/twilio.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ProviderModule } from './providers/provider.module';
     AiModule,
     AuthModule,
     UserModule,
+    TwilioModule,
   ],
 })
 export class AppModule {}

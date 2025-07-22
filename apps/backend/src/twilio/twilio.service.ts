@@ -1,0 +1,96 @@
+import { HttpException, Injectable } from '@nestjs/common';
+import axios from 'axios';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as twilio from 'twilio';
+import { v4 as uuidv4 } from 'uuid';
+import * as https from 'https';
+import * as FormData from 'form-data';
+
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+const backendBaseUrl = process.env.BACKEND_URL;
+
+const client = twilio(accountSid, authToken);
+
+@Injectable()
+export class TwilioService {
+  // STEP 1: Make the actual call
+  async makeCall(to: string, payeeId: string) {
+    if (!fromNumber) {
+      throw new Error('TWILIO_PHONE_NUMBER environment variable is not set.');
+    }
+
+    return client.calls.create({
+      to,
+      from: fromNumber,
+      url: `${backendBaseUrl}/twilio/ivr-script?payeeId=${payeeId}`,
+      record: true,
+    });
+  }
+
+  // STEP 2: Generate TwiML that Twilio fetches
+  generateTwiML(payeeId: string): string {
+    return `
+      <Response>
+        <Say voice="alice">Hello. This is Springfield Clinic. We are verifying insurance coverage for your patient.</Say>
+        <Pause length="5"/>
+        <Say>Please provide insurance coverage details now.</Say>
+        <Record maxLength="60" action="${backendBaseUrl}/twilio/call-recording?payeeId=${payeeId}" method="POST" />
+      </Response>
+    `.trim();
+  }
+
+  // STEP 3: Called when recording is done — downloads and uploads to backend
+  async handleCallRecording(recordingUrl: string, payeeId: string) {
+    try {
+      // Download from Twilio
+      const localFilePath = await this.downloadRecording(recordingUrl);
+
+      // Prepare multipart/form-data
+      const form = new FormData();
+      form.append('file', fs.createReadStream(localFilePath));
+
+      // Send to verification endpoint
+      const uploadResponse = await axios.post(
+        `${backendBaseUrl}/verification/from-audio/${payeeId}`,
+        form,
+        { headers: form.getHeaders() },
+      );
+
+      // Clean up file
+      fs.unlinkSync(localFilePath);
+
+      return {
+        message: 'Recording uploaded successfully to verification service',
+        result: uploadResponse.data,
+      };
+    } catch (err) {
+      console.error('Error uploading recording:', err);
+      throw new HttpException('Failed to handle recording', 500);
+    }
+  }
+
+  // STEP 4: Helper to download audio file from Twilio
+  private async downloadRecording(recordingUrl: string): Promise<string> {
+    const fileName = `${uuidv4()}.mp3`;
+    const filePath = path.join(__dirname, '..', '..', 'uploads', fileName);
+    const writer = fs.createWriteStream(filePath);
+
+    const agent = new https.Agent({ rejectUnauthorized: false });
+
+    const response = await axios({
+      url: `${recordingUrl}.mp3`,
+      method: 'GET',
+      responseType: 'stream',
+      httpsAgent: agent,
+    });
+
+    return new Promise((resolve, reject) => {
+      response.data.pipe(writer);
+      writer.on('finish', () => resolve(filePath));
+      writer.on('error', reject);
+    });
+  }
+}

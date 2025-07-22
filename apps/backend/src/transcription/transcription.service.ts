@@ -3,6 +3,8 @@ import axios from 'axios';
 import * as fs from 'fs';
 import * as FormData from 'form-data';
 
+const ai_server_url = process.env.AI_SERVER_URL;
+
 @Injectable()
 export class TranscriptionService {
   async transcribeAudio(
@@ -12,13 +14,9 @@ export class TranscriptionService {
     form.append('file', fs.createReadStream(filePath));
 
     try {
-      const response = await axios.post(
-        'http://localhost:5001/transcribe',
-        form,
-        {
-          headers: form.getHeaders(),
-        },
-      );
+      const response = await axios.post(`${ai_server_url}/transcribe`, form, {
+        headers: form.getHeaders(),
+      });
       return { transcript: response.data.text };
     } catch (error) {
       console.error('❌ Transcription failed:', error.message);

@@ -5,10 +5,15 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
+import { TwilioService } from 'src/twilio/twilio.service';
 
 @Injectable()
 export class AppointmentService {
-  constructor(private prisma: PrismaService) {}
+  logger: any;
+  constructor(
+    private prisma: PrismaService,
+    private twilioService: TwilioService,
+  ) {}
 
   async create(dto: CreateAppointmentDto) {
     // Defensive check: does the payee exist?
@@ -38,7 +43,7 @@ export class AppointmentService {
       throw new NotFoundException(`Office with ID ${dto.officeId} not found`);
     }
 
-    return this.prisma.appointment.create({
+    const appointment = await this.prisma.appointment.create({
       data: {
         date: new Date(dto.date),
         notes: dto.notes ?? null,
@@ -53,18 +58,40 @@ export class AppointmentService {
         },
       },
       include: {
-        payee: true,
+        payee: {
+          include: {
+            user: true, // Ensure we get user's phone/email
+            payer: true, // Include payer details to verify payee Benfits
+          },
+        },
         provider: true,
         office: true,
       },
     });
+
+    // 🔔 Trigger Twilio call to patient's phone number (assuming it's stored in payee.user.phone)
+    const toPhoneNumber = appointment.payee.payer?.phone;
+    if (toPhoneNumber) {
+      await this.twilioService.makeCall(toPhoneNumber, dto.payeeId);
+    } else {
+      this.logger.warn(
+        `No phone number found for Payer linked to Payee ID ${dto.payeeId}`,
+      );
+    }
+
+    return appointment;
   }
 
-  async findAll(user: { id: string; role: 'ADMIN' | 'PAYEE' }) {
+  async findAll(user: { userId: string; role: 'ADMIN' | 'PAYEE' }) {
     if (user.role === 'ADMIN') {
       return this.prisma.appointment.findMany({
         include: {
-          payee: true,
+          payee: {
+            include: {
+              user: true, // to verify if the requester is the payee
+              payer: true, // Include payer details to verify payee Benfits
+            },
+          },
           provider: true,
           office: true,
         },
@@ -76,11 +103,11 @@ export class AppointmentService {
 
     // PAYEE ROLE
     const payee = await this.prisma.payee.findUnique({
-      where: { userId: user.id },
+      where: { userId: user.userId },
     });
 
     if (!payee) {
-      throw new Error(`Payee record not found for user ID ${user.id}`);
+      throw new Error(`Payee record not found for user ID ${user.userId}`);
     }
 
     return this.prisma.appointment.findMany({
@@ -88,7 +115,12 @@ export class AppointmentService {
         payeeId: payee.id,
       },
       include: {
-        payee: true,
+        payee: {
+          include: {
+            user: true, // to verify if the requester is the payee
+            payer: true, // Include payer details to verify payee Benfits
+          },
+        },
         provider: true,
         office: true,
       },
@@ -105,6 +137,7 @@ export class AppointmentService {
         payee: {
           include: {
             user: true, // to verify if the requester is the payee
+            payer: true, // Include payer details to verify payee Benfits
           },
         },
         provider: true,
