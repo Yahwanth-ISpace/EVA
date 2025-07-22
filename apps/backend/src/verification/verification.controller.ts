@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   Param,
   Post,
+  Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -46,10 +48,15 @@ export class VerificationController {
   )
   async verifyFromAudio(
     @Param('payeeId') payeeId: string,
+    @Query('payeeId') queryPayeeId: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
+    console.log('Received payeeId in route:', payeeId); // ✅ log
+    const finalPayeeId = payeeId || queryPayeeId;
+    if (!finalPayeeId) throw new BadRequestException('payeeId is required');
+
     const verification = await this.verificationService.verifyFromAudio(
-      payeeId,
+      finalPayeeId,
       file.path,
     );
     return {

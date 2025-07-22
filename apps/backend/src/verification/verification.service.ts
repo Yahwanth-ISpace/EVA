@@ -33,6 +33,8 @@ export class VerificationService {
   }
 
   async verifyFromAudio(payeeId: string, filePath: string) {
+    if (!payeeId) throw new Error('payeeId is required');
+
     const { transcript, error } =
       await this.transcriptionService.transcribeAudio(filePath);
     if (error) throw new Error(error);

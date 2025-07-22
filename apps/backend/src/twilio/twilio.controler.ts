@@ -49,7 +49,6 @@ export class TwilioController {
     <Response>
       <Say>Is that all you have?</Say>
       <Gather input="speech" timeout="5" action="/twilio/gather-response?payeeId=${payeeId}" method="POST">
-        <Say>Please say yes to end the call, or say no to continue.</Say>
       </Gather>
       <Say>We didn't get your response. Goodbye!</Say>
       <Hangup/>
