@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 # ✅ Load Whisper model
-model = whisper.load_model("tiny")
+model = whisper.load_model("base")
 
 # ✅ Upload folder setup
 UPLOAD_FOLDER = "uploads"
