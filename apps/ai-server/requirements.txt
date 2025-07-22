@@ -3,6 +3,7 @@ torch==2.1.0+cpu
 torchaudio==2.1.0+cpu
 openai-whisper==20230314
 ffmpeg-python
+python-multipart
 fastapi
 uvicorn
-numpy<2
+numpy<2.0
