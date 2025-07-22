@@ -5,3 +5,4 @@ openai-whisper==20230314
 ffmpeg-python
 fastapi
 uvicorn
+numpy<2
