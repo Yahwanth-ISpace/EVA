@@ -25,7 +25,7 @@ export class TwilioService {
     return client.calls.create({
       to,
       from: fromNumber,
-      url: `${backendBaseUrl}/twilio/ivr-script?payeeId=${payeeId}`,
+      url: `${backendBaseUrl}/twilio/ivr-script?payeeId=${payeeId}`, //GET
       record: true,
     });
   }
@@ -34,7 +34,7 @@ export class TwilioService {
   generateTwiML(payeeId: string): string {
     return `
       <Response>
-        <Say voice="alice">Hello. This is Springfield Clinic. We are verifying insurance coverage for your patient.</Say>
+        <Say voice="alice">Hello. This is Springfield Clinic. We are verifying insurance coverage for your payee.</Say>
         <Pause length="5"/>
         <Say>Please provide insurance coverage details now.</Say>
         <Record maxLength="60" action="${backendBaseUrl}/twilio/call-recording?payeeId=${payeeId}" method="POST" />
@@ -75,7 +75,14 @@ export class TwilioService {
   // STEP 4: Helper to download audio file from Twilio
   private async downloadRecording(recordingUrl: string): Promise<string> {
     const fileName = `${uuidv4()}.mp3`;
-    const filePath = path.join(__dirname, '..', '..', 'uploads', fileName);
+    const uploadDir = path.join(__dirname, '..', '..', 'uploads');
+    const filePath = path.join(uploadDir, fileName);
+
+    // Ensure uploads folder exists
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir);
+    }
+
     const writer = fs.createWriteStream(filePath);
 
     const agent = new https.Agent({ rejectUnauthorized: false });

@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Query, Body, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Query,
+  Body,
+  Res,
+  BadRequestException,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { TwilioService } from './twilio.service';
 
@@ -19,21 +27,18 @@ export class TwilioController {
       return res.status(400).type('text/plain').send('Missing payeeId');
     }
 
-    try {
-      const twiml = this.twilioService.generateTwiML(payeeId);
-      res.set('Content-Type', 'text/xml').status(200).send(twiml);
-    } catch (error) {
-      console.error('Error generating TwiML:', error);
-      res.status(500).type('text/plain').send('Failed to generate TwiML');
-    }
+    const twiml = this.twilioService.generateTwiML(payeeId);
+    res.set('Content-Type', 'text/xml').send(twiml);
   }
 
   // Step 3: Twilio hits this after recording is done
   @Post('call-recording')
-  async handleRecording(
-    @Query('RecordingUrl') recordingUrl: string,
-    @Query('payeeId') payeeId: string,
-  ) {
+  async handleRecording(@Body() body: any, @Query('payeeId') payeeId: string) {
+    const recordingUrl = body.RecordingUrl;
+    if (!recordingUrl) {
+      throw new BadRequestException('Missing RecordingUrl from Twilio');
+    }
+
     return this.twilioService.handleCallRecording(recordingUrl, payeeId);
   }
 }
