@@ -15,8 +15,17 @@ export class TwilioController {
   // Step 2: Twilio fetches this TwiML when the call is answered
   @Get('ivr-script')
   getTwiML(@Query('payeeId') payeeId: string, @Res() res: Response) {
-    const twiml = this.twilioService.generateTwiML(payeeId);
-    res.type('text/xml').send(twiml);
+    if (!payeeId) {
+      return res.status(400).type('text/plain').send('Missing payeeId');
+    }
+
+    try {
+      const twiml = this.twilioService.generateTwiML(payeeId);
+      res.set('Content-Type', 'text/xml').status(200).send(twiml);
+    } catch (error) {
+      console.error('Error generating TwiML:', error);
+      res.status(500).type('text/plain').send('Failed to generate TwiML');
+    }
   }
 
   // Step 3: Twilio hits this after recording is done
