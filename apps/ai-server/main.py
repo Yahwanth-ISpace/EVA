@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import whisper
 import os
 import shutil
+import logging
 
 app = FastAPI(
     title="ClaimBot AI Server",
@@ -22,8 +23,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ Load Whisper model
-model = whisper.load_model("base")
+# Add logging config
+logging.basicConfig(level=logging.INFO)
+
+# Try loading the model
+try:
+    # ✅ Load Whisper model
+    model = whisper.load_model("base")
+    logging.info("Whisper model loaded successfully")
+except Exception as e:
+    logging.exception("Failed to load Whisper model")
 
 # ✅ Upload folder setup
 UPLOAD_FOLDER = "uploads"
@@ -31,6 +40,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 @app.post("/transcribe", summary="Transcribe audio", tags=["Transcription"])
 async def transcribe(file: UploadFile = File(...)):
+    logging.info(f"Received file: {file.filename}")
     """
     Upload an audio file and get back the transcription using OpenAI Whisper.
 
@@ -51,9 +61,3 @@ async def transcribe(file: UploadFile = File(...)):
     finally:
         if os.path.exists(filepath):
             os.remove(filepath)
-
-# ✅ Dynamic port binding for Railway or any cloud host
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
