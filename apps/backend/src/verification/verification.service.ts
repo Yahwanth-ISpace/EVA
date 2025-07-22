@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { TranscriptionService } from 'src/transcription/transcription.service';
@@ -63,11 +63,17 @@ export class VerificationService {
     }
 
     // Only show verifications for the current payee
-    return this.prisma.verification.findMany({
-      where: { payeeId: user.id },
-      include: { payee: true },
-      orderBy: { createdAt: 'desc' },
-    });
+    if (user.role === 'PAYEE') {
+      if (!user.id) {
+        throw new BadRequestException('Missing payee ID');
+      }
+
+      return this.prisma.verification.findMany({
+        where: { payeeId: user.id },
+        include: { payee: true },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
   }
 
   async findOne(id: string) {
