@@ -54,8 +54,17 @@ export class VerificationService {
     });
   }
 
-  async findAll() {
+  async findAll(user: { id: string; role: string }) {
+    if (user.role === 'ADMIN') {
+      return this.prisma.verification.findMany({
+        include: { payee: true },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
+    // Only show verifications for the current payee
     return this.prisma.verification.findMany({
+      where: { payeeId: user.id },
       include: { payee: true },
       orderBy: { createdAt: 'desc' },
     });

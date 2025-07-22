@@ -6,6 +6,7 @@ import {
   Param,
   Post,
   Query,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -17,6 +18,13 @@ import { TranscriptionService } from 'src/transcription/transcription.service';
 import { diskStorage } from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import * as path from 'path';
+
+interface Request {
+  user?: {
+    id: string;
+    role: string;
+  };
+}
 
 @UseGuards(JwtAuthGuard)
 @Controller('verification')
@@ -71,7 +79,8 @@ export class VerificationController {
   }
 
   @Get()
-  async findAll() {
-    return this.verificationService.findAll();
+  async findAll(@Req() req: Request) {
+    const user = req.user as { id: string; role: string };
+    return this.verificationService.findAll(user);
   }
 }
