@@ -14,7 +14,7 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Expose a dummy port (won’t matter for Railway)
-EXPOSE 8080
+EXPOSE 8000
 
 # Use Railway-provided PORT environment variable
 CMD ["python", "main.py"]
