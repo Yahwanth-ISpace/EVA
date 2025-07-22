@@ -21,14 +21,10 @@ export class TwilioController {
   }
 
   // Step 2: Twilio fetches this TwiML when the call is answered
-  @Get('ivr-script')
-  getTwiML(@Query('payeeId') payeeId: string, @Res() res: Response) {
-    if (!payeeId) {
-      return res.status(400).type('text/plain').send('Missing payeeId');
-    }
-
+  @Post('ivr-script')
+  handleIVRScript(@Query('payeeId') payeeId: string, @Res() res: Response) {
     const twiml = this.twilioService.generateTwiML(payeeId);
-    res.set('Content-Type', 'text/xml').send(twiml);
+    res.type('text/xml').send(twiml);
   }
 
   // Step 3: Twilio hits this after recording is done
