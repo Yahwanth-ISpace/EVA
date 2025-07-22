@@ -13,7 +13,7 @@ app = FastAPI(
     redoc_url="/redoc",     # ReDoc UI
 )
 
-model = whisper.load_model("base")
+model = whisper.load_model("tiny")
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
