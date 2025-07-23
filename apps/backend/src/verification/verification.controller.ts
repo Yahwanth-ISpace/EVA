@@ -21,7 +21,7 @@ import * as path from 'path';
 
 interface Request {
   user?: {
-    id: string;
+    userId: string;
     role: string;
   };
 }
@@ -80,7 +80,7 @@ export class VerificationController {
 
   @Get()
   async findAll(@Req() req: Request) {
-    const user = req.user as { id: string; role: string };
+    const user = req.user as { userId: string; role: string };
     return this.verificationService.findAll(user);
   }
 }
