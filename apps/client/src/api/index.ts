@@ -1,7 +1,7 @@
 // apps/client/src/api/index.ts
 import type { PatientInfo, CoverageData } from "../types/insurance";
 
-const BASE_URL = "http://localhost:5000/api";
+const BASE_URL = "https://claimbot-vqhl.onrender.com";
 
 export async function submitVerification(
   data: PatientInfo
@@ -52,11 +52,11 @@ export async function register(userData: {
 
 // Add auth header for authenticated requests
 export async function fetchWithAuth(url: string, options: RequestInit = {}) {
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem("token");
   const headers = {
     ...options.headers,
-    'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json'
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
   };
   return fetch(url, { ...options, headers });
 }
