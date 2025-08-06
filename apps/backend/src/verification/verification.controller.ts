@@ -27,7 +27,7 @@ interface Request {
 }
 
 @UseGuards(JwtAuthGuard)
-@Controller('verification')
+@Controller('verifications')
 export class VerificationController {
   constructor(
     private readonly verificationService: VerificationService,
@@ -76,6 +76,12 @@ export class VerificationController {
         validity: verification.validity,
       },
     };
+  }
+
+  @Get(':id')
+  async findById(@Param('id') id: string, @Req() req: Request) {
+    const user = req.user as { userId: string; role: string };
+    return this.verificationService.findById(id);
   }
 
   @Get()

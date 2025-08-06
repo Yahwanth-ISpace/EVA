@@ -78,7 +78,7 @@ export class VerificationService {
     });
   }
 
-  async findOne(id: string) {
+  async findById(id: string) {
     const verification = await this.prisma.verification.findUnique({
       where: { id },
       include: { payee: true },
