@@ -34,6 +34,8 @@ export class AuthService {
         email: dto.email,
         password: hashedPassword,
         role,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
         payee:
           role === 'PAYEE'
             ? {
@@ -53,6 +55,9 @@ export class AuthService {
       message: 'User registered successfully',
       user: {
         id: user.id,
+        firstName:
+          user.role === 'PAYEE' ? user.payee?.firstName : user.firstName,
+        lastName: user.role === 'PAYEE' ? user.payee?.lastName : user.lastName,
         email: user.email,
         role: user.role,
         payeeId: user.payee?.id,
@@ -63,26 +68,35 @@ export class AuthService {
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
-      include: { payee: true },
+      include: { payee: true }, // we include it, but conditionally expose it
     });
+
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
     const isValid = await bcrypt.compare(dto.password, user.password);
     if (!isValid) throw new UnauthorizedException('Invalid credentials');
 
+    // Prepare the token payload (clean and lean)
     const token = this.jwtService.sign({
       sub: user.id,
       email: user.email,
       role: user.role,
+      firstName: user.firstName,
+      lastName: user.lastName,
     });
 
+    // Return cleaned response
     return {
       access_token: token,
       user: {
         id: user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
         email: user.email,
         role: user.role,
-        payeeId: user.payee?.id,
+        ...(user.role === 'PAYEE' &&
+          user.payee?.id && { payeeId: user.payee.id }), // optional
+        ...(user.role === 'PAYEE' && { payee: user.payee }), // ✅ include only for PAYEE
       },
     };
   }

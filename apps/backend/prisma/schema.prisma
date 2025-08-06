@@ -13,6 +13,8 @@ model User {
   email     String   @unique
   password  String
   role      Role
+  firstName String?
+  lastName  String?
   createdAt DateTime @default(now())
   payee     Payee?   @relation("UserPayee")
 }
@@ -27,7 +29,7 @@ model Payee {
   ssn           String? //make manditory in production (US Citizens)
   appointments  Appointment[]
   payer         Payer?         @relation(fields: [payerId], references: [id])
-  payerId       String?        @unique
+  payerId       String?
   verifications Verification[]
 }
 
