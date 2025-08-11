@@ -6,7 +6,6 @@ import * as twilio from 'twilio';
 import { v4 as uuidv4 } from 'uuid';
 import * as https from 'https';
 import * as FormData from 'form-data';
-import { agent } from 'supertest';
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -99,7 +98,7 @@ export class TwilioService {
     const writer = fs.createWriteStream(filePath);
 
     // // Optional: you can remove rejectUnauthorized: false in production for better security
-    // const agent = new https.Agent({ rejectUnauthorized: false });
+    const agent = new https.Agent();
 
     // Append `.mp3` extension to the recording URL for direct media download
     const mediaUrl = recordingUrl.endsWith('.mp3')
