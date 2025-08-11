@@ -37,7 +37,7 @@ export class TwilioController {
     if (!recordingUrl) {
       throw new BadRequestException('Missing RecordingUrl from Twilio');
     }
-
+    console.log('Recording URL:', recordingUrl, 'for payeeId:', payeeId);
     return this.twilioService.handleCallRecording(recordingUrl, payeeId);
   }
 
