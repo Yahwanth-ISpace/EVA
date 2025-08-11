@@ -94,17 +94,15 @@ export class TwilioService {
     const writer = fs.createWriteStream(filePath);
     const agent = new https.Agent({ rejectUnauthorized: false });
     const mediaUrl = recordingUrl;
-    console.log('Auth Header:', JSON.stringify(authHeader));
     console.log('Downloading recording from:', mediaUrl);
 
     const response = await axios({
       url: mediaUrl,
       method: 'GET',
       responseType: 'stream',
-      httpsAgent: agent,
-      auth: {
-        username: accountSid,
-        password: authToken,
+      httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+      headers: {
+        Authorization: authHeader,
       },
     });
 
