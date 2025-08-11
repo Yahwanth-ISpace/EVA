@@ -25,7 +25,7 @@ export class TwilioService {
     return client.calls.create({
       to,
       from: fromNumber,
-      url: `${backendBaseUrl}/twilio/ivr-script?payeeId=${payeeId}`, //GET
+      url: `${backendBaseUrl}/twilio/ivr-script?payeeId=${payeeId}`,
       record: true,
     });
   }
@@ -49,6 +49,7 @@ export class TwilioService {
 
   // STEP 3: Called when recording is done — downloads and uploads to backend
   async handleCallRecording(recordingUrl: string, payeeId: string) {
+    console.log('Handling call recording for payeeId:', payeeId);
     try {
       // Download from Twilio
       const localFilePath = await this.downloadRecording(recordingUrl);

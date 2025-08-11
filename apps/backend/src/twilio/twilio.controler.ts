@@ -43,9 +43,19 @@ export class TwilioController {
 
   // Step 4: Twilio hits this to confirm thats all the user has to say
   @Post('recording-done')
-  getPostRecordingTwiML(@Query('payeeId') payeeId: string): string {
-    // Save the recording as you already do
-    // Then return this TwiML:
+  async getPostRecordingTwiML(
+    @Body() body: any,
+    @Query('payeeId') payeeId: string,
+  ): Promise<string> {
+    const recordingUrl = body.RecordingUrl;
+    if (!recordingUrl) {
+      throw new BadRequestException('Missing RecordingUrl from Twilio');
+    }
+
+    // Call the service method to handle the recording
+    await this.twilioService.handleCallRecording(recordingUrl, payeeId);
+
+    // Then respond with the TwiML to ask user "Is that all you have?"
     return `
     <Response>
       <Say>Is that all you have?</Say>
@@ -70,6 +80,8 @@ export class TwilioController {
       </Response>
     `.trim();
     }
+
+    console.log('User response:', speechResult);
 
     // If user said "no" or something else
     return `
