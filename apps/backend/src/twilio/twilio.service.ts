@@ -32,6 +32,7 @@ export class TwilioService {
 
   // STEP 2: Generate TwiML that Twilio fetches
   generateTwiML(payeeId: string): string {
+    console.log('Generating TwiML for payeeId:', payeeId);
     return `
     <Response>
       <Say voice="alice">Hello. This is Springfield Clinic. We are verifying, insurance coverage, for your payee.</Say>

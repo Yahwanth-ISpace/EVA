@@ -44,7 +44,7 @@ export class VerificationService {
     if (error) throw new Error(error);
 
     const extracted = await this.aiService.extractInsuranceDetails(transcript);
-
+    console.log('Extracted details:', extracted);
     return this.prisma.verification.create({
       data: {
         payeeId,
