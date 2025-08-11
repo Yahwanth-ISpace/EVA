@@ -93,9 +93,7 @@ export class TwilioService {
 
     const writer = fs.createWriteStream(filePath);
     const agent = new https.Agent({ rejectUnauthorized: false });
-    const mediaUrl = recordingUrl.endsWith('.mp3')
-      ? recordingUrl
-      : `${recordingUrl}.mp3`;
+    const mediaUrl = recordingUrl;
     console.log('Auth Header:', JSON.stringify(authHeader));
     console.log('Downloading recording from:', mediaUrl);
 
