@@ -19,6 +19,7 @@ export class TwilioController {
   // Step 1: Make a call
   @Post('call')
   async initiateCall(@Body() body: { to: string; payeeId: string }) {
+    console.log('Initiating call to:', body.to, 'for payeeId:', body.payeeId);
     return this.twilioService.makeCall(body.to, body.payeeId);
   }
 

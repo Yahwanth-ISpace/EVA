@@ -64,6 +64,7 @@ export class AppointmentService {
     const toPhoneNumber =
       `${appointment.payee.payer?.phoneExt}` + appointment.payee.payer?.phone;
     if (toPhoneNumber) {
+      console.log('Making call to:', toPhoneNumber);
       await this.twilioService.makeCall(toPhoneNumber, dto.payeeId);
     } else {
       this.logger.warn(
