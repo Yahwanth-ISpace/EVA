@@ -7,10 +7,11 @@ import { v4 as uuidv4 } from 'uuid';
 import * as https from 'https';
 import * as FormData from 'form-data';
 
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
+const accountSid = (process.env.TWILIO_ACCOUNT_SID ?? '').trim();
+const authToken = (process.env.TWILIO_AUTH_TOKEN ?? '').trim();
 const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 const backendBaseUrl = process.env.BACKEND_URL;
+const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
 
 const client = twilio(accountSid, authToken);
 
@@ -103,7 +104,7 @@ export class TwilioService {
       responseType: 'stream',
       httpsAgent: agent,
       headers: {
-        Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`,
+        Authorization: authHeader,
       },
     });
 
