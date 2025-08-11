@@ -48,12 +48,13 @@ export class TwilioController {
     @Query('payeeId') payeeId: string,
   ): Promise<string> {
     const recordingUrl = body.RecordingUrl;
-    if (!recordingUrl) {
+    const recordingUrlWithExt = recordingUrl + '.mp3';
+    if (!recordingUrlWithExt) {
       throw new BadRequestException('Missing RecordingUrl from Twilio');
     }
 
     // Call the service method to handle the recording
-    await this.twilioService.handleCallRecording(recordingUrl, payeeId);
+    await this.twilioService.handleCallRecording(recordingUrlWithExt, payeeId);
 
     // Then respond with the TwiML to ask user "Is that all you have?"
     return `
