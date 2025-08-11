@@ -6,6 +6,7 @@ import * as twilio from 'twilio';
 import { v4 as uuidv4 } from 'uuid';
 import * as https from 'https';
 import * as FormData from 'form-data';
+import { agent } from 'supertest';
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -49,10 +50,9 @@ export class TwilioService {
 
   // STEP 3: Called when recording is done — downloads and uploads to backend
   async handleCallRecording(recordingUrl: string, payeeId: string) {
-    
     console.log('Handling call recording on:', recordingUrl);
     try {
-      // Download from Twilio
+      // Download from Twilio — appending .mp3 in downloadRecording function
       const localFilePath = await this.downloadRecording(recordingUrl);
 
       // Prepare multipart/form-data
@@ -64,10 +64,15 @@ export class TwilioService {
       const uploadResponse = await axios.post(
         `${backendBaseUrl}/verification/from-audio/${payeeId}`,
         form,
-        { headers: form.getHeaders() },
+        {
+          headers: {
+            ...form.getHeaders(),
+            // You can add auth headers here if your backend requires it
+          },
+        },
       );
 
-      // Clean up file
+      // Clean up file after successful upload
       fs.unlinkSync(localFilePath);
 
       return {
@@ -88,15 +93,21 @@ export class TwilioService {
 
     // Ensure uploads folder exists
     if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir);
+      fs.mkdirSync(uploadDir, { recursive: true });
     }
 
     const writer = fs.createWriteStream(filePath);
 
-    const agent = new https.Agent({ rejectUnauthorized: false });
+    // // Optional: you can remove rejectUnauthorized: false in production for better security
+    // const agent = new https.Agent({ rejectUnauthorized: false });
+
+    // Append `.mp3` extension to the recording URL for direct media download
+    const mediaUrl = recordingUrl.endsWith('.mp3')
+      ? recordingUrl
+      : `${recordingUrl}.mp3`;
 
     const response = await axios({
-      url: `${recordingUrl}.mp3`,
+      url: mediaUrl,
       method: 'GET',
       responseType: 'stream',
       httpsAgent: agent,
@@ -108,7 +119,10 @@ export class TwilioService {
     return new Promise((resolve, reject) => {
       response.data.pipe(writer);
       writer.on('finish', () => resolve(filePath));
-      writer.on('error', reject);
+      writer.on('error', (err) => {
+        console.error('Error writing recording file:', err);
+        reject(err);
+      });
     });
   }
 }
