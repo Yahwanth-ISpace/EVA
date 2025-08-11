@@ -32,7 +32,6 @@ export class TwilioService {
 
   // STEP 2: Generate TwiML that Twilio fetches
   generateTwiML(payeeId: string): string {
-    console.log('Generating TwiML for payeeId:', payeeId);
     return `
     <Response>
       <Say voice="alice">Hello. This is Springfield Clinic. We are verifying, insurance coverage, for your payee.</Say>
@@ -57,6 +56,7 @@ export class TwilioService {
       // Prepare multipart/form-data
       const form = new FormData();
       form.append('file', fs.createReadStream(localFilePath));
+      console.log('Uploading file to verification service:', localFilePath);
 
       // Send to verification endpoint
       const uploadResponse = await axios.post(
