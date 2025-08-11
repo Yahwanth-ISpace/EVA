@@ -49,29 +49,25 @@ export class TwilioService {
 
   // STEP 3: Called when recording is done — downloads and uploads to backend
   async handleCallRecording(recordingUrl: string, payeeId: string) {
-    console.log('Handling call recording on:', recordingUrl);
     try {
-      // Download from Twilio — appending .mp3 in downloadRecording function
       const localFilePath = await this.downloadRecording(recordingUrl);
 
-      // Prepare multipart/form-data
       const form = new FormData();
       form.append('file', fs.createReadStream(localFilePath));
+
       console.log('Uploading file to verifications service:', localFilePath);
 
-      // Send to verifications endpoint
       const uploadResponse = await axios.post(
         `${backendBaseUrl}/verifications/from-audio/${payeeId}`,
         form,
         {
           headers: {
             ...form.getHeaders(),
-            // You can add auth headers here if your backend requires it
+            Authorization: `Bearer ${process.env.VERIFICATIONS_API_TOKEN}`,
           },
         },
       );
 
-      // Clean up file after successful upload
       fs.unlinkSync(localFilePath);
 
       return {
@@ -90,17 +86,12 @@ export class TwilioService {
     const uploadDir = path.join(__dirname, '..', '..', 'uploads');
     const filePath = path.join(uploadDir, fileName);
 
-    // Ensure uploads folder exists
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
 
     const writer = fs.createWriteStream(filePath);
-
-    // // Optional: you can remove rejectUnauthorized: false in production for better security
     const agent = new https.Agent({ rejectUnauthorized: false });
-
-    // Append `.mp3` extension to the recording URL for direct media download
     const mediaUrl = recordingUrl.endsWith('.mp3')
       ? recordingUrl
       : `${recordingUrl}.mp3`;

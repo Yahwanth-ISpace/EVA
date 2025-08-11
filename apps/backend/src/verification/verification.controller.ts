@@ -18,6 +18,7 @@ import { TranscriptionService } from 'src/transcription/transcription.service';
 import { diskStorage } from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import * as path from 'path';
+import { ApiTokenGuard } from 'src/auth/guards/apiTokenGuard';
 
 interface Request {
   user?: {
@@ -26,7 +27,7 @@ interface Request {
   };
 }
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(ApiTokenGuard)
 @Controller('verifications')
 export class VerificationController {
   constructor(
