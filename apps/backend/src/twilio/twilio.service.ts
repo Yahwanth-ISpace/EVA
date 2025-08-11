@@ -99,6 +99,9 @@ export class TwilioService {
       method: 'GET',
       responseType: 'stream',
       httpsAgent: agent,
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`,
+      },
     });
 
     return new Promise((resolve, reject) => {
