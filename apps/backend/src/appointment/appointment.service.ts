@@ -61,7 +61,8 @@ export class AppointmentService {
       },
     });
 
-    const toPhoneNumber = appointment.payee.payer?.phone;
+    const toPhoneNumber =
+      `${appointment.payee.payer?.phoneExt}` + appointment.payee.payer?.phone;
     if (toPhoneNumber) {
       await this.twilioService.makeCall(toPhoneNumber, dto.payeeId);
     } else {
