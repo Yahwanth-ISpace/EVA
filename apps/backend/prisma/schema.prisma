@@ -9,14 +9,15 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(uuid()) @map("_id")
-  email     String   @unique
+  id        String    @id @default(uuid()) @map("_id")
+  email     String    @unique
   password  String
   role      Role
   firstName String?
   lastName  String?
-  createdAt DateTime @default(now())
-  payee     Payee?   @relation("UserPayee")
+  dob       DateTime?
+  createdAt DateTime  @default(now())
+  payee     Payee?    @relation("UserPayee")
 }
 
 model Payee {
@@ -85,8 +86,8 @@ model Appointment {
 
 model Verification {
   id         String   @id @default(uuid()) @map("_id")
-  payee      Payee    @relation(fields: [payeeId], references: [id])
-  payeeId    String
+  payee      Payee?   @relation(fields: [payeeId], references: [id])
+  payeeId    String?
   coverage   String
   deductible String
   copay      String

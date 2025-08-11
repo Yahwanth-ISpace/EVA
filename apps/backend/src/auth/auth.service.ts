@@ -34,6 +34,7 @@ export class AuthService {
         email: dto.email,
         password: hashedPassword,
         role,
+        dob: dto.dob ? new Date(dto.dob) : null,
         firstName: dto.firstName,
         lastName: dto.lastName,
         payee:
@@ -42,6 +43,7 @@ export class AuthService {
                 create: {
                   firstName: dto.firstName,
                   lastName: dto.lastName,
+                  dob: dto.dob ? new Date(dto.dob) : null,
                 },
               }
             : undefined,
@@ -59,6 +61,7 @@ export class AuthService {
           user.role === 'PAYEE' ? user.payee?.firstName : user.firstName,
         lastName: user.role === 'PAYEE' ? user.payee?.lastName : user.lastName,
         email: user.email,
+        dob: user.dob,
         role: user.role,
         payeeId: user.payee?.id,
       },
@@ -83,6 +86,7 @@ export class AuthService {
       role: user.role,
       firstName: user.firstName,
       lastName: user.lastName,
+      dob: user.dob ?? user.payee?.dob,
     });
 
     // Return cleaned response
@@ -92,11 +96,12 @@ export class AuthService {
         id: user.id,
         firstName: user.firstName,
         lastName: user.lastName,
+        dob: user.dob ?? user.payee?.dob,
         email: user.email,
         role: user.role,
         ...(user.role === 'PAYEE' &&
-          user.payee?.id && { payeeId: user.payee.id }), // optional
-        ...(user.role === 'PAYEE' && { payee: user.payee }), // ✅ include only for PAYEE
+          user.payee?.id && { payeeId: user.payee.id }),
+        ...(user.role === 'PAYEE' && { payee: user.payee }),
       },
     };
   }

@@ -65,14 +65,23 @@ export class VerificationService {
       }
 
       return this.prisma.verification.findMany({
-        where: { payeeId: user.userId },
+        where: {
+          payee: {
+            userId: user.userId, // This assumes `Payee.userId` is unique and maps to the logged-in user
+          },
+        },
         include: { payee: true },
         orderBy: { createdAt: 'desc' },
       });
     }
 
-    // If ADMIN
+    // ADMIN view: Filter out broken `payee` relations
     return this.prisma.verification.findMany({
+      where: {
+        payee: {
+          isNot: undefined,
+        },
+      },
       include: { payee: true },
       orderBy: { createdAt: 'desc' },
     });

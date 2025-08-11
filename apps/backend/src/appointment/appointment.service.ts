@@ -2,6 +2,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
@@ -9,18 +10,17 @@ import { TwilioService } from 'src/twilio/twilio.service';
 
 @Injectable()
 export class AppointmentService {
-  logger: any;
+  private readonly logger = new Logger(AppointmentService.name);
+
   constructor(
     private prisma: PrismaService,
     private twilioService: TwilioService,
   ) {}
 
   async create(dto: CreateAppointmentDto) {
-    // Defensive check: does the payee exist?
     const payee = await this.prisma.payee.findUnique({
       where: { id: dto.payeeId },
     });
-
     if (!payee) {
       throw new NotFoundException(`Payee with ID ${dto.payeeId} not found`);
     }
@@ -28,7 +28,6 @@ export class AppointmentService {
     const provider = await this.prisma.provider.findUnique({
       where: { id: dto.providerId },
     });
-
     if (!provider) {
       throw new NotFoundException(
         `Provider with ID ${dto.providerId} not found`,
@@ -38,7 +37,6 @@ export class AppointmentService {
     const office = await this.prisma.office.findUnique({
       where: { id: dto.officeId },
     });
-
     if (!office) {
       throw new NotFoundException(`Office with ID ${dto.officeId} not found`);
     }
@@ -47,21 +45,15 @@ export class AppointmentService {
       data: {
         date: new Date(dto.date),
         notes: dto.notes ?? null,
-        payee: {
-          connect: { id: dto.payeeId },
-        },
-        provider: {
-          connect: { id: dto.providerId },
-        },
-        office: {
-          connect: { id: dto.officeId },
-        },
+        payee: { connect: { id: dto.payeeId } },
+        provider: { connect: { id: dto.providerId } },
+        office: { connect: { id: dto.officeId } },
       },
       include: {
         payee: {
           include: {
-            user: true, // Ensure we get user's phone/email
-            payer: true, // Include payer details to verify payee Benfits
+            user: true,
+            payer: true,
           },
         },
         provider: true,
@@ -69,7 +61,6 @@ export class AppointmentService {
       },
     });
 
-    // 🔔 Trigger Twilio call to patient's phone number (assuming it's stored in payee.user.phone)
     const toPhoneNumber = appointment.payee.payer?.phone;
     if (toPhoneNumber) {
       await this.twilioService.makeCall(toPhoneNumber, dto.payeeId);

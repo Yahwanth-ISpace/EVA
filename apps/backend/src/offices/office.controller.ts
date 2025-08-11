@@ -16,6 +16,11 @@ export class OfficeController {
     return this.officeService.findAll();
   }
 
+  @Get('provider/:providerId')
+  findByProvider(@Param('providerId') providerId: string) {
+    return this.officeService.findByProviderId(providerId);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.officeService.findOne(id);

@@ -34,6 +34,17 @@ export class OfficeService {
     });
   }
 
+  async findByProviderId(providerId: string) {
+    return this.prisma.office.findMany({
+      where: {
+        providerId: providerId,
+      },
+      include: {
+        provider: true,
+      },
+    });
+  }
+
   async findOne(id: string) {
     const office = await this.prisma.office.findUnique({
       where: { id },

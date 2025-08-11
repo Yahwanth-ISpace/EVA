@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Put,
+  UseGuards,
+} from '@nestjs/common';
 import { PayeeService } from './payee.service';
 import { CreatePayeeDto } from './dto/create-payee.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwtAuthGuard';
@@ -21,5 +29,10 @@ export class PayeeController {
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.payeeService.findOne(id);
+  }
+
+  @Put(':id')
+  update(@Param('id') id: string, @Body() dto: CreatePayeeDto) {
+    return this.payeeService.update(id, dto);
   }
 }

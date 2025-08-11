@@ -68,7 +68,7 @@ export class PayeeService {
 
     if (payer?.id) {
       updateData.payer = {
-        connect: { id: payer.id }, // assumes payer already exists
+        connect: { id: payer.id },
       };
     }
 
