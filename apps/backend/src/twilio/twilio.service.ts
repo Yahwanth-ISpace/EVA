@@ -98,7 +98,7 @@ export class TwilioService {
     const writer = fs.createWriteStream(filePath);
 
     // // Optional: you can remove rejectUnauthorized: false in production for better security
-    const agent = new https.Agent();
+    const agent = new https.Agent({ rejectUnauthorized: false });
 
     // Append `.mp3` extension to the recording URL for direct media download
     const mediaUrl = recordingUrl.endsWith('.mp3')
