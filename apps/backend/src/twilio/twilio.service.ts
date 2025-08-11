@@ -95,6 +95,7 @@ export class TwilioService {
     const mediaUrl = recordingUrl.endsWith('.mp3')
       ? recordingUrl
       : `${recordingUrl}.mp3`;
+    console.log('Downloading recording from:', mediaUrl);
 
     const response = await axios({
       url: mediaUrl,
