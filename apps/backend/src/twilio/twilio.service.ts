@@ -96,6 +96,7 @@ export class TwilioService {
     const mediaUrl = recordingUrl.endsWith('.mp3')
       ? recordingUrl
       : `${recordingUrl}.mp3`;
+    console.log('Auth Header:', JSON.stringify(authHeader));
     console.log('Downloading recording from:', mediaUrl);
 
     const response = await axios({
@@ -103,8 +104,9 @@ export class TwilioService {
       method: 'GET',
       responseType: 'stream',
       httpsAgent: agent,
-      headers: {
-        Authorization: authHeader,
+      auth: {
+        username: accountSid,
+        password: authToken,
       },
     });
 
