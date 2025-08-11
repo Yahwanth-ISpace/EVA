@@ -57,11 +57,11 @@ export class TwilioService {
       // Prepare multipart/form-data
       const form = new FormData();
       form.append('file', fs.createReadStream(localFilePath));
-      console.log('Uploading file to verification service:', localFilePath);
+      console.log('Uploading file to verifications service:', localFilePath);
 
-      // Send to verification endpoint
+      // Send to verifications endpoint
       const uploadResponse = await axios.post(
-        `${backendBaseUrl}/verification/from-audio/${payeeId}`,
+        `${backendBaseUrl}/verifications/from-audio/${payeeId}`,
         form,
         {
           headers: {
@@ -75,7 +75,7 @@ export class TwilioService {
       fs.unlinkSync(localFilePath);
 
       return {
-        message: 'Recording uploaded successfully to verification service',
+        message: 'Recording uploaded successfully to verifications service',
         result: uploadResponse.data,
       };
     } catch (err) {
