@@ -15,10 +15,11 @@ ${transcript}
 """
 `;
 
+    const AiBaseUrl = process.env.AI_BASE_URL || 'http://localhost:11434'; // Default to local Ollama server
     // to start ollama - ollama run llama3
 
     try {
-      const response = await axios.post('http://localhost:11434/api/generate', {
+      const response = await axios.post(`${AiBaseUrl}` + '/api/generate', {
         model: 'mistral', // Or use 'mistral', 'phi3', etc. depending on your Ollama model
         prompt,
         stream: false,
