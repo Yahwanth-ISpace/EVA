@@ -38,7 +38,7 @@ model Payer {
   id             String  @id @default(uuid()) @map("_id")
   companyName    String
   phone          String
-  phoneExt       String
+  phoneExt       String?
   groupName      String
   groupNumber    String
   businessKey    String
