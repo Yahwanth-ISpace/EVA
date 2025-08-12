@@ -26,7 +26,7 @@ export class VerificationService {
     return this.prisma.verification.create({
       data: {
         payeeId,
-        coverage: extracted.coverage,
+        coverage: extracted.coverage || null,
         deductible: extracted.deductible,
         copay: extracted.copay,
         validity: extracted.validity,

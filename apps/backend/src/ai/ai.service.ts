@@ -4,7 +4,7 @@ import Groq from 'groq-sdk';
 @Injectable()
 export class AiService {
   private groq = new Groq({
-    apiKey: process.env.OPENAI_API_KEY,
+    apiKey: process.env.GROQ_API_KEY,
   });
 
   async extractInsuranceDetails(transcript: string) {
