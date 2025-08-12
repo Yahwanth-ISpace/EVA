@@ -103,9 +103,8 @@ export class TwilioService {
       method: 'GET',
       responseType: 'stream',
       httpsAgent: agent,
-      auth: {
-        username: accountSid,
-        password: authToken,
+      headers: {
+        Authorization: authHeader,
       },
     });
 
