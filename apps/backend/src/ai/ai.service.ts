@@ -21,17 +21,23 @@ ${transcript}
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`, // Bearer needed
       },
       body: JSON.stringify({
         model: 'grok-4-latest',
         temperature: 0,
+        stream: false,
         messages: [{ role: 'user', content: prompt }],
       }),
     });
 
+    if (!response.ok) {
+      throw new Error(`Grok API request failed: ${response.statusText}`);
+    }
+
     const data = await response.json();
     const content = data?.choices?.[0]?.message?.content ?? '';
+
     const jsonStart = content.indexOf('{');
     const jsonString = jsonStart !== -1 ? content.slice(jsonStart) : content;
 
