@@ -50,7 +50,12 @@ export class AiService {
       });
 
       const result = await model.generateContent(prompt);
-      const jsonString = result.response.text().trim() || '{}';
+      let jsonString = result.response.text().trim() || '{}';
+
+      // Remove code block markers if present
+      if (jsonString.startsWith('```')) {
+        jsonString = jsonString.replace(/```json|```/gi, '').trim();
+      }
 
       let parsed: any;
       try {
