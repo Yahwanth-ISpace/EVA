@@ -33,7 +33,7 @@ export class TwilioController {
   // Step 3: Twilio hits this after recording is done
   @Post('call-recording')
   async handleRecording(@Body() body: any, @Query('payeeId') payeeId: string) {
-    const recordingUrl = body.RecordingUrl;
+    const recordingUrl = body.RecordingUrl + '.mp3';
     if (!recordingUrl) {
       throw new BadRequestException('Missing RecordingUrl from Twilio');
     }
