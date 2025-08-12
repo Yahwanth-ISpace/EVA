@@ -65,7 +65,7 @@ export class TwilioService {
         {
           headers: {
             ...form.getHeaders(),
-            Authorization: apiToken,
+            Authorization: `Bearer ${apiToken}`,
           },
         },
       );
