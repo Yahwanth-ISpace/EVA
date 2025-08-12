@@ -27,7 +27,7 @@ interface Request {
   };
 }
 
-@UseGuards(ApiTokenGuard)
+@UseGuards(JwtAuthGuard)
 @Controller('verifications')
 export class VerificationController {
   constructor(
@@ -43,6 +43,7 @@ export class VerificationController {
     return this.verificationService.simulateVerification(id, transcript);
   }
 
+  @UseGuards(ApiTokenGuard)
   @Post('from-audio/:payeeId')
   @UseInterceptors(
     FileInterceptor('file', {
@@ -55,6 +56,7 @@ export class VerificationController {
       }),
     }),
   )
+  @UseGuards(ApiTokenGuard)
   async verifyFromAudio(
     @Param('payeeId') payeeId: string,
     @Query('payeeId') queryPayeeId: string,
@@ -79,12 +81,14 @@ export class VerificationController {
     };
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get(':id')
   async findById(@Param('id') id: string, @Req() req: Request) {
     const user = req.user as { userId: string; role: string };
     return this.verificationService.findById(id);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get()
   async findAll(@Req() req: Request) {
     const user = req.user as { userId: string; role: string };
