@@ -10,7 +10,7 @@ export class AiService {
   async extractInsuranceDetails(transcript: string) {
     const prompt = `
 You are an AI agent that extracts insurance coverage details from transcripts.
-Return only a valid JSON with the following keys: coverage, deductible, copay, and validity.
+Return only a valid JSON with the following keys: coverage, deductible, copay.
 
 Transcript:
 """
@@ -20,7 +20,7 @@ ${transcript}
 
     try {
       const response = await this.openai.chat.completions.create({
-        model: 'grok-mistral', // or your available Grok model
+        model: 'gemini-1', // <-- use Gemini model here
         messages: [{ role: 'user', content: prompt }],
         temperature: 0,
       });
@@ -28,7 +28,7 @@ ${transcript}
       const content = response.choices[0].message.content;
 
       if (!content) {
-        throw new Error('No content returned from Grok API');
+        throw new Error('No content returned from Gemini API');
       }
 
       const jsonStart = content.indexOf('{');
@@ -36,8 +36,8 @@ ${transcript}
 
       return JSON.parse(jsonString);
     } catch (err) {
-      console.error('Grok API error:', err);
-      return { error: 'Failed to extract details using Grok' };
+      console.error('Gemini API error:', err);
+      return { error: 'Failed to extract details using Gemini' };
     }
   }
 }
