@@ -1,9 +1,12 @@
-// src/ai/ai.service.ts
 import { Injectable } from '@nestjs/common';
-import axios from 'axios';
+import OpenAI from 'openai';
 
 @Injectable()
 export class AiService {
+  private openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+
   async extractInsuranceDetails(transcript: string) {
     const prompt = `
 You are an AI agent that extracts insurance coverage details from transcripts.
@@ -15,23 +18,26 @@ ${transcript}
 """
 `;
 
-    // to start ollama - ollama run llama3
-
     try {
-      const response = await axios.post('http://localhost:11434/api/generate', {
-        model: 'mistral', // Or use 'mistral', 'phi3', etc. depending on your Ollama model
-        prompt,
-        stream: false,
+      const response = await this.openai.chat.completions.create({
+        model: 'grok-mistral', // or your available Grok model
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0,
       });
 
-      const raw = response.data.response;
-      const jsonStart = raw.indexOf('{');
-      const json = raw.slice(jsonStart);
+      const content = response.choices[0].message.content;
 
-      return JSON.parse(json);
+      if (!content) {
+        throw new Error('No content returned from Grok API');
+      }
+
+      const jsonStart = content.indexOf('{');
+      const jsonString = jsonStart !== -1 ? content.slice(jsonStart) : content;
+
+      return JSON.parse(jsonString);
     } catch (err) {
-      console.error('Ollama error:', err.message);
-      return { error: 'Failed to extract details using Ollama' };
+      console.error('Grok API error:', err);
+      return { error: 'Failed to extract details using Grok' };
     }
   }
 }

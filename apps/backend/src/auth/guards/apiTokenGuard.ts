@@ -44,6 +44,7 @@ export class ApiTokenGuard implements CanActivate {
     this.logger.log(`Expected token: "${expectedToken}"`);
 
     if (token === expectedToken && expectedToken !== '') {
+      console.log('API token is valid');
       return true;
     }
 
