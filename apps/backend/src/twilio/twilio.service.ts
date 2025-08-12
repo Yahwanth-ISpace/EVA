@@ -63,7 +63,6 @@ export class TwilioService {
         form,
         {
           headers: {
-            Authorization: process.env.VERIFICATION_API_TOKEN,
             ...form.getHeaders(),
           },
         },
@@ -100,7 +99,7 @@ export class TwilioService {
       url: mediaUrl,
       method: 'GET',
       responseType: 'stream',
-      httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+      httpsAgent: agent,
       headers: {
         Authorization: authHeader,
       },
