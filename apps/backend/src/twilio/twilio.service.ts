@@ -11,6 +11,7 @@ const accountSid = (process.env.TWILIO_ACCOUNT_SID ?? '').trim();
 const authToken = (process.env.TWILIO_AUTH_TOKEN ?? '').trim();
 const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 const backendBaseUrl = process.env.BACKEND_URL;
+const apiToken = (process.env.VERIFICATIONS_API_TOKEN ?? '').trim();
 const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
 
 const client = twilio(accountSid, authToken);
@@ -64,6 +65,7 @@ export class TwilioService {
         {
           headers: {
             ...form.getHeaders(),
+            Authorization: `Bearer ${apiToken}`,
           },
         },
       );
