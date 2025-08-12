@@ -12,7 +12,7 @@ const authToken = (process.env.TWILIO_AUTH_TOKEN ?? '').trim();
 const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 const backendBaseUrl = process.env.BACKEND_URL;
 const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
-const apiToken = process.env.API_TOKEN ?? '';
+const apiToken = process.env.VERIFICATIONS_API_TOKEN ?? '';
 
 const client = twilio(accountSid, authToken);
 
