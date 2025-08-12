@@ -12,6 +12,7 @@ const authToken = (process.env.TWILIO_AUTH_TOKEN ?? '').trim();
 const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 const backendBaseUrl = process.env.BACKEND_URL;
 const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
+const apiToken = process.env.API_TOKEN ?? '';
 
 const client = twilio(accountSid, authToken);
 
@@ -64,13 +65,14 @@ export class TwilioService {
         {
           headers: {
             ...form.getHeaders(),
-            Authorization: `Bearer ${process.env.VERIFICATIONS_API_TOKEN}`,
+            Authorization: `Bearer ${apiToken}`,
           },
         },
       );
 
       fs.unlinkSync(localFilePath);
 
+      console.log('Recording uploaded successfully:', uploadResponse.data);
       return {
         message: 'Recording uploaded successfully to verifications service',
         result: uploadResponse.data,
