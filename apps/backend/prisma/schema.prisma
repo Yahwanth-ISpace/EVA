@@ -38,7 +38,7 @@ model Payer {
   id             String  @id @default(uuid()) @map("_id")
   companyName    String
   phone          String
-  phoneExt       String?
+  phoneExt       String
   groupName      String
   groupNumber    String
   businessKey    String
@@ -88,10 +88,10 @@ model Verification {
   id         String   @id @default(uuid()) @map("_id")
   payee      Payee?   @relation(fields: [payeeId], references: [id])
   payeeId    String?
-  coverage   String
-  deductible String
-  copay      String
-  validity   String
+  coverage   String?
+  deductible String?
+  copay      String?
+  validity   String?
   transcript String
   createdAt  DateTime @default(now())
 }
