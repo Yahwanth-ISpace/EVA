@@ -1,11 +1,20 @@
 import { Injectable } from '@nestjs/common';
-import Groq from 'groq-sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 @Injectable()
 export class AiService {
-  private groq = new Groq({
-    apiKey: process.env.GROQ_API_KEY,
-  });
+  private gemini: GoogleGenerativeAI;
+
+  constructor() {
+    const apiKey = process.env.GEMINI_API_KEY;
+    console.log('GEMINI_API_KEY loaded:', apiKey ? '✅ yes' : '❌ no');
+
+    if (!apiKey) {
+      throw new Error('❌ Missing GEMINI_API_KEY environment variable.');
+    }
+
+    this.gemini = new GoogleGenerativeAI(apiKey);
+  }
 
   public async extractInsuranceDetails(text: string): Promise<{
     coverage: string | null;
@@ -13,10 +22,6 @@ export class AiService {
     copay: string | null;
     validity: string | null;
   }> {
-    console.log(
-      'GROQ_API_KEY loaded:',
-      process.env.GROQ_API_KEY ? '✅ yes' : '❌ no',
-    );
     try {
       const prompt = `
       Extract the following details from the insurance text:
@@ -34,28 +39,24 @@ export class AiService {
       }
 
       If any field is missing in the text, set it to null.
+
+      Text:
+      ${text}
     `;
 
-      const completion = await this.groq.chat.completions.create({
-        messages: [
-          { role: 'system', content: 'You are a data extraction assistant.' },
-          { role: 'user', content: `${prompt}\n\n${text}` },
-        ],
-        model: 'llama-3.1-70b-versatile',
-        temperature: 0,
-        max_tokens: 300,
+      // Gemini model selection — adjust as needed
+      const model = this.gemini.getGenerativeModel({
+        model: 'gemini-1.5-pro',
       });
 
-      // Get response text safely
-      const jsonString =
-        completion.choices?.[0]?.message?.content?.trim() || '{}';
+      const result = await model.generateContent(prompt);
+      const jsonString = result.response.text().trim() || '{}';
 
-      // Parse JSON safely
       let parsed: any;
       try {
         parsed = JSON.parse(jsonString);
       } catch {
-        console.error('❌ Failed to parse Groq JSON:', jsonString);
+        console.error('❌ Failed to parse Gemini JSON:', jsonString);
         parsed = {};
       }
 
@@ -66,7 +67,7 @@ export class AiService {
         validity: parsed.validity ?? null,
       };
     } catch (err) {
-      console.error('❌ Error extracting insurance details:', err);
+      console.error('❌ Error extracting insurance details from Gemini:', err);
       return {
         coverage: null,
         deductible: null,
