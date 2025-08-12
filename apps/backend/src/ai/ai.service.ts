@@ -13,6 +13,10 @@ export class AiService {
     copay: string | null;
     validity: string | null;
   }> {
+    console.log(
+      'GROQ_API_KEY loaded:',
+      process.env.GROQ_API_KEY ? '✅ yes' : '❌ no',
+    );
     try {
       const prompt = `
       Extract the following details from the insurance text:
