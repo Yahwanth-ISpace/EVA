@@ -19,7 +19,6 @@ export class TwilioController {
   // Step 1: Make a call
   @Post('call')
   async initiateCall(@Body() body: { to: string; payeeId: string }) {
-    console.log('Initiating call to:', body.to, 'for payeeId:', body.payeeId);
     return this.twilioService.makeCall(body.to, body.payeeId);
   }
 
@@ -37,7 +36,6 @@ export class TwilioController {
     if (!recordingUrl) {
       throw new BadRequestException('Missing RecordingUrl from Twilio');
     }
-    console.log('Recording URL:', recordingUrl, 'for payeeId:', payeeId);
     return this.twilioService.handleCallRecording(recordingUrl, payeeId);
   }
 

@@ -57,8 +57,6 @@ export class TwilioService {
       const form = new FormData();
       form.append('file', fs.createReadStream(localFilePath));
 
-      console.log('Uploading file to verifications service:', localFilePath);
-
       const uploadResponse = await axios.post(
         `${backendBaseUrl}/verifications/from-audio/${payeeId}`,
         form,
@@ -95,7 +93,6 @@ export class TwilioService {
     const writer = fs.createWriteStream(filePath);
     const agent = new https.Agent({ rejectUnauthorized: false });
     const mediaUrl = recordingUrl;
-    console.log('Downloading recording from:', mediaUrl);
 
     const response = await axios({
       url: mediaUrl,
