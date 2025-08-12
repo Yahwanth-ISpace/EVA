@@ -46,7 +46,7 @@ export class AiService {
 
       // Gemini model selection — adjust as needed
       const model = this.gemini.getGenerativeModel({
-        model: 'gemini-1.5-pro',
+        model: 'gemini-1.5-flash',
       });
 
       const result = await model.generateContent(prompt);
