@@ -1,11 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import Groq from 'groq-sdk';
+import fetch from 'node-fetch';
 
 @Injectable()
 export class AiService {
-  private groq = new Groq({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
+  private readonly apiKey = process.env.OPENAI_API_KEY;
+  private readonly baseUrl = 'https://api.x.ai/v1/chat/completions';
 
   async extractInsuranceDetails(transcript: string) {
     const prompt = `
@@ -18,21 +17,24 @@ ${transcript}
 """
 `;
 
-    try {
-      const response = await this.groq.chat.completions.create({
-        model: 'mistral-7b-8k', // Example Groq model
-        messages: [{ role: 'user', content: prompt }],
+    const response = await fetch(this.baseUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'grok-4-latest',
         temperature: 0,
-      });
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
 
-      const content = response.choices[0].message?.content ?? '';
-      const jsonStart = content.indexOf('{');
-      const jsonString = jsonStart !== -1 ? content.slice(jsonStart) : content;
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content ?? '';
+    const jsonStart = content.indexOf('{');
+    const jsonString = jsonStart !== -1 ? content.slice(jsonStart) : content;
 
-      return JSON.parse(jsonString);
-    } catch (err) {
-      console.error('Groq API error:', err);
-      return { error: 'Failed to extract details using Groq' };
-    }
+    return JSON.parse(jsonString);
   }
 }
