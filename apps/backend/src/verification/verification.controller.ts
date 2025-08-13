@@ -43,8 +43,8 @@ export class VerificationController {
     return this.verificationService.simulateVerification(id, transcript);
   }
 
-  @UseGuards(ApiTokenGuard)
   @Post('from-audio/:payeeId')
+  @UseGuards(ApiTokenGuard)
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
@@ -56,13 +56,12 @@ export class VerificationController {
       }),
     }),
   )
-  @UseGuards(ApiTokenGuard)
   async verifyFromAudio(
     @Param('payeeId') payeeId: string,
     @Query('payeeId') queryPayeeId: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    console.log('Received payeeId in route:', payeeId); // ✅ log
+    console.log('Received payeeId in route:', payeeId);
     const finalPayeeId = payeeId || queryPayeeId;
     if (!finalPayeeId) throw new BadRequestException('payeeId is required');
 
@@ -81,13 +80,14 @@ export class VerificationController {
     };
   }
 
+  // ✅ Only logged-in users can fetch verifications
   @UseGuards(JwtAuthGuard)
   @Get(':id')
   async findById(@Param('id') id: string, @Req() req: Request) {
-    const user = req.user as { userId: string; role: string };
     return this.verificationService.findById(id);
   }
 
+  // ✅ Only logged-in users can see all their verifications
   @UseGuards(JwtAuthGuard)
   @Get()
   async findAll(@Req() req: Request) {
