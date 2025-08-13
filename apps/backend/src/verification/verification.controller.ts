@@ -27,7 +27,6 @@ interface Request {
   };
 }
 
-@UseGuards(ApiTokenGuard)
 @Controller('verifications')
 export class VerificationController {
   constructor(
@@ -35,6 +34,7 @@ export class VerificationController {
     private readonly transcriptionService: TranscriptionService,
   ) {}
 
+  @UseGuards(ApiTokenGuard)
   @Post(':payeeId')
   async verifyPayee(
     @Param('payeeId') id: string,
