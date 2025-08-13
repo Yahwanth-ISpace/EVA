@@ -27,7 +27,7 @@ interface Request {
   };
 }
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(ApiTokenGuard)
 @Controller('verifications')
 export class VerificationController {
   constructor(
