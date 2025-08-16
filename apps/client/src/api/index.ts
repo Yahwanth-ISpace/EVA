@@ -1,10 +1,19 @@
 // apps/client/src/api/index.ts
-import type { PatientInfo, CoverageData } from "../types/insurance";
+import type {
+  AppointmentRecord,
+  createAppointmentPayload,
+  InsuranceRecord,
+  Office,
+  Provider,
+} from "../types/insurance";
 
 const BASE_URL = "https://claimbot-vqhl.onrender.com";
+// const BASE_URL = "http://localhost:3000";
+
+const token = localStorage.getItem("token");
 
 export async function submitVerification(
-  data: PatientInfo
+  data: AppointmentRecord
 ): Promise<{ status: string; taskId?: string }> {
   const res = await fetch(`${BASE_URL}/verify-insurance`, {
     method: "POST",
@@ -14,8 +23,50 @@ export async function submitVerification(
   return res.json();
 }
 
-export async function fetchVerifications(): Promise<CoverageData[]> {
-  const res = await fetch(`${BASE_URL}/verifications`);
+export async function createAppointment(
+  data: createAppointmentPayload
+): Promise<{ status: string; taskId?: string }> {
+  const res = await fetch(`${BASE_URL}/appointments`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Request failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+export async function fetchVerifications(): Promise<InsuranceRecord[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/verifications`);
+  return res.json();
+}
+
+export async function fetchProviders(): Promise<Provider[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/providers`);
+  return res.json();
+}
+
+export async function fetchOffices(providerId: string): Promise<Office[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/offices/provider/${providerId}`);
+  return res.json();
+}
+
+export async function fetchAppointments(): Promise<AppointmentRecord[]> {
+  const res = await fetchWithAuth(`${BASE_URL}/appointments`);
+  return res.json();
+}
+
+export async function fetchRecordById(id: string): Promise<InsuranceRecord> {
+  const res = await fetchWithAuth(`${BASE_URL}/verifications/${id}`);
+  if (!res.ok) {
+    throw new Error("Record not found");
+  }
   return res.json();
 }
 

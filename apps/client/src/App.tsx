@@ -1,67 +1,75 @@
-// apps/client/src/App.tsx
-import { useState, useEffect } from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
-import Login from "./components/Login";
-import Register from "./components/Register";
-import PatientForm from "./components/PatientForm";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
+
+import Login from "./pages/Login";
+import Register from "./pages/SignUp";
+import AppointmentForm from "./pages/AppointmentForm";
 import Dashboard from "./pages/Dashboard";
+import InsuranceDetails from "./pages/InsuranceDetails";
+
+import { useAuth } from "./utils/AuthContext";
+import ProtectedRoute from "./utils/ProtectedRoute";
+import Layout from "./components/Layout";
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const { isAuthenticated, loading } = useAuth();
 
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    setIsAuthenticated(!!token);
-  }, []);
+  if (loading) return <div>Loading...</div>;
 
   return (
     <Router>
-      <div
-        className="min-h-screen w-screen bg-gray-100"
-        style={{
-          backgroundImage: "url(https://wallpapercave.com/wp/yaPN3iv.jpg)",
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          backgroundRepeat: "no-repeat",
-        }}
-      >
-        <header className="bg-blue-700 text-white p-4 text-center text-xl font-semibold">
-          Dental Insurance Verifier
-        </header>
-        
+      <div className="main-container">
+        {/* <div className="max-w-7xl mx-auto"> */}
         <Routes>
-          <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" /> : <Login />} />
-          <Route path="/register" element={isAuthenticated ? <Navigate to="/dashboard" /> : <Register />} />
+          {/* Public routes without Layout */}
           <Route
-            path="/"
-            element={
-              isAuthenticated ? (
-                <Navigate to="/dashboard" />
-              ) : (
-                <Navigate to="/login" />
-              )
-            }
+            path="/login"
+            element={isAuthenticated ? <Navigate to="/dashboard" /> : <Login />}
           />
           <Route
-            path="/dashboard"
+            path="/register"
             element={
-              isAuthenticated ? (
-                <Dashboard />
-              ) : (
-                <Navigate to="/login" />
-              )
+              isAuthenticated ? <Navigate to="/dashboard" /> : <Register />
             }
           />
-          <Route
-            path="/patient-form"
-            element={
-              isAuthenticated ? (
-                <PatientForm />
-              ) : (
-                <Navigate to="/login" />
-              )
-            }
-          />
+
+          {/* Protected routes with Layout */}
+          <Route element={<Layout />}>
+            <Route
+              path="/"
+              element={
+                <Navigate to={isAuthenticated ? "/dashboard" : "/login"} />
+              }
+            />
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/appointment-form"
+              element={
+                <ProtectedRoute>
+                  <AppointmentForm />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/insurance/:id"
+              element={
+                <ProtectedRoute>
+                  <InsuranceDetails />
+                </ProtectedRoute>
+              }
+            />
+          </Route>
         </Routes>
       </div>
     </Router>

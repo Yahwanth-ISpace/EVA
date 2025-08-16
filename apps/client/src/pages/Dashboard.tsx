@@ -1,57 +1,55 @@
-// apps/client/src/pages/Dashboard.tsx
 import { useEffect, useState } from "react";
-import { fetchVerifications } from "../api";
-import type { CoverageData } from "../types/insurance";
-import CoverageCard from "../components/CoverageCard";
+
+import { fetchAppointments, fetchVerifications } from "../api";
+import AdminInsuranceTable from "../components/AdminInsuranceTable";
+import Navbar from "../components/Navbar";
+import type { AppointmentRecord, InsuranceRecord } from "../types/insurance";
+import { useAuth } from "../utils/AuthContext";
+import PatientTabs from "../components/PatientTabs";
+import Container from "../components/Container";
 
 export default function Dashboard() {
-  const [data, setData] = useState<CoverageData[]>([]);
-  const [userRole, setUserRole] = useState("");
+  const { role } = useAuth();
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("userRole");
-    window.location.href = "/login";
-  };
+  const [verificationData, setVerificationData] = useState<InsuranceRecord[]>(
+    []
+  );
+  const [appointmentData, setAppointmentData] = useState<AppointmentRecord[]>(
+    []
+  );
 
   useEffect(() => {
     const load = async () => {
-      const res = await fetchVerifications();
-      setData(res);
-      // Get user role from token or local storage
-      const role = localStorage.getItem("userRole") || "";
-      setUserRole(role);
+      const verifications = await fetchVerifications();
+      setVerificationData(verifications);
+      const appointments = await fetchAppointments();
+      setAppointmentData(appointments);
     };
     load();
   }, []);
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold">Verified Patients</h2>
-        <div className="flex items-center space-x-4">
-          {userRole === "ADMIN" && (
-            <a 
-              href="/patient-form" 
-              className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
-            >
-              Add Patient
-            </a>
-          )}
-          <button
-            onClick={handleLogout}
-            className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
-          >
-            Logout
-          </button>
+    <div className="Dashboard">
+      {/* Header */}
+      <Navbar />
+      <div className="section-wrapper flex flex-col gap-y-3 mt-5">
+        <div className="flex justify-between items-center px-6">
+          <h2 className="text-2xl font-mono text-blue-700 tracking-[0.2em]">
+            Dashboard
+          </h2>
         </div>
-      </div>
-      <div className="">
-        {data.length === 0 ? (
-          <p>No verifications yet.</p>
-        ) : (
-          data.map((item) => <CoverageCard key={item.memberId} data={item} />)
-        )}
+
+        {/* Body */}
+        <Container className="h-100 pb-8">
+          {role === "ADMIN" ? (
+            <AdminInsuranceTable records={verificationData} loading={false} />
+          ) : (
+            <PatientTabs
+              verifications={verificationData}
+              appointments={appointmentData}
+            />
+          )}
+        </Container>
       </div>
     </div>
   );
