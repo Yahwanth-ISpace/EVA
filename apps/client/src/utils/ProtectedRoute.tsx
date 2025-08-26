@@ -1,13 +1,26 @@
+// src/utils/ProtectedRoute.tsx
 import { Navigate } from "react-router-dom";
-import { useAuth } from "../utils/AuthContext";
-import type { JSX } from "react";
+import { useSelector } from "react-redux";
+import type { RootState } from "../redux/store";
 
-const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
-  const { isAuthenticated, loading } = useAuth();
+interface ProtectedRouteProps {
+  children: React.ReactNode;
+  allowedRoles?: string[]; // optional role restriction
+}
 
-  if (loading) return <div>Loading...</div>; // or spinner
+export default function ProtectedRoute({
+  children,
+  allowedRoles,
+}: ProtectedRouteProps) {
+  const { user } = useSelector((state: RootState) => state.authState);
 
-  return isAuthenticated ? children : <Navigate to="/login" />;
-};
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
 
-export default ProtectedRoute;
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
+    return <Navigate to="/unauthorized" replace />;
+  }
+
+  return <>{children}</>;
+}

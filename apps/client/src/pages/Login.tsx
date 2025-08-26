@@ -1,19 +1,24 @@
+// src/pages/Login.tsx
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../utils/AuthContext";
-import { login as loginAPI } from "../api";
+import { useDispatch, useSelector } from "react-redux";
+
+import { login } from "../redux/actions/authActions";
+import type { RootState, AppDispatch } from "../redux/store";
+
 import Logo from "../assets/logo1.png";
 import RightCoverBg from "../assets/reception.png";
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const dispatch = useDispatch<AppDispatch>();
+
+  const { loading, error } = useSelector((state: RootState) => state.authState);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [error, setError] = useState("");
   const [passwordError, setPasswordError] = useState("");
 
   const validatePassword = (pwd: string) => {
@@ -27,39 +32,22 @@ export default function Login() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validatePassword(password)) return;
-    setError("");
-
-    if (!email || !password) {
-      setError("Both email and password are required.");
+    if (!validatePassword(password)) {
       return;
     }
 
     try {
-      const response = await loginAPI({ email, password });
-
-      if (response.access_token && response.user) {
-        const user = response.user;
-        const userPayload = {
-          id: user.id,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          dob: user.dob,
-          email: user.email,
-          role: user.role,
-          payeeId: user.payeeId, // optional
-        };
-
-        login(response.access_token, userPayload);
+      const res = await dispatch(login(email, password));
+      if (res?.token) {
         navigate("/dashboard");
       }
-    } catch (err) {
-      setError("Invalid credentials or server error");
+    } catch {
+      // error is already in Redux store
     }
   };
 
   return (
-    <div className="w-screen h-screen flex font-sans p-5  text-gray-900 bg-[#e4e7eeeb]">
+    <div className="w-screen h-screen flex font-sans p-5 text-gray-900 bg-[#e4e7eeeb]">
       {/* Left Side: Login Form */}
       <div className="w-full md:w-[40%] flex items-center justify-center px-6">
         <div className="w-full max-w-md bg-white p-10 rounded-3xl shadow-2xl space-y-6">
@@ -103,7 +91,9 @@ export default function Login() {
                   value={password}
                   onChange={(e) => {
                     setPassword(e.target.value);
-                    if (passwordError) validatePassword(e.target.value);
+                    if (passwordError) {
+                      validatePassword(e.target.value);
+                    }
                   }}
                   className={`w-full px-4 py-3 border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 placeholder-gray-400 ${
                     passwordError ? "border-red-500" : "border-gray-300"
@@ -133,8 +123,6 @@ export default function Login() {
                 />
                 <span className="text-gray-700 font-medium">Remember me</span>
               </label>
-              {/* Optional: Add Forgot Password Route */}
-              {/* <a href="/forgot-password" className="text-indigo-600 hover:underline">Forgot password?</a> */}
             </div>
 
             {error && (
@@ -145,9 +133,10 @@ export default function Login() {
 
             <button
               type="submit"
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-md font-semibold transition shadow-md hover:shadow-lg"
+              disabled={loading}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-md font-semibold transition shadow-md hover:shadow-lg disabled:opacity-60"
             >
-              Sign In
+              {loading ? "Signing In..." : "Sign In"}
             </button>
           </form>
 
@@ -168,14 +157,11 @@ export default function Login() {
         className="hidden md:flex w-[60%] relative overflow-hidden flex-col justify-between p-12 rounded-[3rem] text-white shadow-lg bg-cover bg-center"
         style={{ backgroundImage: `url(${RightCoverBg})` }}
       >
-        {/* Dark overlay */}
         <div className="absolute inset-0 bg-gradient-to-br from-[#4f46e5]/80 to-[#1e1b4b]/80 z-0" />
-
-        {/* Content sits above overlay */}
         <div className="relative z-10 flex flex-col justify-between h-full">
           <div className="rightCoverImage">
             <p className="uppercase text-sm font-semibold">
-              <img src={Logo} alt="" className="w-20 h-20" />
+              <img src={Logo} alt="logo" className="w-20 h-20" />
             </p>
           </div>
           <div className="mb-12">

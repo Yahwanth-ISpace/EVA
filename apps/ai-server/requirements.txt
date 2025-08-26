@@ -1,17 +1,24 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Core dependencies
-torch==2.1.0+cpu
-torchaudio==2.1.0+cpu
+torch
+torchaudio
 
 # Replace openai-whisper with faster-whisper
 faster-whisper
+google-generativeai
 
 # FastAPI and server dependencies
 fastapi
 uvicorn
 python-multipart
+pydantic
+python-dotenv
+
+# Database and transformer dependencies
+qdrant-client
+sentence-transformers
 
 # Audio processing
 ffmpeg-python
-numpy<2.0
+numpy

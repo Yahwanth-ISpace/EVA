@@ -1,32 +1,25 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { useDispatch, useSelector } from "react-redux";
 
-import { fetchAppointments, fetchVerifications } from "../api";
+import { getAppointments } from "../redux/actions/appointmentsActions";
+import { getVerifications } from "../redux/actions/verificationActions";
 import AdminInsuranceTable from "../components/AdminInsuranceTable";
 import Navbar from "../components/Navbar";
-import type { AppointmentRecord, InsuranceRecord } from "../types/insurance";
-import { useAuth } from "../utils/AuthContext";
+import type { RootState, AppDispatch } from "../redux/store";
 import PatientTabs from "../components/PatientTabs";
 import Container from "../components/Container";
+import { Role } from "../components/RoleWrapper";
 
 export default function Dashboard() {
-  const { role } = useAuth();
+  const dispatch = useDispatch<AppDispatch>();
 
-  const [verificationData, setVerificationData] = useState<InsuranceRecord[]>(
-    []
-  );
-  const [appointmentData, setAppointmentData] = useState<AppointmentRecord[]>(
-    []
-  );
+  const { verifications: verificationData, loading: verificationLoading } =
+    useSelector((state: RootState) => state.verificationsState);
 
   useEffect(() => {
-    const load = async () => {
-      const verifications = await fetchVerifications();
-      setVerificationData(verifications);
-      const appointments = await fetchAppointments();
-      setAppointmentData(appointments);
-    };
-    load();
-  }, []);
+    dispatch(getVerifications());
+    dispatch(getAppointments());
+  }, [dispatch]);
 
   return (
     <div className="Dashboard">
@@ -40,15 +33,17 @@ export default function Dashboard() {
         </div>
 
         {/* Body */}
-        <Container className="h-100 pb-8">
-          {role === "ADMIN" ? (
-            <AdminInsuranceTable records={verificationData} loading={false} />
-          ) : (
-            <PatientTabs
-              verifications={verificationData}
-              appointments={appointmentData}
+        <Container className="pb-8">
+          <Role role="ADMIN">
+            <AdminInsuranceTable
+              records={verificationData}
+              loading={verificationLoading}
             />
-          )}
+          </Role>
+
+          <Role role="PAYEE">
+            <PatientTabs />
+          </Role>
         </Container>
       </div>
     </div>

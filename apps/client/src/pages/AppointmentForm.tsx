@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
-import { createAppointment, fetchOffices, fetchProviders } from "../api";
+import { useDispatch, useSelector } from "react-redux";
+import { useNavigate } from "react-router-dom";
 import Container from "../components/Container";
 import Icon from "../components/Icons";
 import Navbar from "../components/Navbar";
+import type { RootState } from "../redux/store"; // adjust path based on your store setup
 import type {
   Appointment,
-  Office,
   PatientInfo,
-  Provider,
-} from "../types/insurance";
-import { useAuth } from "../utils/AuthContext";
-import { useNavigate } from "react-router-dom";
+} from "../redux/types/appointmentsTypes";
+// adjust path based on your store setup
+import { addAppointment } from "../redux/actions/appointmentsActions";
+import { getOffices } from "../redux/actions/officesActions";
+import { getProviders } from "../redux/actions/providerActions";
+import type { Office } from "../redux/types/officeTypes";
+import type { Provider } from "../redux/types/providerTypes";
 
 const defaultData: Appointment = {
   name: "",
@@ -27,13 +31,22 @@ type FormErrors = Partial<
 >;
 
 export default function AppointmentForm() {
-  const { user } = useAuth();
   const navigate = useNavigate();
+  const dispatch = useDispatch();
+
+  // Redux state
+  const { user } = useSelector((state: RootState) => state.authState);
+  const { providers } = useSelector((state: RootState) => state.providersState);
+  const { offices } = useSelector((state: RootState) => state.officesState);
+  const { loading, error } = useSelector(
+    (state: RootState) => state.appointmentsState
+  );
 
   const [step, setStep] = useState(1);
   const [appointmentDate, setAppointmentDate] = useState<string>("");
   const [appointmentTime, setAppointmentTime] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
+
   const [formData, setFormData] = useState<Appointment>({
     ...defaultData,
     payeeId: user?.payeeId || "",
@@ -43,44 +56,45 @@ export default function AppointmentForm() {
 
   const [errors, setErrors] = useState<FormErrors>({});
   const [status, setStatus] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(false);
-  const [providerHospital, setProviderHospital] = useState<Provider[]>([]);
-  const [providerOffices, setProviderOffices] = useState<Office[]>([]);
 
   // Load providers list
   useEffect(() => {
-    fetchProviders().then(setProviderHospital).catch(console.error);
-  }, []);
+    dispatch(getProviders() as any);
+  }, [dispatch]);
 
   // Load offices when hospital changes
   useEffect(() => {
-    if (!formData.providerId) {
-      setProviderOffices([]);
-      return;
+    if (formData.providerId) {
+      dispatch(getOffices(formData.providerId) as any);
     }
-    fetchOffices(formData.providerId)
-      .then(setProviderOffices)
-      .catch(console.error);
-  }, [formData.providerId]);
+  }, [formData.providerId, dispatch]);
 
   const validateStep1 = () => {
     const newErrors: FormErrors = {};
-    if (!formData.name.trim()) newErrors.name = "Name is required";
-    if (!formData.dob) newErrors.dob = "Date of birth is required";
-    if (!formData.providerId) newErrors.providerId = "Select a hospital";
-    if (!formData.officeId) newErrors.officeId = "Select an office";
+    if (!formData.name.trim()) {
+      newErrors.name = "Name is required";
+    }
+    if (!formData.dob) {
+      newErrors.dob = "Date of birth is required";
+    }
+    if (!formData.providerId) {
+      newErrors.providerId = "Select a hospital";
+    }
+    if (!formData.officeId) {
+      newErrors.officeId = "Select an office";
+    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const validateStep2 = () => {
     const newErrors: FormErrors = {};
-    if (!appointmentDate)
+    if (!appointmentDate) {
       newErrors.appointmentDate = "Appointment date is required";
-    if (!appointmentTime)
+    }
+    if (!appointmentTime) {
       newErrors.appointmentTime = "Appointment time is required";
-    // Optional: require notes if you want
-    // if (!notes.trim()) newErrors.notes = "Please provide visit details";
+    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -93,31 +107,26 @@ export default function AppointmentForm() {
       setFormData((prev) => ({
         ...prev,
         providerId: value,
-        officeId: "", // reset officeId when provider changes
+        officeId: "",
       }));
-      return;
-    }
-
-    if (name === "officeId") {
-      setFormData((prev) => ({
-        ...prev,
-        officeId: value,
-      }));
-      return;
+    } else if (name === "officeId") {
+      setFormData((prev) => ({ ...prev, officeId: value }));
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: value }));
     }
   };
 
   const handleSubmit = async () => {
-    if (!validateStep2()) return;
+    if (!validateStep2()) {
+      return;
+    }
 
-    setLoading(true);
     setStatus("");
     try {
       const combinedDateTime = new Date(
         `${appointmentDate}T${appointmentTime}`
       ).toISOString();
 
-      // Build payload explicitly excluding name and dob
       const { name, dob, ...payloadRest } = formData;
 
       const payload = {
@@ -126,20 +135,16 @@ export default function AppointmentForm() {
         notes,
       };
 
-      const result = await createAppointment(payload);
-      setStatus(result?.status || "Submitted successfully");
+      await dispatch(addAppointment(payload) as any);
+      setStatus("Appointment booked successfully!");
       setFormData(defaultData);
       setAppointmentDate("");
       setAppointmentTime("");
       setNotes("");
       setStep(1);
-
       navigate("/dashboard");
-    } catch (err) {
-      console.error(err);
+    } catch {
       setStatus("Submission failed. Please try again.");
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -159,6 +164,7 @@ export default function AppointmentForm() {
         </div>
 
         <Container className="h-100 pb-8">
+          {/* STEP 1 */}
           {step === 1 && (
             <>
               <div className="w-full max-w-2xl bg-white p-5 py-2">
@@ -167,9 +173,8 @@ export default function AppointmentForm() {
                 </h2>
 
                 <div className="space-y-6">
-                  {/* Step 1 Form */}
+                  {/* Full Name */}
                   <div>
-                    {/* Full Name */}
                     <label className="block text-sm font-medium mb-1">
                       Full Name
                     </label>
@@ -178,16 +183,9 @@ export default function AppointmentForm() {
                       name="name"
                       type="text"
                       value={formData.name}
-                      onChange={handleChange}
-                      className={`w-full border px-4 py-3 rounded-md focus:outline-none focus:ring-2 ${
-                        errors.name
-                          ? "border-red-500 focus:ring-red-500"
-                          : "border-gray-300 focus:ring-blue-500"
-                      }`}
+                      disabled
+                      className="w-full border px-4 py-3 rounded-md bg-gray-100"
                     />
-                    {errors.name && (
-                      <p className="text-sm text-red-500">{errors.name}</p>
-                    )}
                   </div>
 
                   {/* DOB */}
@@ -200,16 +198,9 @@ export default function AppointmentForm() {
                       name="dob"
                       type="date"
                       value={formData.dob}
-                      onChange={handleChange}
-                      className={`w-full border px-4 py-3 rounded-md focus:outline-none focus:ring-2 ${
-                        errors.dob
-                          ? "border-red-500 focus:ring-red-500"
-                          : "border-gray-300 focus:ring-blue-500"
-                      }`}
+                      disabled
+                      className="w-full border px-4 py-3 rounded-md bg-gray-100"
                     />
-                    {errors.dob && (
-                      <p className="text-sm text-red-500">{errors.dob}</p>
-                    )}
                   </div>
 
                   {/* Hospital */}
@@ -222,14 +213,12 @@ export default function AppointmentForm() {
                       name="providerId"
                       value={formData.providerId}
                       onChange={handleChange}
-                      className={`w-full border px-4 py-3 rounded-md focus:outline-none focus:ring-2 ${
-                        errors.providerId
-                          ? "border-red-500 focus:ring-red-500"
-                          : "border-gray-300 focus:ring-blue-500"
+                      className={`w-full border px-4 py-3 rounded-md ${
+                        errors.providerId ? "border-red-500" : "border-gray-300"
                       }`}
                     >
                       <option value="">Select a hospital</option>
-                      {providerHospital.map((hospital) => (
+                      {providers.map((hospital: Provider) => (
                         <option key={hospital.id} value={hospital.id}>
                           {hospital.firstName} {hospital.lastName} |{" "}
                           {hospital.specialty}
@@ -254,18 +243,21 @@ export default function AppointmentForm() {
                       value={formData.officeId}
                       onChange={handleChange}
                       disabled={!formData.providerId}
-                      className={`w-full border px-4 py-3 rounded-md focus:outline-none focus:ring-2 ${
-                        errors.officeId
-                          ? "border-red-500 focus:ring-red-500"
-                          : "border-gray-300 focus:ring-blue-500"
+                      className={`w-full border px-4 py-3 rounded-md ${
+                        errors.officeId ? "border-red-500" : "border-gray-300"
                       }`}
                     >
                       <option value="">Select an office</option>
-                      {providerOffices.map((office) => (
-                        <option key={office.id} value={office.id}>
-                          {office.name}
-                        </option>
-                      ))}
+                      {offices
+                        .filter(
+                          (office: Office) =>
+                            office.providerId === formData.providerId
+                        )
+                        .map((office: Office) => (
+                          <option key={office.id} value={office.id}>
+                            {office.name}
+                          </option>
+                        ))}
                     </select>
                     {errors.officeId && (
                       <p className="text-sm text-red-500">{errors.officeId}</p>
@@ -273,7 +265,6 @@ export default function AppointmentForm() {
                   </div>
                 </div>
               </div>
-              {/* Next Button */}
               <div className="flex justify-end pt-2">
                 <button
                   type="button"
@@ -288,6 +279,7 @@ export default function AppointmentForm() {
             </>
           )}
 
+          {/* STEP 2 */}
           {step === 2 && (
             <>
               <div className="w-full max-w-2xl bg-white p-5 py-2">
@@ -302,10 +294,10 @@ export default function AppointmentForm() {
                     type="date"
                     value={appointmentDate}
                     onChange={(e) => setAppointmentDate(e.target.value)}
-                    className={`w-full border px-4 py-3 rounded-md focus:outline-none focus:ring-2 ${
+                    className={`w-full border px-4 py-3 rounded-md ${
                       errors.appointmentDate
-                        ? "border-red-500 focus:ring-red-500"
-                        : "border-gray-300 focus:ring-blue-500"
+                        ? "border-red-500"
+                        : "border-gray-300"
                     }`}
                   />
                   {errors.appointmentDate && (
@@ -348,6 +340,7 @@ export default function AppointmentForm() {
                   />
                 </div>
               </div>
+
               {/* Actions */}
               <div className="flex justify-between">
                 <button
@@ -379,6 +372,9 @@ export default function AppointmentForm() {
                 >
                   {status}
                 </p>
+              )}
+              {error && (
+                <p className="mt-4 text-center text-red-600">{error}</p>
               )}
             </>
           )}

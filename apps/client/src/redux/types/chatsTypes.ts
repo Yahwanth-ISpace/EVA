@@ -1,0 +1,23 @@
+// Action types
+const chatTypes = {
+  CHAT_LOADING: "CHAT_LOADING",
+  CHAT_SUCCESS: "CHAT_SUCCESS",
+  CHAT_ERROR: "CHAT_ERROR",
+
+  SEND_CHAT_SUCCESS: "SEND_CHAT_SUCCESS",
+  SEND_CHAT_FAILURE: "SEND_CHAT_FAILURE",
+
+  FETCH_HISTORY_SUCCESS: "FETCH_HISTORY_SUCCESS",
+  FETCH_HISTORY_FAILURE: "FETCH_HISTORY_FAILURE",
+
+  CLEAR_HISTORY_SUCCESS: "CLEAR_HISTORY_SUCCESS",
+  CLEAR_HISTORY_FAILURE: "CLEAR_HISTORY_FAILURE",
+};
+
+// Chat message type
+export type ChatMessage = {
+  user: "me" | "bot";
+  text: string;
+};
+
+export default chatTypes;

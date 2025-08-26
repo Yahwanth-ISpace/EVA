@@ -11,9 +11,10 @@ export default function Container({
 }: ContainerProps) {
   return (
     <div
-      className={`bg-white rounded-xl shadow-md max-w-7xl mx-auto px-6 p-4 w-full min-h-[550px] h-full flex flex-col justify-between ${className}`}
+      className={`bg-white rounded-xl shadow-md max-w-7xl mx-auto px-6 p-4 w-full h-[590px] flex flex-col ${className}`}
     >
-      {children}
+      <div>{children}</div>
+      
     </div>
   );
 }

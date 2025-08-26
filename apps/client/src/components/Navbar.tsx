@@ -1,13 +1,17 @@
+import { useSelector } from "react-redux";
 import { useLocation, useNavigate } from "react-router-dom";
+
 import Logo from "../assets/logo1.png";
 import Icon from "./Icons";
-import { useAuth } from "../utils/AuthContext";
+
+import type { RootState } from "../redux/store";
+import { logout } from "../redux/actions/authActions";
 
 export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout } = useAuth();
-  const { user } = useAuth();
+
+  const { user } = useSelector((state: RootState) => state.authState);
 
   const handleLogout = () => {
     logout();
@@ -15,7 +19,7 @@ export default function Navbar() {
   };
 
   return (
-    <nav className="flex items-center justify-between">
+    <nav className="flex items-center justify-between" aria-labelledby="navbar">
       {/* Left Side - Logo + App Name + User Info */}
 
       <div className="wrapper flex items-center justify-between gap-1 divide-x-2 divide-gray-400">
@@ -25,7 +29,7 @@ export default function Navbar() {
           </div>
           <div className="titleWrapper flex flex-col text-center">
             <h1 className="text-3xl font-bold text-gray-900 pr-5 text-center">
-              ClaimBot
+              CovrAi
             </h1>
             {/* <hr className="text-gray-400" />
                 <h3 className="text-xs text-gray-500 font-mono mt-1 tracking-widest">

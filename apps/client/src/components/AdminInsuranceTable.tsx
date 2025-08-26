@@ -1,10 +1,10 @@
-import { Link } from "react-router-dom";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css"; // Ensure skeleton CSS is imported
-import type { InsuranceRecord } from "../types/insurance";
+import { Link } from "react-router-dom";
+import type { VerificationRecord } from "../redux/types/verificationTypes";
 
 interface Props {
-  records: InsuranceRecord[];
+  records: VerificationRecord[];
   loading: boolean; // Added loading prop for skeleton display
 }
 

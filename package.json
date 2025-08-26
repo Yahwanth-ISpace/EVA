@@ -1,5 +1,5 @@
 {
-  "name": "claimbot",
+  "name": "covrai",
   "version": "1.0.0",
   "scripts": {
     "start:backend": "cd apps/backend && npm run start:dev",

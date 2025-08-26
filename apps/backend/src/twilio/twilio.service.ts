@@ -36,8 +36,8 @@ export class TwilioService {
   generateTwiML(payeeId: string): string {
     return `
     <Response>
-      <Say voice="alice">Hello. This is Springfield Clinic. We are verifying, insurance coverage, for your payee.</Say>
-      <Pause length="2"/>
+      <Say voice="alice">Hello. This is Springfield Clinic. We are verifying, insurance coverage, for your patient.</Say>
+      <Pause length="0.5"/>
       <Say>Please provide insurance coverage details now.</Say>
       <Record
         maxLength="60"

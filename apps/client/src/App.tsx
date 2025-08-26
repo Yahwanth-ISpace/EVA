@@ -1,54 +1,59 @@
+// src/App.tsx
 import {
   BrowserRouter as Router,
   Routes,
   Route,
   Navigate,
 } from "react-router-dom";
+import { useSelector } from "react-redux";
 
-import Login from "./pages/Login";
-import Register from "./pages/SignUp";
-import AppointmentForm from "./pages/AppointmentForm";
 import Dashboard from "./pages/Dashboard";
+import ErrorPage from "./pages/ErrorPage";
+import UnauthorizedPage from "./pages/UnauthorizedPage";
+import SessionExpiredPage from "./pages/SessionExpired";
+import AppointmentForm from "./pages/AppointmentForm";
 import InsuranceDetails from "./pages/InsuranceDetails";
 
-import { useAuth } from "./utils/AuthContext";
 import ProtectedRoute from "./utils/ProtectedRoute";
 import Layout from "./components/Layout";
+import type { RootState } from "./redux/store";
+import Login from "./pages/Login";
+import SignUp from "./pages/SignUp";
+import ChatModal from "./components/ChatModal";
+import ChatWindow from "./components/ChatWindow";
+import ChatButton from "./components/ChatButton";
+import { useState } from "react";
 
 function App() {
-  const { isAuthenticated, loading } = useAuth();
+  const { user, loading } = useSelector((state: RootState) => state.authState);
+  
 
   if (loading) return <div>Loading...</div>;
 
   return (
     <Router>
       <div className="main-container">
-        {/* <div className="max-w-7xl mx-auto"> */}
         <Routes>
           {/* Public routes without Layout */}
           <Route
             path="/login"
-            element={isAuthenticated ? <Navigate to="/dashboard" /> : <Login />}
+            element={user ? <Navigate to="/dashboard" /> : <Login />}
           />
           <Route
-            path="/register"
-            element={
-              isAuthenticated ? <Navigate to="/dashboard" /> : <Register />
-            }
+            path="/signup"
+            element={user ? <Navigate to="/dashboard" /> : <SignUp />}
           />
 
           {/* Protected routes with Layout */}
           <Route element={<Layout />}>
             <Route
               path="/"
-              element={
-                <Navigate to={isAuthenticated ? "/dashboard" : "/login"} />
-              }
+              element={<Navigate to={user ? "/dashboard" : "/login"} />}
             />
             <Route
               path="/dashboard"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={["ADMIN", "PAYEE"]}>
                   <Dashboard />
                 </ProtectedRoute>
               }
@@ -56,7 +61,7 @@ function App() {
             <Route
               path="/appointment-form"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={["ADMIN", "PAYEE"]}>
                   <AppointmentForm />
                 </ProtectedRoute>
               }
@@ -64,11 +69,16 @@ function App() {
             <Route
               path="/insurance/:id"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={["ADMIN", "PAYEE"]}>
                   <InsuranceDetails />
                 </ProtectedRoute>
               }
             />
+
+            {/* Error/utility pages */}
+            <Route path="/unauthorized" element={<UnauthorizedPage />} />
+            <Route path="/session-expired" element={<SessionExpiredPage />} />
+            <Route path="/error" element={<ErrorPage />} />
           </Route>
         </Routes>
       </div>
