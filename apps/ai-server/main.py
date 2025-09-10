@@ -5,15 +5,15 @@ from rag.routes import router as rag_router
 
 app = FastAPI(title="CovrAi AI Server", version="1.0.0")
 
-origins = [
-    "http://localhost:5173",  # your frontend
-    "https://your-production-frontend.com",
-]
+# origins = [
+#     "http://localhost:5173",  # your frontend
+#     "https://your-production-frontend.com",
+# ]
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+     allow_origins=["*"],  # temporarily allow all origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

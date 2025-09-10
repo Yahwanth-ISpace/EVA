@@ -5,32 +5,44 @@ from rag.qdrant_client import qc, ensure_collection
 from rag.llm import generate_answer
 from rag.session_manager import session_manager
 import uuid
+from typing import List, Dict
 
 router = APIRouter(tags=["RAG"])
 
-# Initialize embeddings and ensure Qdrant collection exists
+# -------------------- Initialization --------------------
 init_embedder()
 ensure_collection()
 
-# -------------------- Utility --------------------
-def chunk_text(text: str, max_words: int = 150):
+# -------------------- Utility Functions --------------------
+def chunk_text(text: str, max_words: int = 150) -> List[str]:
+    """
+    Splits text into chunks of max_words.
+    """
     words = text.split()
     return [" ".join(words[i:i + max_words]) for i in range(0, len(words), max_words)]
+
 
 # -------------------- Ingest Text --------------------
 @router.post("/ingest/text")
 def ingest_text(payload: IngestText):
+    """
+    Ingest text into the vector database. Text is chunked if it exceeds 150 words.
+    Each chunk is embedded and stored with payerId and verification_id.
+    """
+    
+    tenant = payload.metadata.get("payerId", payload.tenant_id)  
+    doc_id = payload.metadata.get("verificationId", payload.doc_id)
+    
     chunks = chunk_text(payload.text) if len(payload.text.split()) > 150 else [payload.text]
     vectors = embed(chunks)
 
-    points = []
-    points.extend(
+    points = [
         {
             "id": str(uuid.uuid4()),
             "vector": vec,
             "payload": {
-                "payer_id": payload.payer_id,              # organization ID
-                "verification_id": payload.verification_id,  # verification call ID
+                "tenant_id": tenant,
+                "doc_id": doc_id,
                 "chunk_id": i,
                 "title": payload.title,
                 "text": chunk,
@@ -38,24 +50,32 @@ def ingest_text(payload: IngestText):
             },
         }
         for i, (chunk, vec) in enumerate(zip(chunks, vectors))
-    )
+    ]
+
     qc.upsert(collection_name="kb_default", points=points)
+
     return {
         "status": "ok",
-        "verification_id": payload.verification_id,
+        "doc_id": doc_id,
         "chunks": len(points),
-        "payer_id": payload.payer_id
+        "payerId": payload.payerId
     }
+
 
 # -------------------- Query --------------------
 @router.post("/query")
 def query(payload: Query):
+    """
+    Search for relevant chunks using question embeddings.
+    Filters by payerId and returns top-k results above min_score.
+    """
     qvec = embed([payload.question])[0]
+
     res = qc.search(
         collection_name="kb_default",
         query_vector=qvec,
         limit=payload.top_k,
-        query_filter={"must": [{"key": "payer_id", "match": {"value": payload.payer_id}}]},
+        query_filter={"must":[{"key":"tenant_id","match":{"value":payload.payerId}}]},
         with_payload=True,
         score_threshold=payload.min_score
     )
@@ -64,43 +84,58 @@ def query(payload: Query):
         return {"status": "needs_clarification", "answer": "Not enough context", "citations": []}
 
     ctx = [
-        {"verification_id": p.payload["verification_id"], "chunk_id": p.payload["chunk_id"], "text": p.payload["text"]}
+        {"doc_id": p.payload.get("doc_id"),"chunk_id": p.payload["chunk_id"], "text": p.payload["text"]}
         for p in res
     ]
+
     answer = generate_answer(ctx, payload.question)
+
     return {
         "status": "answerable",
         "answer": answer,
-        "citations": [f'{c["verification_id"]}:{c["chunk_id"]}' for c in ctx]
+        "citations": [f'{c["doc_id"]}:{c["chunk_id"]}' for c in ctx]
     }
 
-# -------------------- Chat Endpoint --------------------
+
+# -------------------- Chat --------------------
 @router.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest):
-    # Directly call the query function
+    """
+    Chat endpoint that queries the vector DB and returns an answer along with citations.
+    Also stores session history for the user.
+    """
     query_payload = Query(
-        payer_id=payload.payer_id,  # now using payer_id instead of tenant_id
+        payerId=payload.payerId,  # ✅ Use payerId here
         question=payload.question,
         top_k=payload.top_k,
         min_score=payload.min_score
     )
+
     query_resp = query(query_payload)
 
-    answer = query_resp.get("answer", "I don’t have enough context to answer.")
+    answer = query_resp.get("answer", "I don't have enough context to answer.")
     status = query_resp.get("status", "needs_clarification")
     citations = query_resp.get("citations", [])
 
-    # Save session history
-    session_manager.add_message(payload.user_id, payload.question, answer)
+    session_manager.add_message(payload.user_Id, payload.question, answer)
 
     return ChatResponse(status=status, answer=answer, citations=citations)
 
-# -------------------- History & Clear --------------------
-@router.get("/chat/history/{user_id}")
-def get_history(user_id: str):
-    return {"history": session_manager.get_session(user_id)}
 
-@router.post("/chat/clear/{user_id}")
-def clear_history(user_id: str):
-    session_manager.clear_session(user_id)
+
+# -------------------- Chat History --------------------
+@router.get("/chat/history/{user_Id}")
+def get_history(user_Id: str):
+    """
+    Retrieve chat session history for a specific user.
+    """
+    return {"history": session_manager.get_session(user_Id)}
+
+
+@router.post("/chat/clear/{user_Id}")
+def clear_history(user_Id: str):
+    """
+    Clear chat session history for a specific user.
+    """
+    session_manager.clear_session(user_Id)
     return {"status": "cleared"}
