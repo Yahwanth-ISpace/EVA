@@ -1,8 +1,6 @@
 // src/utils/api.ts
 import store from "../redux/store";
 
-const BASE_URL = import.meta.env.VITE_BACKEND_URL;
-
 interface ErrorResponse {
   message: string;
 }
@@ -23,11 +21,10 @@ const handleResponse = async <T>(res: Response): Promise<T> => {
       const error: ErrorResponse = text ? JSON.parse(text) : {};
 
       if (res.status === 401) {
-        // Determine if it's a session expiry or just not logged in
         if (error.message?.toLowerCase().includes("jwt expired")) {
           window.location.href = "/session-expired";
         } else {
-          window.location.href = "/login"; // or just throw
+          window.location.href = "/login";
         }
       } else if (res.status === 403) {
         window.location.href = "/unauthorized";
@@ -43,42 +40,56 @@ const handleResponse = async <T>(res: Response): Promise<T> => {
 };
 
 export const api = {
-  get: async <T>(url: string): Promise<T> => {
-    const res = await fetch(`${BASE_URL}${url}`, {
-      headers: getAuthHeaders(),
-    });
+  get: async <T>(url: string, baseUrl?: string): Promise<T> => {
+    const res = await fetch(
+      `${baseUrl || import.meta.env.VITE_BACKEND_URL}${url}`,
+      {
+        headers: getAuthHeaders(),
+      }
+    );
     return handleResponse<T>(res);
   },
 
   post: async <TResponse, TRequest = unknown>(
     url: string,
-    body: TRequest
+    body: TRequest,
+    baseUrl?: string
   ): Promise<TResponse> => {
-    const res = await fetch(`${BASE_URL}${url}`, {
-      method: "POST",
-      headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-    });
+    const res = await fetch(
+      `${baseUrl || import.meta.env.VITE_BACKEND_URL}${url}`,
+      {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(body),
+      }
+    );
     return handleResponse<TResponse>(res);
   },
 
   put: async <TResponse, TRequest = unknown>(
     url: string,
-    body: TRequest
+    body: TRequest,
+    baseUrl?: string
   ): Promise<TResponse> => {
-    const res = await fetch(`${BASE_URL}${url}`, {
-      method: "PUT",
-      headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-    });
+    const res = await fetch(
+      `${baseUrl || import.meta.env.VITE_BACKEND_URL}${url}`,
+      {
+        method: "PUT",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(body),
+      }
+    );
     return handleResponse<TResponse>(res);
   },
 
-  delete: async <T>(url: string): Promise<T> => {
-    const res = await fetch(`${BASE_URL}${url}`, {
-      method: "DELETE",
-      headers: getAuthHeaders(),
-    });
+  delete: async <T>(url: string, baseUrl?: string): Promise<T> => {
+    const res = await fetch(
+      `${baseUrl || import.meta.env.VITE_BACKEND_URL}${url}`,
+      {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      }
+    );
     return handleResponse<T>(res);
   },
 };

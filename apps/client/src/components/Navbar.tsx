@@ -6,15 +6,17 @@ import Icon from "./Icons";
 
 import type { RootState } from "../redux/store";
 import { logout } from "../redux/actions/authActions";
+import { useAppDispatch } from "../utils/hooks";
 
 export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
+  const dispatch = useAppDispatch();
 
   const { user } = useSelector((state: RootState) => state.authState);
 
   const handleLogout = () => {
-    logout();
+    dispatch(logout());
     navigate("/login");
   };
 

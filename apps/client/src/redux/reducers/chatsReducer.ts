@@ -36,10 +36,33 @@ export const chatsReducer = (state = initialState, action: any): ChatState => {
       };
 
     case chatTypes.FETCH_HISTORY_SUCCESS:
-      return { ...state, messages: action.payload }; // array of ChatMessage
+      return {
+        ...state,
+        messages:
+          action.payload && action.payload.length > 0
+            ? action.payload.flatMap((h: any) => [
+                { user: "me", text: h.question },
+                { user: "bot", text: h.answer },
+              ])
+            : [
+                {
+                  user: "bot",
+                  text: `Hi ${action.firstName}, I am AI bot here to assist you with your query.`,
+                },
+              ],
+      };
 
     case chatTypes.CLEAR_HISTORY_SUCCESS:
       return { ...state, messages: [] };
+
+    case chatTypes.CHAT_ADD_MESSAGE:
+      return { ...state, messages: [...state.messages, action.payload] };
+
+    case chatTypes.CHAT_REMOVE_TYPING:
+      return {
+        ...state,
+        messages: state.messages.filter((m) => !m.isTyping),
+      };
 
     default:
       return state;

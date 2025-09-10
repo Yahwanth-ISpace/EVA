@@ -24,6 +24,7 @@ export interface CreatePayeeDto {
 }
 
 export interface Payee {
+  data: any;
   id: string;
   userId: string;
   firstName: string;

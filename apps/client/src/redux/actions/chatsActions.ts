@@ -1,6 +1,9 @@
 import type { Dispatch } from "redux";
-import { api } from "../../utils/api";
-import chatTypes from "../types/chatsTypes";
+import { chatApi } from "../../utils/chatApi";
+import chatTypes, {
+  type ChatMessage,
+  type ChatResponse,
+} from "../types/chatsTypes";
 
 const withLoading = async <T>(
   dispatch: Dispatch,
@@ -22,11 +25,21 @@ const withLoading = async <T>(
   }
 };
 
+// convenience actions used by the component
+export const addMessage = (msg: ChatMessage) => ({
+  type: chatTypes.CHAT_ADD_MESSAGE,
+  payload: msg,
+});
+
+export const removeTyping = () => ({
+  type: chatTypes.CHAT_REMOVE_TYPING,
+});
+
 // Send chat message
 export const sendChat =
   (payload: {
     payerId: string;
-    userId: string;
+    user_Id: string;
     question: string;
     top_k: number;
     min_score: number;
@@ -34,24 +47,39 @@ export const sendChat =
   async (dispatch: Dispatch) =>
     withLoading(
       dispatch,
-      () => api.post("/rag/chat", payload).then((res: any) => res.data),
+      () => chatApi.post("/chat", payload).then((res: any) => res),
       chatTypes.SEND_CHAT_SUCCESS,
       "Message sent",
       chatTypes.SEND_CHAT_FAILURE
     );
 
 // Get chat history
-export const getChatHistory = (userId: string) => async (dispatch: Dispatch) =>
-  withLoading(
-    dispatch,
-    () =>
-      api
-        .get(`/rag/chat/history/${userId}`)
-        .then((res: any) => res.data.history),
-    chatTypes.FETCH_HISTORY_SUCCESS,
-    "Chat history fetched",
-    chatTypes.FETCH_HISTORY_FAILURE
-  );
+// Get chat history
+export const getChatHistory =
+  (userId: string, firstName: string) => async (dispatch: Dispatch) => {
+    dispatch({ type: chatTypes.CHAT_LOADING });
+    try {
+      const res = (await chatApi.get(`/chat/history/${userId}`)) as {
+        history: any;
+      };
+
+      dispatch({
+        type: chatTypes.FETCH_HISTORY_SUCCESS,
+        payload: res.history,
+        firstName, // pass it directly
+      });
+
+      dispatch({
+        type: chatTypes.CHAT_SUCCESS,
+        payload: "Chat history fetched",
+      });
+    } catch (err: any) {
+      dispatch({
+        type: chatTypes.FETCH_HISTORY_FAILURE,
+        payload: err.message,
+      });
+    }
+  };
 
 // Clear chat history
 export const clearChatHistory =
@@ -59,7 +87,7 @@ export const clearChatHistory =
     withLoading(
       dispatch,
       () =>
-        api.post(`/rag/chat/clear/${userId}`, {}).then((res: any) => res.data),
+        chatApi.post(`/chat/clear/${userId}`, {}).then((res: any) => res.data),
       chatTypes.CLEAR_HISTORY_SUCCESS,
       "Chat cleared",
       chatTypes.CLEAR_HISTORY_FAILURE

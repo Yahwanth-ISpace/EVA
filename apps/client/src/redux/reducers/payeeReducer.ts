@@ -32,9 +32,9 @@ export const payeeReducer = (state = initialState, action: any): PayeeState => {
       return { ...state, payees: action.payload };
 
     case payeeTypes.FETCH_PAYEE_SUCCESS:
-      console.log(action.payload.data);
       return {
         ...state,
+        loading: false,
         payee: action.payload,
       };
 

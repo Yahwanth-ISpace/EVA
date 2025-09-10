@@ -52,6 +52,7 @@ export const logout = () => (dispatch: Dispatch) => {
   window.location.href = "/login";
 
   localStorage.removeItem("token");
+  localStorage.removeItem("user");
   dispatch({ type: LOGOUT });
   persistor.purge();
 };

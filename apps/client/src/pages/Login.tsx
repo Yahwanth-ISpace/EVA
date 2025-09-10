@@ -166,7 +166,7 @@ export default function Login() {
           </div>
           <div className="mb-12">
             <h1 className="text-5xl font-serif font-semibold leading-tight mb-4 drop-shadow-md">
-              AI Insurance Claims <br /> Reinvented
+              AI Insurance Verifications <br /> Reinvented
             </h1>
             <p className="text-base max-w-sm leading-relaxed text-white/90 drop-shadow-sm">
               Automate insurance verification, manage patient workflows, and

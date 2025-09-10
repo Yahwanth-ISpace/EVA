@@ -20,5 +20,5 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(transcribe_router, prefix="/transcription", tags=["Transcription"])
-app.include_router(rag_router, prefix="/rag", tags=["RAG"])
+app.include_router(transcribe_router)
+app.include_router(rag_router)

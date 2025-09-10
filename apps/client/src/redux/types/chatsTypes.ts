@@ -12,12 +12,22 @@ const chatTypes = {
 
   CLEAR_HISTORY_SUCCESS: "CLEAR_HISTORY_SUCCESS",
   CLEAR_HISTORY_FAILURE: "CLEAR_HISTORY_FAILURE",
+
+  CHAT_ADD_MESSAGE: "CHAT_ADD_MESSAGE",
+  CHAT_REMOVE_TYPING: "CHAT_REMOVE_TYPING",
 };
 
 // Chat message type
 export type ChatMessage = {
   user: "me" | "bot";
   text: string;
+  isTyping?: boolean;
+};
+
+export type ChatResponse = {
+  status: "answerable" | "need more clarity";
+  answer: string;
+  citations: [];
 };
 
 export default chatTypes;

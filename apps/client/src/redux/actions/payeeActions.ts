@@ -34,13 +34,14 @@ export const getAllPayees = () => async (dispatch: Dispatch) =>
   );
 
 // Fetch a payee by ID
-export const getPayeeById = (id: string) => async (dispatch: Dispatch) =>
+export const getPayeeById = (id: string) => async (dispatch: any) =>
   withLoading<Payee>(
     dispatch,
     () =>
-      api
-        .get(`/payees/${id}`)
-        .then((res: any) => (console.log(res.data), { ...res.data })),
+      api.get(`/payees/${id}`).then((res: any) => {
+        console.log(res);
+        return res as Payee;
+      }),
     payeeTypes.FETCH_PAYEE_SUCCESS,
     "Payee fetched",
     payeeTypes.FETCH_PAYEE_FAILURE

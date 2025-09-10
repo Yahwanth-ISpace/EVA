@@ -1,12 +1,11 @@
-import { Outlet } from "react-router-dom";
-import ChatButton from "./ChatButton";
-import ChatModal from "./ChatModal";
-import ChatWindow from "./ChatWindow";
 import { useEffect, useState } from "react";
 import { useSelector } from "react-redux";
-import type { RootState } from "../redux/store";
+import { Outlet } from "react-router-dom";
 import { getPayeeById } from "../redux/actions/payeeActions";
+import type { RootState } from "../redux/store";
 import { useAppDispatch } from "../utils/hooks";
+import ChatButton from "./ChatButton";
+import ChatWindow from "./ChatWindow";
 
 export default function Layout() {
   const [open, setOpen] = useState(false);
@@ -15,22 +14,49 @@ export default function Layout() {
   const { payee } = useSelector((state: RootState) => state.payeeState);
 
   useEffect(() => {
-    if (user && user.payeeId) {
+    if (user?.payeeId) {
       dispatch(getPayeeById(user.payeeId));
     }
-    console.log(payee);
-  }, []);
+  }, [dispatch, user]);
+
+  useEffect(() => {
+    if (payee) {
+      console.log("Fetched payee:", payee.payerId);
+    }
+  }, [payee]);
+
+  // Close chat on ESC key
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    if (open) {
+      window.addEventListener("keydown", handleEsc);
+    }
+    return () => {
+      window.removeEventListener("keydown", handleEsc);
+    };
+  }, [open]);
+
   return (
     <div className="main-container min-h-screen w-screen bg-[#F7F8FA]">
       <div className="min-h-screen text-gray-900 px-6 pt-4 max-w-7xl mx-auto">
         <Outlet />
       </div>
+
+      {/* Chat Button */}
       <ChatButton onClick={() => setOpen(true)} />
-      <ChatModal isOpen={open} onClose={() => setOpen(false)}>
-        {payee && payee.payerId && user && user.id && (
-          <ChatWindow payerId={payee.payerId} userId={user.id} />
-        )}
-      </ChatModal>
+
+      {/* Chat Window */}
+      {open && user?.id && payee?.payerId && (
+        <ChatWindow
+          payerId={payee.payerId}
+          userId={user.id}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </div>
   );
 }
