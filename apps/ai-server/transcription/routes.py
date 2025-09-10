@@ -6,7 +6,7 @@ from config import UPLOAD_FOLDER
 
 router = APIRouter(tags=["Transcription"])
 
-@router.post("/transcribe", summary="Transcribe audio")
+@router.post("transcribe", summary="Transcribe audio")
 async def transcribe(file: UploadFile = File(...)):
     logging.info(f"Received file: {file.filename}")
     filepath = os.path.join(UPLOAD_FOLDER, file.filename)
