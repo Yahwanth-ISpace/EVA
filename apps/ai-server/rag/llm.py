@@ -16,10 +16,6 @@ def grounded_prompt(
     question: str, 
     conversation_history: List[Dict] = []
 ) -> str:
-    """
-    Build a prompt that grounds the LLM response in provided insurance context.
-    Dynamically adapts based on user question specificity and conversation history.
-    """
     cites = "\n\n".join([f"[{c.get('chunk_id')}] {c['text']}" for c in context_chunks])
     return f"""
 SYSTEM:
@@ -74,9 +70,12 @@ def generate_answer(
     prompt = grounded_prompt(context, question, conversation_history) + "\n" + FINAL_ANSWER_FORMAT
 
     if PROVIDER == "gemini":
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        resp = model.generate_content(prompt)
-        cleaned_text = clean_output(resp.text.strip())
-        return cleaned_text
+        try:
+            model = genai.GenerativeModel("gemini-2.5-flash")  # v1 only
+            resp = model.generate_content(prompt)
+            return clean_output(resp.text.strip())
+        except Exception as e:
+            logger.error(f"Gemini API error: {e}")
+            return "⚠️ Sorry, I couldn’t generate an answer right now. Please try again."
 
     return "Provider not supported."
