@@ -1,3 +1,5 @@
+import os
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from transcription.routes import router as transcribe_router
@@ -19,7 +21,11 @@ app.add_middleware(
 )
 
 
-
-# Include routers
+# Routers
 app.include_router(transcribe_router)
 app.include_router(rag_router)
+
+# Run when executed directly
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))  # Railway provides PORT
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)

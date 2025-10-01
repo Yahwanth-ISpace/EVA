@@ -1,23 +1,20 @@
-# Base image with Python 3.10
+# Base image
 FROM python:3.10-slim
 
-# Install ffmpeg (required by whisper)
+# Install ffmpeg
 RUN apt-get update && apt-get install -y ffmpeg && apt-get clean
 
-# Set working directory inside the container
+# Set working dir
 WORKDIR /app
 
-# Copy the ai-server code
+# Copy code
 COPY . .
 
-# Install dependencies
+# Install deps
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose a dummy port (won’t matter for Railway)
+# Expose Railway default port
 EXPOSE 8000
 
-# Use Railway-provided PORT environment variable
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
-
-
-
+# Start app
+CMD ["python", "main.py"]
