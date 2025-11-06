@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.api_core._python_version_support")
+
 import os
 import uvicorn
 from fastapi import FastAPI
