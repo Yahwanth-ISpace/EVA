@@ -23,10 +23,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+def root():
+    return {"status": "ok"}
 
 # Routers
-app.include_router(transcribe_router)
-app.include_router(rag_router)
+app.include_router(transcribe_router, prefix="/transcription")
+app.include_router(rag_router, prefix="/rag")
+
 
 
 # Run when executed directly
