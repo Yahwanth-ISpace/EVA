@@ -15,6 +15,7 @@ python-multipart
 pydantic
 pydantic-settings
 python-dotenv
+aiofiles
 
 # Database and transformer dependencies
 qdrant-client
