@@ -1,8 +1,8 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Core dependencies
-torch==2.4.1
-torchaudio==2.4.1
+torch
+torchaudio
 
 # Replace openai-whisper with faster-whisper
 faster-whisper==1.0.3
