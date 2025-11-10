@@ -28,6 +28,7 @@ app.add_middleware(
 app.include_router(transcribe_router)
 app.include_router(rag_router)
 
+
 # Run when executed directly
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))  # Railway provides PORT
