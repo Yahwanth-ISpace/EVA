@@ -22,7 +22,7 @@ export class TranscriptionService {
     form.append('file', fs.createReadStream(filePath));
 
     try {
-      const response = await axios.post(`${ai_server_url}/transcribe`, form, {
+      const response = await axios.post(`${ai_server_url}/transcription/transcribe`, form, {
         headers: form.getHeaders(),
         timeout: 60000, // 60 seconds timeout
       });

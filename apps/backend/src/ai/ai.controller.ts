@@ -7,13 +7,13 @@ export class AiController {
 
   @Post('ingest-text')
   async ingestText(@Body() body: any) {
-    const { data } = await axios.post(`${this.aiBase}/ingest/text`, body);
+    const { data } = await axios.post(`${this.aiBase}/rag/ingest/text`, body);
     return data;
   }
 
   @Post('ask')
   async ask(@Body() body: { tenant_id?: string; question: string; top_k?: number }) {
-    const { data } = await axios.post(`${this.aiBase}/query`, body);
+    const { data } = await axios.post(`${this.aiBase}/rag/query`, body);
     return data;
   }
 }
