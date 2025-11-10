@@ -47,5 +47,6 @@ async def transcribe(file: UploadFile = File(...)):
 
     finally:
         # Cleanup temp file
-        if os.path.exists(filepath):
+         if 'filepath' in locals() and os.path.exists(filepath):
+            await asyncio.sleep(0.2)
             os.remove(filepath)

@@ -8,7 +8,7 @@ VENV_PATH = Path(VENV_NAME)
 IS_WINDOWS = os.name == "nt"
 PYTHON_BIN = VENV_PATH / ("Scripts" if IS_WINDOWS else "bin") / ("python.exe" if IS_WINDOWS else "python")
 PIP_BIN = VENV_PATH / ("Scripts" if IS_WINDOWS else "bin") / ("pip.exe" if IS_WINDOWS else "pip")
-SERVER_COMMAND = [str(PYTHON_BIN), "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+SERVER_COMMAND = [str(PYTHON_BIN), "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 # Step 1: Create venv if it doesn't exist
 if not PYTHON_BIN.exists():
