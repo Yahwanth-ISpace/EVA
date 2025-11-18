@@ -32,8 +32,13 @@ app.include_router(transcribe_router, prefix="/transcription")
 app.include_router(rag_router, prefix="/rag")
 
 
-
 # Run when executed directly
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))  # Railway provides PORT
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False
+    )
+
