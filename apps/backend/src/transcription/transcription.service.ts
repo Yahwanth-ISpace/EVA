@@ -24,9 +24,9 @@ export class TranscriptionService {
     try {
       const response = await axios.post(`${ai_server_url}/transcription/transcribe`, form, {
         headers: form.getHeaders(),
-        timeout: 60000, // 60 seconds timeout
+        timeout: 20000, // 20 seconds timeout
       });
-      return { transcript: response.data.text };
+      return { transcript: response.data.text }; 
     } catch (error: any) {
       console.error('❌ Transcription failed:', error.message);
       if (error.response?.data) {

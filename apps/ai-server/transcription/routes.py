@@ -17,7 +17,7 @@ async def transcribe(file: UploadFile = File(...)):
         model = get_model()  # lazy load
         segments, _ = model.transcribe(filepath)
         full_text = " ".join(segment.text for segment in segments)
-        return {"text": full_text}
+        return {"transcript": full_text}
     except Exception as e:
         logging.exception("Transcription failed")
         return JSONResponse(status_code=500, content={"error": str(e)})
