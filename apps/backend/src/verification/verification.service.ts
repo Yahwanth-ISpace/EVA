@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import * as fs from 'fs';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { TranscriptionService } from 'src/transcription/transcription.service';
@@ -43,8 +44,9 @@ export class VerificationService {
 
     try {
       // 1. Transcription
-      const transcript =
-        (await this.transcriptionService.transcribeAudio(filePath)).transcript;
+      const transcript = (
+        await this.transcriptionService.transcribeAudio(filePath)
+      ).transcript;
       if (!transcript) {
         throw new BadRequestException('Transcription failed: empty transcript');
       }
