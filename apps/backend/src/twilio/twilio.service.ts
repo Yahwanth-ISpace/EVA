@@ -2,7 +2,7 @@ import { HttpException, Injectable } from '@nestjs/common';
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
-import twilio from 'twilio';
+import * as twilio from 'twilio';
 import { v4 as uuidv4 } from 'uuid';
 import * as https from 'https';
 import FormData from 'form-data';
@@ -14,7 +14,7 @@ const backendBaseUrl = process.env.BACKEND_URL;
 const apiToken = process.env.VERIFICATIONS_API_TOKEN?.trim();
 const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
 
-const client = twilio(accountSid, authToken);
+const client = twilio.default(accountSid, authToken);
 
 @Injectable()
 export class TwilioService {
