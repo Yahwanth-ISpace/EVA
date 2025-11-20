@@ -37,25 +37,48 @@ export class VerificationService {
   }
 
   async verifyFromAudio(payeeId: string, filePath: string) {
-    if (!payeeId) throw new Error('payeeId is required');
+    if (!payeeId) {
+      throw new BadRequestException('payeeId is required');
+    }
 
-    const { transcript, error } =
-      await this.transcriptionService.transcribeAudio(filePath);
-    if (error) throw new Error(error);
+    try {
+      // 1. Transcription
+      const transcript =
+        await this.transcriptionService.transcribeAudio(filePath);
+      if (!transcript) {
+        throw new BadRequestException('Transcription failed: empty transcript');
+      }
 
-    const extracted = await this.aiService.extractInsuranceDetails(transcript);
-    console.log('Extracted details:', extracted);
-    return this.prisma.verification.create({
-      data: {
-        payeeId,
-        coverage: extracted.coverage,
-        deductible: extracted.deductible,
-        copay: extracted.copay,
-        validity: extracted.validity,
-        transcript,
-      },
-      include: { payee: true },
-    });
+      // 2. Extract insurance details using AI
+      const extracted =
+        await this.aiService.extractInsuranceDetails(transcript);
+      if (!extracted) {
+        throw new BadRequestException('AI failed to extract insurance details');
+      }
+
+      // 3. Save to database
+      const record = await this.prisma.verification.create({
+        data: {
+          payeeId,
+          coverage: extracted.coverage ?? null,
+          deductible: extracted.deductible ?? null,
+          copay: extracted.copay ?? null,
+          validity: extracted.validity ?? null,
+          transcript,
+        },
+        include: { payee: true },
+      });
+
+      return record;
+    } catch (err) {
+      console.error('verifyFromAudio error:', err);
+      throw err;
+    } finally {
+      // 4. Cleanup audio file
+      try {
+        await fs.promises.unlink(filePath);
+      } catch {}
+    }
   }
 
   async findAll(user: { userId: string; role: string }) {

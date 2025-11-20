@@ -16,7 +16,7 @@ export class AiService {
     this.gemini = new GoogleGenerativeAI(apiKey);
   }
 
-  public async extractInsuranceDetails(text: string): Promise<{
+  public async extractInsuranceDetails(transcript: any): Promise<{
     coverage: string | null;
     deductible: string | null;
     copay: string | null;
