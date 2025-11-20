@@ -2,10 +2,10 @@ import { HttpException, Injectable } from '@nestjs/common';
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as twilio from 'twilio';
+import twilio from 'twilio';
 import { v4 as uuidv4 } from 'uuid';
 import * as https from 'https';
-import * as FormData from 'form-data';
+import FormData from 'form-data';
 
 const accountSid = (process.env.TWILIO_ACCOUNT_SID ?? '').trim();
 const authToken = (process.env.TWILIO_AUTH_TOKEN ?? '').trim();

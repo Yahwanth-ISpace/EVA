@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import axios from 'axios';
 import * as fs from 'fs';
-import * as FormData from 'form-data';
+import FormData from 'form-data';
 
 const ai_server_url = process.env.AI_SERVER_URL;
 
