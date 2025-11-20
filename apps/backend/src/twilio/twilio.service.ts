@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as twilio from 'twilio';
 import { v4 as uuidv4 } from 'uuid';
 import * as https from 'https';
-import FormData from 'form-data';
+import * as FormData from 'form-data';
 
 const accountSid = (process.env.TWILIO_ACCOUNT_SID ?? '').trim();
 const authToken = (process.env.TWILIO_AUTH_TOKEN ?? '').trim();
