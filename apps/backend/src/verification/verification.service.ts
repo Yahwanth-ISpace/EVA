@@ -44,7 +44,7 @@ export class VerificationService {
     try {
       // 1. Transcription
       const transcript =
-        await this.transcriptionService.transcribeAudio(filePath);
+        (await this.transcriptionService.transcribeAudio(filePath)).transcript;
       if (!transcript) {
         throw new BadRequestException('Transcription failed: empty transcript');
       }
