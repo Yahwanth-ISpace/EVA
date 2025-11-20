@@ -14,7 +14,7 @@ const backendBaseUrl = process.env.BACKEND_URL;
 const apiToken = process.env.VERIFICATIONS_API_TOKEN?.trim();
 const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
 
-const client = twilio.default(accountSid, authToken);
+const client = twilio(accountSid, authToken);
 
 @Injectable()
 export class TwilioService {
