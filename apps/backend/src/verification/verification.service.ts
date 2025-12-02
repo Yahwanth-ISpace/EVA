@@ -44,16 +44,18 @@ export class VerificationService {
 
     try {
       // 1. Transcription
-      const transcript = (
-        await this.transcriptionService.transcribeAudio(filePath)
-      ).transcript;
+      const transcript =
+        await this.transcriptionService.transcribeAudio(filePath);
+
+      console.log('this is transcript', transcript);
       if (!transcript) {
         throw new BadRequestException('Transcription failed: empty transcript');
       }
 
       // 2. Extract insurance details using AI
-      const extracted =
-        await this.aiService.extractInsuranceDetails(transcript);
+      const extracted = await this.aiService.extractInsuranceDetails(
+        transcript.transcript,
+      );
       if (!extracted) {
         throw new BadRequestException('AI failed to extract insurance details');
       }

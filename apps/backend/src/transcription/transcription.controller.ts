@@ -51,11 +51,11 @@ export class TranscriptionController {
     }
 
     const extracted = await this.aiService.extractInsuranceDetails(
-      transcriptResult.transcript,
+      transcriptResult.transcript ?? transcriptResult.transcript,
     );
 
     return {
-      transcript: transcriptResult.transcript,
+      transcript: transcriptResult,
       extracted,
     };
   }
