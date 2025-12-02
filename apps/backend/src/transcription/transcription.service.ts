@@ -26,7 +26,7 @@ export class TranscriptionService {
         headers: form.getHeaders(),
         timeout: 20000, // 20 seconds timeout
       });
-      return { transcript: response.data.text }; 
+      return { transcript: response.data.transcript }; 
     } catch (error: any) {
       console.error('❌ Transcription failed:', error.message);
       if (error.response?.data) {
