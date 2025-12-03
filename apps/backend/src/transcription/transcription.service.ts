@@ -22,11 +22,16 @@ export class TranscriptionService {
     form.append('file', fs.createReadStream(filePath));
 
     try {
-      const response = await axios.post(`${ai_server_url}/transcription/transcribe`, form, {
-        headers: form.getHeaders(),
-        timeout: 20000, // 20 seconds timeout
-      });
-      return { transcript: response.data.transcript }; 
+      const response = await axios.post(
+        `${ai_server_url}/transcription/transcribe`,
+        form,
+        {
+          headers: form.getHeaders(),
+          timeout: 20000, // 20 seconds timeout
+        },
+      );
+      console.log('This is the response data', response.data);
+      return { transcript: response.data.transcript };
     } catch (error: any) {
       console.error('❌ Transcription failed:', error.message);
       if (error.response?.data) {

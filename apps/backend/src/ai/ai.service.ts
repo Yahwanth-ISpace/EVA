@@ -50,7 +50,8 @@ export class AiService {
       });
 
       const result = await model.generateContent(prompt);
-      let jsonString = result.response.text().trim() || '{}';jsonString
+      let jsonString = result.response.text().trim() || '{}';
+      jsonString;
 
       // Remove code block markers if present
       if (jsonString.startsWith('```')) {
