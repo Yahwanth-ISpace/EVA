@@ -22,22 +22,27 @@ export class TranscriptionService {
     form.append('file', fs.createReadStream(filePath));
 
     try {
+      console.log('Uploading audio for transcription:', filePath);
+
       const response = await axios.post(
-        `${ai_server_url}/transcription/transcribe`,
+        `${ai_server_url}/transcribe`, // FIXED: Correct FastAPI endpoint
         form,
         {
-          headers: form.getHeaders(),
-          timeout: 20000, // 20 seconds timeout
+          headers: {
+            ...form.getHeaders(), // FIXED
+          },
+          maxBodyLength: Infinity,
+          timeout: 10000, // 10 sec timeout
         },
       );
-      console.log('This is the response data', response.data);
+
+      console.log('Transcription result:', response.data);
+
       return { transcript: response.data.transcript };
     } catch (error: any) {
-      console.error('❌ Transcription failed:', error.message);
-      if (error.response?.data) {
-        console.error('Server response:', error.response.data);
-      }
-      return { transcript: '', error: 'Transcription failed' };
+      console.error('❌ Transcription request failed:', error.message);
+      console.error('Server response:', error.response?.data);
+      return { transcript: '', error: error.message };
     }
   }
 }

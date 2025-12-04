@@ -43,24 +43,34 @@ export class VerificationService {
     }
 
     try {
-      // 1. Transcription
+      // 1. TRANSCRIBE AUDIO
       const transcriptResult =
         await this.transcriptionService.transcribeAudio(filePath);
 
-      console.log('this is transcript', transcriptResult);
-      if (!transcriptResult || !transcriptResult.transcript) {
-        throw new BadRequestException('Transcription failed: empty transcript');
+      if (transcriptResult.error) {
+        throw new BadRequestException(
+          `Transcription failed: ${transcriptResult.error}`,
+        );
       }
 
-      // 2. Extract insurance details using AI
-      const extracted = await this.aiService.extractInsuranceDetails(
-        transcriptResult.transcript,
-      );
+      const transcript = transcriptResult.transcript?.trim();
+      if (!transcript) {
+        throw new BadRequestException(
+          'Transcription returned an empty transcript',
+        );
+      }
+
+      console.log('Transcript:', transcript);
+
+      // 2. AI EXTRACTION
+      const extracted =
+        await this.aiService.extractInsuranceDetails(transcript);
+
       if (!extracted) {
-        throw new BadRequestException('AI failed to extract insurance details');
+        throw new BadRequestException('AI extraction failed');
       }
 
-      // 3. Save to database
+      // 3. SAVE TO DATABASE
       const record = await this.prisma.verification.create({
         data: {
           payeeId,
@@ -68,7 +78,7 @@ export class VerificationService {
           deductible: extracted.deductible ?? null,
           copay: extracted.copay ?? null,
           validity: extracted.validity ?? null,
-          transcript: transcriptResult.transcript,
+          transcript,
         },
         include: { payee: true },
       });
@@ -78,10 +88,13 @@ export class VerificationService {
       console.error('verifyFromAudio error:', err);
       throw err;
     } finally {
-      // 4. Cleanup audio file
+      // 4. ALWAYS DELETE LOCAL FILE
       try {
         await fs.promises.unlink(filePath);
-      } catch {}
+        console.log('Deleted temp audio file:', filePath);
+      } catch (e) {
+        console.warn('Failed to delete temp file:', e.message);
+      }
     }
   }
 
