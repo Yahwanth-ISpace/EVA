@@ -3,6 +3,7 @@ import axios from 'axios';
 import * as fs from 'fs';
 import * as FormData from 'form-data';
 import path from 'path';
+import mime from 'mime';
 
 const ai_server_url = process.env.AI_SERVER_URL;
 
@@ -20,10 +21,17 @@ export class TranscriptionService {
     const fileBuffer = await fs.promises.readFile(filePath);
     const form = new FormData();
 
+    // Detect MIME type properly
+    const mimeType = mime.lookup(filePath) || 'application/octet-stream';
+
     form.append('file', fileBuffer, {
       filename: path.basename(filePath),
-      contentType: 'audio/mp3',
+      contentType: mimeType,
     });
+
+    const contentLength = await new Promise((resolve, reject) =>
+      form.getLength((err, length) => (err ? reject(err) : resolve(length))),
+    );
 
     try {
       const response = await axios.post(
@@ -32,11 +40,11 @@ export class TranscriptionService {
         {
           headers: {
             ...form.getHeaders(),
-            Accept: 'application/json',
+            'Content-Length': contentLength,
           },
           maxContentLength: Infinity,
           maxBodyLength: Infinity,
-          timeout: 30000, // 30 sec
+          timeout: 180000, // 3 minutes
         },
       );
 
