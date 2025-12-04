@@ -4,6 +4,7 @@ import {
   UploadedFile,
   UseInterceptors,
   UseGuards,
+  Get,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -58,5 +59,10 @@ export class TranscriptionController {
       transcript: transcriptResult,
       extracted,
     };
+  };
+
+  @Get('transcribe-test')
+  async test() {
+    return this.transcriptionService.transcribeAudio("test");
   }
 }

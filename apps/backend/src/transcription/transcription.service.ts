@@ -23,12 +23,16 @@ export class TranscriptionService {
     // Detect MIME type properly
     const mimeType = mime.lookup(filePath) || 'application/octet-stream';
 
-    const form = new FormData();
-    const AudiofilePath = '../../audioTest.mp3'; // static file
+    const AudiofilePath = path.join(
+      __dirname,
+      '../assets/audio/test-audio.mp3',
+    ); // static file
     const fileStream = fs.createReadStream(AudiofilePath);
 
+    const form = new FormData();
     form.append('file', fileStream, {
-      filename: path.basename(AudiofilePath),
+      filename: path.basename(filePath),
+      contentType: mimeType,
     });
 
     // form.append('file', buffer, {
@@ -44,14 +48,20 @@ export class TranscriptionService {
         `${ai_server_url}/transcription/transcribe`,
         form,
         {
-          headers: {
-            ...form.getHeaders(),
-            'Content-Length': contentLength,
-          },
+          headers: form.getHeaders(),
           maxContentLength: Infinity,
           maxBodyLength: Infinity,
-          timeout: 180000, // 3 minutes
+          timeout: 180000,
         },
+        // {
+        //   headers: {
+        //     ...form.getHeaders(),
+        //     'Content-Length': contentLength,
+        //   },
+        //   maxContentLength: Infinity,
+        //   maxBodyLength: Infinity,
+        //   timeout: 180000, // 3 minutes
+        // },
       );
 
       return { transcript: response.data.transcript };
