@@ -65,9 +65,13 @@ export class VerificationController {
     const finalPayeeId = payeeId || queryPayeeId;
     if (!finalPayeeId) throw new BadRequestException('payeeId is required');
 
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
     const verification = await this.verificationService.verifyFromAudio(
-      finalPayeeId,
       file.path,
+      finalPayeeId,
     );
     return {
       saved: true,
