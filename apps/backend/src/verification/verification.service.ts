@@ -37,24 +37,29 @@ export class VerificationService {
     });
   }
 
-  async verifyFromAudio(payeeId: string, filePath: string) {
+  async verifyFromAudio(filePath: string, payeeId: string) {
     if (!payeeId) {
       throw new BadRequestException('payeeId is required');
+    }
+    if (!filePath) {
+      throw new BadRequestException('filePath is required but was undefined');
+    }
+    if (!fs.existsSync(filePath)) {
+      throw new BadRequestException('Uploaded audio file not found on server');
     }
 
     try {
       // 1. TRANSCRIBE AUDIO
-      const transcriptResult =
+      const { transcript } =
         await this.transcriptionService.transcribeAudio(filePath);
 
-      if (!transcriptResult.transcript) {
-        throw new BadRequestException('Transcription failed: Empty transcript');
+      if (!transcript || transcript.trim().length === 0) {
+        throw new BadRequestException('Transcription failed: empty transcript');
       }
 
       // 2. EXTRACT INSURANCE DATA
-      const extracted = await this.aiService.extractInsuranceDetails(
-        transcriptResult.transcript,
-      );
+      const extracted =
+        await this.aiService.extractInsuranceDetails(transcript);
 
       if (!extracted) {
         throw new BadRequestException('AI failed to extract insurance details');
@@ -68,7 +73,7 @@ export class VerificationService {
           deductible: extracted.deductible ?? null,
           copay: extracted.copay ?? null,
           validity: extracted.validity ?? null,
-          transcript: transcriptResult.transcript,
+          transcript: transcript,
         },
         include: { payee: true },
       });
@@ -82,7 +87,9 @@ export class VerificationService {
       try {
         await fs.promises.unlink(filePath);
         console.log('Deleted temp audio file:', filePath);
-      } catch {}
+      } catch (deleteErr) {
+        console.error('Failed to delete file:', deleteErr.message);
+      }
     }
   }
 
