@@ -18,20 +18,26 @@ export class TranscriptionService {
       throw new Error('File not found');
     }
 
-    const fileBuffer = await fs.promises.readFile(filePath);
-    const form = new FormData();
+    const buffer = fs.readFileSync(filePath);
 
     // Detect MIME type properly
     const mimeType = mime.lookup(filePath) || 'application/octet-stream';
 
-    form.append('file', fileBuffer, {
-      filename: path.basename(filePath),
-      contentType: mimeType,
+    const form = new FormData();
+    const AudiofilePath = '../../audioTest.mp3'; // static file
+    const fileStream = fs.createReadStream(AudiofilePath);
+
+    form.append('file', fileStream, {
+      filename: path.basename(AudiofilePath),
     });
 
-    const contentLength: number = await new Promise((resolve, reject) =>
-      form.getLength((err, length) => (err ? reject(err) : resolve(length))),
-    );
+    // form.append('file', buffer, {
+    //   filename: path.basename(filePath),
+    //   contentType: mimeType,
+    //   knownLength: buffer.length,
+    // });
+
+    const contentLength = form.getLengthSync();
 
     try {
       const response = await axios.post(
