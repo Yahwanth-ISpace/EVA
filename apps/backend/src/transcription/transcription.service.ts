@@ -4,11 +4,13 @@ import * as fs from 'fs';
 import * as FormData from 'form-data';
 import path from 'path';
 import mime from 'mime';
+import { HttpService } from '@nestjs/axios';
 
 const ai_server_url = process.env.AI_SERVER_URL;
 
 @Injectable()
 export class TranscriptionService {
+  constructor(private readonly httpService: HttpService) {}
   async transcribeAudio(filePath: string): Promise<{ transcript: string }> {
     if (!ai_server_url) {
       throw new Error('AI server URL not configured');
@@ -18,22 +20,23 @@ export class TranscriptionService {
       throw new Error('File not found');
     }
 
-    const buffer = fs.readFileSync(filePath);
+    // const buffer = fs.readFileSync(filePath);
 
     // Detect MIME type properly
     const mimeType = mime.lookup(filePath) || 'application/octet-stream';
 
     const AudiofilePath = path.join(
-      __dirname,
-      '../assets/audio/test-audio.mp3',
-    ); // static file
+      process.cwd(),
+      'dist',
+      'assets',
+      'audio',
+      'audioTest.mp3',
+    );
     const fileStream = fs.createReadStream(AudiofilePath);
 
     const form = new FormData();
-    form.append('file', fileStream, {
-      filename: path.basename(filePath),
-      contentType: mimeType,
-    });
+    const audio = fs.readFileSync(AudiofilePath);
+    form.append('file', new Blob([audio]), 'audio.wav');
 
     // form.append('file', buffer, {
     //   filename: path.basename(filePath),
