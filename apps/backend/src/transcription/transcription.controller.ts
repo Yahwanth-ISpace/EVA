@@ -9,6 +9,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import * as path from 'path';
+import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { TranscriptionService } from './transcription.service';
 import { JwtAuthGuard } from '../auth/guards/jwtAuthGuard';
@@ -63,6 +64,43 @@ export class TranscriptionController {
 
   @Get('transcribe-test')
   async test() {
-    return this.transcriptionService.transcribeAudio("test");
+    // Try to find the test audio file in different possible locations
+    const possiblePaths = [
+      path.join(process.cwd(), 'src', 'assets', 'audio', 'audioTest.mp3'),
+      path.join(process.cwd(), 'dist', 'assets', 'audio', 'audioTest.mp3'),
+      path.join(__dirname, '..', 'assets', 'audio', 'audioTest.mp3'),
+    ];
+
+    let audioFilePath: string | null = null;
+    for (const testPath of possiblePaths) {
+      if (fs.existsSync(testPath)) {
+        audioFilePath = testPath;
+        break;
+      }
+    }
+
+    if (!audioFilePath) {
+      return {
+        error: 'Test audio file not found. Tried paths:',
+        paths: possiblePaths,
+      };
+    }
+
+    try {
+      const result = await this.transcriptionService.transcribeAudio(
+        audioFilePath,
+      );
+      return {
+        success: true,
+        filePath: audioFilePath,
+        transcript: result.transcript,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message,
+        filePath: audioFilePath,
+      };
+    }
   }
 }
