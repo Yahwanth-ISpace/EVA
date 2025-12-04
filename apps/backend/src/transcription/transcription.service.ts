@@ -32,7 +32,7 @@ export class TranscriptionService {
             ...form.getHeaders(), // FIXED
           },
           maxBodyLength: Infinity,
-          timeout: 10000, // 10 sec timeout
+          timeout: 50000, // 10 sec timeout
         },
       );
 
