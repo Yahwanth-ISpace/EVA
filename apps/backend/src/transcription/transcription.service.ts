@@ -29,7 +29,7 @@ export class TranscriptionService {
       contentType: mimeType,
     });
 
-    const contentLength = await new Promise((resolve, reject) =>
+    const contentLength: number = await new Promise((resolve, reject) =>
       form.getLength((err, length) => (err ? reject(err) : resolve(length))),
     );
 
