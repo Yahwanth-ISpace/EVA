@@ -47,30 +47,20 @@ export class VerificationService {
       const transcriptResult =
         await this.transcriptionService.transcribeAudio(filePath);
 
-      if (transcriptResult.error) {
-        throw new BadRequestException(
-          `Transcription failed: ${transcriptResult.error}`,
-        );
+      if (!transcriptResult.transcript) {
+        throw new BadRequestException('Transcription failed: Empty transcript');
       }
 
-      const transcript = transcriptResult.transcript?.trim();
-      if (!transcript) {
-        throw new BadRequestException(
-          'Transcription returned an empty transcript',
-        );
-      }
-
-      console.log('Transcript:', transcript);
-
-      // 2. AI EXTRACTION
-      const extracted =
-        await this.aiService.extractInsuranceDetails(transcript);
+      // 2. EXTRACT INSURANCE DATA
+      const extracted = await this.aiService.extractInsuranceDetails(
+        transcriptResult.transcript,
+      );
 
       if (!extracted) {
-        throw new BadRequestException('AI extraction failed');
+        throw new BadRequestException('AI failed to extract insurance details');
       }
 
-      // 3. SAVE TO DATABASE
+      // 3. SAVE IN DATABASE
       const record = await this.prisma.verification.create({
         data: {
           payeeId,
@@ -78,7 +68,7 @@ export class VerificationService {
           deductible: extracted.deductible ?? null,
           copay: extracted.copay ?? null,
           validity: extracted.validity ?? null,
-          transcript,
+          transcript: transcriptResult.transcript,
         },
         include: { payee: true },
       });
@@ -88,13 +78,11 @@ export class VerificationService {
       console.error('verifyFromAudio error:', err);
       throw err;
     } finally {
-      // 4. ALWAYS DELETE LOCAL FILE
+      // 4. DELETE TEMP FILE
       try {
         await fs.promises.unlink(filePath);
         console.log('Deleted temp audio file:', filePath);
-      } catch (e) {
-        console.warn('Failed to delete temp file:', e.message);
-      }
+      } catch {}
     }
   }
 

@@ -9,40 +9,43 @@ const ai_server_url = process.env.AI_SERVER_URL;
 export class TranscriptionService {
   async transcribeAudio(
     filePath: string,
-  ): Promise<{ transcript: string; error?: string }> {
+  ): Promise<{ transcript: string }> {
     if (!ai_server_url) {
-      return { transcript: '', error: 'AI server URL not configured' };
+      throw new Error('AI server URL not configured');
     }
 
     if (!fs.existsSync(filePath)) {
-      return { transcript: '', error: 'File not found' };
+      throw new Error('File not found');
     }
 
     const form = new FormData();
     form.append('file', fs.createReadStream(filePath));
 
     try {
-      console.log('Uploading audio for transcription:', filePath);
-
       const response = await axios.post(
-        `${ai_server_url}/transcribe`, // FIXED: Correct FastAPI endpoint
+        `${ai_server_url}/transcription/transcribe`,
         form,
         {
           headers: {
-            ...form.getHeaders(), // FIXED
+            ...form.getHeaders(),
+            Accept: 'application/json',
           },
+          maxContentLength: Infinity,
           maxBodyLength: Infinity,
-          timeout: 50000, // 10 sec timeout
+          timeout: 20000, // 20 sec
         },
       );
-
-      console.log('Transcription result:', response.data);
 
       return { transcript: response.data.transcript };
     } catch (error: any) {
       console.error('❌ Transcription request failed:', error.message);
-      console.error('Server response:', error.response?.data);
-      return { transcript: '', error: error.message };
+
+      throw new Error(
+        error.response?.data?.message ??
+        error.response?.data ??
+        'Transcription failed'
+      );
     }
   }
 }
+
