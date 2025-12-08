@@ -159,8 +159,8 @@ export class TwilioService {
     <Response>
       <Say voice="alice">${this.steps[stepIndex]}</Say>
       <Record
-        maxLength="60"
-        action="${backendBaseUrl}/twilio/step?payeeId=${payeeId}&step=${stepIndex}"
+        maxLength="30"
+        action="${backendBaseUrl}/twilio/step?step=${stepIndex}&payeeId=${payeeId}"
         method="POST"
       />
     </Response>
