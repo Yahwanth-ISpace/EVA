@@ -160,7 +160,7 @@ export class TwilioService {
       // If step doesn't exist, end the call
       return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">Thank you. Have a nice day.</Say>
+  <Say voice="alice">Thank you. Goodbye.</Say>
   <Hangup/>
 </Response>`;
     }
@@ -176,11 +176,10 @@ export class TwilioService {
 <Response>
   <Say voice="alice">${escapedText}</Say>
   <Record
-    timeout=3
-    maxLength=30
+    maxLength="30"
     action="${backendBaseUrl}/twilio/step?step=${nextStep}&amp;payeeId=${payeeId}"
     method="POST"
-    playBeep="false"
+    playBeep="true"
   />
 </Response>`;
     return twiml;
@@ -229,12 +228,7 @@ export class TwilioService {
     await axios.post(
       `${process.env.BACKEND_URL}/verifications/from-audio/${payeeId}`,
       form,
-      {
-        headers: {
-          ...form.getHeaders(),
-          Authorization: `Bearer ${apiToken}`,
-        },
-      },
+      { headers: form.getHeaders() },
     );
 
     fs.unlinkSync(localPath);
