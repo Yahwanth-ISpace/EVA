@@ -154,20 +154,42 @@ export class TwilioService {
   //   return steps[step] ?? steps['12'];
   // }
   generateStepTwiML(stepIndex: number, payeeId: string) {
-    const nextAction = `${process.env.BACKEND_URL}/twilio/step?payeeId=${payeeId}&step=${stepIndex}`;
+    const escapeXml = (unsafe: string) =>
+      unsafe
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+
+    const sayText = escapeXml(this.steps[stepIndex]);
+
+    const isLastStep = stepIndex >= this.steps.length - 1;
+    const nextStep = stepIndex + 1;
+
+    const nextAction = `${process.env.BACKEND_URL}/twilio/step?payeeId=${payeeId}&step=${nextStep}`;
+
+    // Last step: do NOT record, just end call
+    if (isLastStep) {
+      return `
+<Response>
+  <Say voice="alice">${sayText}</Say>
+  <Hangup/>
+</Response>`.trim();
+    }
 
     return `
-      <Response>
-        <Say voice="alice">${this.steps[stepIndex]}</Say>
+<Response>
+  <Say voice="alice">${sayText}</Say>
 
-        <Record 
-          playBeep="true"
-          maxLength="20"
-          action="${nextAction}"
-          method="POST"
-        />
-      </Response>
-    `.trim();
+  <Record 
+    playBeep="true"
+    maxLength="20"
+    action="${nextAction}"
+    method="POST"
+  />
+</Response>
+  `.trim();
   }
 
   // STEP 3: Called when recording is done — downloads and uploads to backend
