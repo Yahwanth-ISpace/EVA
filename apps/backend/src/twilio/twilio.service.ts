@@ -160,7 +160,7 @@ export class TwilioService {
       // If step doesn't exist, end the call
       return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">Thank you. Goodbye.</Say>
+  <Say voice="alice">Thank you. Have a nice day.</Say>
   <Hangup/>
 </Response>`;
     }
@@ -173,14 +173,17 @@ export class TwilioService {
       .replace(/>/g, '&gt;');
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="joanna-neural">${escapedText}</Say>
-  <Record
-    maxLength="20"
-    action="${backendBaseUrl}/twilio/step?step=${nextStep}&amp;payeeId=${payeeId}"
-    method="POST"
-  />
-</Response>`;
+      <Response>
+        <Say voice="joanna-neural">${escapedText}</Say>
+        <Pause length="0.2" />
+        <Record
+          playBeep="false"
+          timeout="3"
+          maxLength="60"
+          action="${backendBaseUrl}/twilio/step?step=${nextStep}&amp;payeeId=${payeeId}"
+          method="POST"
+        />
+      </Response>`;
     return twiml;
   }
 
