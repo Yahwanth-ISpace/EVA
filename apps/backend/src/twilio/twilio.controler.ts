@@ -6,6 +6,7 @@ import {
   Body,
   Res,
   BadRequestException,
+  Req,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { TwilioService } from './twilio.service';
@@ -24,29 +25,62 @@ export class TwilioController {
   }
 
   // Step 2: Twilio fetches this TwiML when the call is answered
-  @Post('ivr-script')
-  startScript(@Query('payeeId') payeeId: string, @Res() res: Response) {
-    const twiml = this.twilioService.getStepTwiml('1', payeeId);
+  // @Post('ivr-script')
+  // startScript(@Query('payeeId') payeeId: string, @Res() res: Response) {
+  //   const twiml = this.twilioService.getStepTwiml('1', payeeId);
+  //   res.type('text/xml').send(twiml);
+  // }
+
+  // Helper step for the IVR Script
+  // @Post('ivr-step')
+  // async ivrStep(
+  //   @Query('step') step: string,
+  //   @Query('payeeId') payeeId: string,
+  //   @Body() body,
+  //   @Res() res: Response,
+  // ) {
+  //   const recordingUrl = body.RecordingUrl ? body.RecordingUrl + '.mp3' : null;
+
+  //   if (recordingUrl) {
+  //     await this.twilioService.handleCallRecording(recordingUrl, payeeId);
+  //   }
+
+  //   const twiml = this.twilioService.getStepTwiml(step, payeeId);
+
+  //   res.type('text/xml').send(twiml);
+  // }
+  @Get('ivr-script')
+  async startCall(@Query('payeeId') payeeId: string, @Res() res) {
+    const twiml = this.twilioService.generateStepTwiML(0, payeeId);
     res.type('text/xml').send(twiml);
   }
 
-
-// Helper step for the IVR Script
-  @Post('ivr-step')
-  async ivrStep(
+  @Post('step')
+  async handleStep(
+    @Req() req,
+    @Res() res,
     @Query('step') step: string,
     @Query('payeeId') payeeId: string,
-    @Body() body,
-    @Res() res: Response,
   ) {
-    const recordingUrl = body.RecordingUrl ? body.RecordingUrl + '.mp3' : null;
+    const recordingUrl = req.body?.RecordingUrl;
 
     if (recordingUrl) {
       await this.twilioService.handleCallRecording(recordingUrl, payeeId);
     }
 
-    const twiml = this.twilioService.getStepTwiml(step, payeeId);
+    const next = parseInt(step, 10) + 1;
 
+    // end of script
+    if (next >= this.twilioService.steps.length) {
+      return res.type('text/xml').send(`
+        <Response>
+          <Say voice="alice">Thank you. Goodbye.</Say>
+          <Hangup/>
+        </Response>
+      `);
+    }
+
+    const twiml = this.twilioService.generateStepTwiML(next, payeeId);
     res.type('text/xml').send(twiml);
   }
 
