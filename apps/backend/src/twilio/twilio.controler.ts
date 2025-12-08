@@ -63,12 +63,11 @@ export class TwilioController {
 
   @Post('step')
   async handleStep(
-    @Req() req,
-    @Res() res,
+    @Body() body,
     @Query('step') step: string,
     @Query('payeeId') payeeId: string,
   ) {
-    const recordingUrl = req.body?.RecordingUrl;
+    const recordingUrl = body?.RecordingUrl;
 
     if (recordingUrl) {
       await this.twilioService.handleRecording(recordingUrl, payeeId);
@@ -76,18 +75,16 @@ export class TwilioController {
 
     const next = parseInt(step, 10) + 1;
 
-    // end of script
     if (next >= this.twilioService.steps.length) {
-      return res.type('text/xml').send(`
-        <Response>
-          <Say voice="alice">Thank you. Goodbye.</Say>
-          <Hangup/>
-        </Response>
-      `);
+      return `
+      <Response>
+        <Say voice="alice">Thank you. Goodbye.</Say>
+        <Hangup/>
+      </Response>
+    `.trim();
     }
 
-    const twiml = this.twilioService.generateStepTwiML(next, payeeId);
-    res.type('text/xml').send(twiml);
+    return this.twilioService.generateStepTwiML(next, payeeId);
   }
 
   // Step 3: Twilio hits this after recording is done
