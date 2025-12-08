@@ -174,12 +174,11 @@ export class TwilioService {
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">${escapedText}</Say>
+  <Say voice="joanna-neural">${escapedText}</Say>
   <Record
-    maxLength="10"
+    maxLength="20"
     action="${backendBaseUrl}/twilio/step?step=${nextStep}&amp;payeeId=${payeeId}"
     method="POST"
-    playBeep="true"
   />
 </Response>`;
     return twiml;
