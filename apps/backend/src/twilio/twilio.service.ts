@@ -153,15 +153,19 @@ export class TwilioService {
 
   //   return steps[step] ?? steps['12'];
   // }
-generateStepTwiML(stepIndex: number, payeeId: string) {
-  const action = `${process.env.BACKEND_URL}/twilio/step?payeeId=${payeeId}&step=${stepIndex}`;
 
-  return `<Response>
-<Say voice="alice">${this.steps[stepIndex]}</Say>
-<Record playBeep="true" maxLength="20" action="${action}" method="POST"></Record>
-</Response>`;
-}
-
+   generateTwiML(stepIndex: number,payeeId: string) {
+    return `
+    <Response>
+      <Say voice="alice">${this.steps[stepIndex]}</Say>
+      <Record
+        maxLength="60"
+        action="${backendBaseUrl}/twilio/step?payeeId=${payeeId}&step=${stepIndex}"
+        method="POST"
+      />
+    </Response>
+  `.trim();
+  }
 
   // STEP 3: Called when recording is done — downloads and uploads to backend
   // async handleCallRecording(recordingUrl: string, payeeId: string) {

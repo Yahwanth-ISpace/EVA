@@ -75,7 +75,7 @@ async handleStep(@Body() body, @Query('step') step: string, @Query('payeeId') pa
     return `<Response><Say voice="alice">Thank you. Goodbye.</Say><Hangup/></Response>`;
   }
 
-  return this.twilioService.generateStepTwiML(next, payeeId);
+  return this.twilioService.generateTwiML(next, payeeId);
 }
 
 
