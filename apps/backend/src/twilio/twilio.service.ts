@@ -171,71 +171,113 @@ export class TwilioService {
   }
 
   // STEP 3: Called when recording is done — downloads and uploads to backend
-  async handleCallRecording(recordingUrl: string, payeeId: string) {
-    try {
-      const localFilePath = await this.downloadRecording(recordingUrl);
+  // async handleCallRecording(recordingUrl: string, payeeId: string) {
+  //   try {
+  //     const localFilePath = await this.downloadRecording(recordingUrl);
 
-      const form = new FormData();
-      form.append('file', fs.createReadStream(localFilePath));
+  //     const form = new FormData();
+  //     form.append('file', fs.createReadStream(localFilePath));
 
-      console.log('Uploading file to verifications service:', localFilePath);
+  //     console.log('Uploading file to verifications service:', localFilePath);
 
-      const uploadResponse = await axios.post(
-        `${backendBaseUrl}/verifications/from-audio/${payeeId}`,
-        form,
-        {
-          headers: {
-            ...form.getHeaders(),
-            Authorization: `Bearer ${apiToken}`,
-          },
-        },
-      );
+  //     const uploadResponse = await axios.post(
+  //       `${backendBaseUrl}/verifications/from-audio/${payeeId}`,
+  //       form,
+  //       {
+  //         headers: {
+  //           ...form.getHeaders(),
+  //           Authorization: `Bearer ${apiToken}`,
+  //         },
+  //       },
+  //     );
 
-      fs.unlinkSync(localFilePath);
+  //     fs.unlinkSync(localFilePath);
 
-      console.log('Recording uploaded successfully:', uploadResponse.data);
-      return {
-        message: 'Recording uploaded successfully to verifications service',
-        result: uploadResponse.data,
-      };
-    } catch (err) {
-      console.error('Error uploading recording:', err);
-      throw new HttpException('Failed to handle recording', 500);
-    }
+  //     console.log('Recording uploaded successfully:', uploadResponse.data);
+  //     return {
+  //       message: 'Recording uploaded successfully to verifications service',
+  //       result: uploadResponse.data,
+  //     };
+  //   } catch (err) {
+  //     console.error('Error uploading recording:', err);
+  //     throw new HttpException('Failed to handle recording', 500);
+  //   }
+  // }
+
+  async handleRecording(recordingUrl: string, payeeId: string) {
+    const localPath = await this.downloadRecording(recordingUrl);
+
+    const form = new FormData();
+    form.append('file', fs.createReadStream(localPath));
+
+    await axios.post(
+      `${process.env.BACKEND_URL}/verifications/from-audio/${payeeId}`,
+      form,
+      { headers: form.getHeaders() },
+    );
+
+    fs.unlinkSync(localPath);
   }
 
   // STEP 4: Helper to download audio file from Twilio
-  private async downloadRecording(recordingUrl: string): Promise<string> {
-    const fileName = `${uuidv4()}.mp3`;
-    const uploadDir = path.join(__dirname, '..', '..', 'uploads');
-    const filePath = path.join(uploadDir, fileName);
+  // private async downloadRecording(recordingUrl: string): Promise<string> {
+  //   const fileName = `${uuidv4()}.mp3`;
+  //   const uploadDir = path.join(__dirname, '..', '..', 'uploads');
+  //   const filePath = path.join(uploadDir, fileName);
 
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
+  //   if (!fs.existsSync(uploadDir)) {
+  //     fs.mkdirSync(uploadDir, { recursive: true });
+  //   }
+
+  //   const writer = fs.createWriteStream(filePath);
+  //   const agent = new https.Agent({ rejectUnauthorized: false });
+  //   const mediaUrl = recordingUrl;
+  //   console.log('Downloading recording from:', mediaUrl);
+
+  //   const response = await axios({
+  //     url: mediaUrl,
+  //     method: 'GET',
+  //     responseType: 'stream',
+  //     httpsAgent: agent,
+  //     headers: {
+  //       Authorization: authHeader,
+  //     },
+  //   });
+
+  //   return new Promise((resolve, reject) => {
+  //     response.data.pipe(writer);
+  //     writer.on('finish', () => resolve(filePath));
+  //     writer.on('error', (err) => {
+  //       console.error('Error writing recording file:', err);
+  //       reject(err);
+  //     });
+  //   });
+  // }
+
+  private async downloadRecording(url: string): Promise<string> {
+    const uploadDir = path.join(__dirname, '..', '..', 'uploads');
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+    const fileName = `${uuidv4()}.mp3`;
+    const filePath = path.join(uploadDir, fileName);
 
     const writer = fs.createWriteStream(filePath);
     const agent = new https.Agent({ rejectUnauthorized: false });
-    const mediaUrl = recordingUrl;
-    console.log('Downloading recording from:', mediaUrl);
 
     const response = await axios({
-      url: mediaUrl,
+      url,
       method: 'GET',
       responseType: 'stream',
       httpsAgent: agent,
       headers: {
-        Authorization: authHeader,
+        Authorization: `Basic ${Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')}`,
       },
     });
 
     return new Promise((resolve, reject) => {
       response.data.pipe(writer);
       writer.on('finish', () => resolve(filePath));
-      writer.on('error', (err) => {
-        console.error('Error writing recording file:', err);
-        reject(err);
-      });
+      writer.on('error', reject);
     });
   }
 }

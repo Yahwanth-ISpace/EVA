@@ -65,7 +65,7 @@ export class TwilioController {
     const recordingUrl = req.body?.RecordingUrl;
 
     if (recordingUrl) {
-      await this.twilioService.handleCallRecording(recordingUrl, payeeId);
+      await this.twilioService.handleRecording(recordingUrl, payeeId);
     }
 
     const next = parseInt(step, 10) + 1;
@@ -92,7 +92,7 @@ export class TwilioController {
       throw new BadRequestException('Missing RecordingUrl from Twilio');
     }
     console.log('Recording URL:', recordingUrl, 'for payeeId:', payeeId);
-    return this.twilioService.handleCallRecording(recordingUrl, payeeId);
+    return this.twilioService.handleRecording(recordingUrl, payeeId);
   }
 
   // Step 4: Twilio hits this to confirm thats all the user has to say
@@ -108,7 +108,7 @@ export class TwilioController {
     }
 
     // Call the service method to handle the recording
-    await this.twilioService.handleCallRecording(recordingUrlWithExt, payeeId);
+    await this.twilioService.handleRecording(recordingUrlWithExt, payeeId);
 
     // Then respond with the TwiML to ask user "Is that all you have?"
     return `
