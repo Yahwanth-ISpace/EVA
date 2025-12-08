@@ -22,7 +22,7 @@ export class TwilioService {
     'Hi how are you doing today?',
     'I am Jenifer from Went Dentals.',
     'The patient name is John Merick. Date of birth is March 31st 1992.',
-    'The Tax ID is 170102.',
+    'The Tax ID is 1 7 0 1 0 1',
     'The address is 816 West Main Street, Danville, Virginia, 24541.',
     'Can I get the coverage details of the patient?',
     'Can you provide the deductible amount?',
@@ -176,7 +176,7 @@ export class TwilioService {
 <Response>
   <Say voice="alice">${escapedText}</Say>
   <Record
-    maxLength="30"
+    maxLength="10"
     action="${backendBaseUrl}/twilio/step?step=${nextStep}&amp;payeeId=${payeeId}"
     method="POST"
     playBeep="true"
