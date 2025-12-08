@@ -32,43 +32,113 @@ export class TwilioService {
     });
   }
 
+  // generateTwiML(payeeId: string): string {
+  //   return `
+  //   <Response>
+  //     <Say voice="alice">Hello. This is Springfield Clinic. We are verifying, insurance coverage, for your patient.</Say>
+  //     <Pause length="0.5"/>
+  //     <Say>Please provide insurance coverage details now.</Say>
+  //     <Record
+  //       maxLength="60"
+  //       action="${backendBaseUrl}/twilio/recording-done?payeeId=${payeeId}"
+  //       method="POST"
+  //       playBeep="true"
+  //     />
+  //   </Response>
+  // `.trim();
+
   // STEP 2: Generate TwiML that Twilio fetches
-  generateTwiML(payeeId: string): string {
-    return `
-    <Response>
-      <Say voice="alice">Hi, how are you doing today?</Say>
+  getStepTwiml(step: string, payeeId: string) {
+    const next = (n: number) =>
+      `${backendBaseUrl}/twilio/ivr-step?step=${n}&payeeId=${payeeId}`;
 
-      <Pause length="1" />
-      <Say voice="alice">I am Jenifer, from Went Dentals.</Say>
+    const steps: Record<string, string> = {
+      '1': `
+      <Response>
+        <Say>Hi, how are you doing today?</Say>
+        <Record playBeep="true" maxLength="60" action="${next(2)}" method="POST"/>
+      </Response>
+    `,
 
-      <Pause length="1" />
-      <Say voice="alice">The patient name is John Merick. The date of birth is March thirty first nineteen ninety two.</Say>
+      '2': `
+      <Response>
+        <Say>I am Jennifer, from Went Dentals.</Say>
+        <Record playBeep="true" maxLength="60" action="${next(3)}" method="POST"/>
+      </Response>
+    `,
 
-      <Pause length="1" />
-      <Say voice="alice">The tax I D is one seven zero one zero two.</Say>
+      '3': `
+      <Response>
+        <Say>Can you provide the patient details?</Say>
+        <Record playBeep="true" maxLength="60" action="${next(4)}" method="POST"/>
+      </Response>
+    `,
 
-      <Pause length="1" />
-      <Say voice="alice">The address is eight sixteen West Main Street, Danville, Virginia, two four five four one.</Say>
+      '4': `
+      <Response>
+        <Say>The patient name is John Merick. The date of birth is March thirty first nineteen ninety two. May I know the Tax ID?</Say>
+        <Record playBeep="true" maxLength="60" action="${next(5)}" method="POST"/>
+      </Response>
+    `,
 
-      <Pause length="1" />
-      <Say voice="alice">Can I get the coverage details of the patient?</Say>
+      '5': `
+      <Response>
+        <Say>The Tax ID is one seven zero one zero two. Could you provide the address details?</Say>
+        <Record playBeep="true" maxLength="60" action="${next(6)}" method="POST"/>
+      </Response>
+    `,
 
-      <Pause length="1" />
-      <Say voice="alice">Can you provide the deductible amount?</Say>
+      '6': `
+      <Response>
+        <Say>The address is eight sixteen West Main Street, Danville Virginia two four five four one. What do you want to know about the patient?</Say>
+        <Record playBeep="true" maxLength="60" action="${next(7)}" method="POST"/>
+      </Response>
+    `,
 
-      <Pause length="1" />
-      <Say voice="alice">What is the copay?</Say>
+      '7': `
+      <Response>
+        <Say>Can I get the coverage details of the patient?</Say>
+        <Record playBeep="true" maxLength="60" action="${next(8)}" method="POST"/>
+      </Response>
+    `,
 
-      <Pause length="1" />
-      <Say voice="alice">What is the validity of the insurance?</Say>
+      '8': `
+      <Response>
+        <Say>Can you provide the deductible amount?</Say>
+        <Record playBeep="true" maxLength="60" action="${next(9)}" method="POST"/>
+      </Response>
+    `,
 
-      <Pause length="1" />
-      <Say voice="alice">Thank you, I am good.</Say>
+      '9': `
+      <Response>
+        <Say>What is the copay?</Say>
+        <Record playBeep="true" maxLength="60" action="${next(10)}" method="POST"/>
+      </Response>
+    `,
 
-      <Pause length="1" />
-      <Say voice="alice">Thank you.</Say>
-    </Response>
-  `.trim();
+      '10': `
+      <Response>
+        <Say>What is the validity of the insurance?</Say>
+        <Record playBeep="true" maxLength="60" action="${next(11)}" method="POST"/>
+      </Response>
+    `,
+
+      '11': `
+      <Response>
+        <Say>Thank you, I am good.</Say>
+        <Record playBeep="true" maxLength="60" action="${next(12)}" method="POST"/>
+      </Response>
+    `,
+
+      '12': `
+      <Response>
+        <Say>Thank you. Goodbye.</Say>
+        <Hangup/>
+      </Response>
+    `,
+    };
+
+    return steps[step] ?? steps['12'];
   }
 
   // STEP 3: Called when recording is done — downloads and uploads to backend

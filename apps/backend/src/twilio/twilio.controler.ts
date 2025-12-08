@@ -25,8 +25,28 @@ export class TwilioController {
 
   // Step 2: Twilio fetches this TwiML when the call is answered
   @Post('ivr-script')
-  handleIVRScript(@Query('payeeId') payeeId: string, @Res() res: Response) {
-    const twiml = this.twilioService.generateTwiML(payeeId);
+  startScript(@Query('payeeId') payeeId: string, @Res() res: Response) {
+    const twiml = this.twilioService.getStepTwiml('1', payeeId);
+    res.type('text/xml').send(twiml);
+  }
+
+
+// Helper step for the IVR Script
+  @Post('ivr-step')
+  async ivrStep(
+    @Query('step') step: string,
+    @Query('payeeId') payeeId: string,
+    @Body() body,
+    @Res() res: Response,
+  ) {
+    const recordingUrl = body.RecordingUrl ? body.RecordingUrl + '.mp3' : null;
+
+    if (recordingUrl) {
+      await this.twilioService.handleCallRecording(recordingUrl, payeeId);
+    }
+
+    const twiml = this.twilioService.getStepTwiml(step, payeeId);
+
     res.type('text/xml').send(twiml);
   }
 
