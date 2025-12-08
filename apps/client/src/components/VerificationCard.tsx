@@ -25,7 +25,7 @@ export default function VerificationCard({
       onClick={() => {} /* Navigate handled outside */}
     >
       {/* Top */}
-      <div className="bg-gradient-to-r from-indigo-500 to-blue-500 text-white p-5 flex justify-between items-start">
+      <div className="bg-gradient-to-r from-green-500 to-emerald-500 text-white p-5 flex justify-between items-start">
         <div>
           <h2 className="text-2xl font-bold">
             {record.payee.firstName} {record.payee.lastName}

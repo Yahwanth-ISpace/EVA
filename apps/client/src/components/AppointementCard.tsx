@@ -25,7 +25,7 @@ export default function AppointmentCard({
       onClick={() => {} /* Navigate handled outside */}
     >
       {/* Header */}
-      <div className="bg-gradient-to-r from-green-500 to-emerald-500 text-white p-5 flex justify-between items-start">
+      <div className="bg-gradient-to-r from-orange-500 to-yellow-500 text-white p-5 flex justify-between items-start">
         <div>
           <h2 className="text-2xl font-bold">
             {appt.payee.firstName} {appt.payee.lastName}

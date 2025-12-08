@@ -36,15 +36,37 @@ export class TwilioService {
   generateTwiML(payeeId: string): string {
     return `
     <Response>
-      <Say voice="alice">Hello. This is Springfield Clinic. We are verifying, insurance coverage, for your patient.</Say>
-      <Pause length="0.5"/>
-      <Say>Please provide insurance coverage details now.</Say>
-      <Record
-        maxLength="60"
-        action="${backendBaseUrl}/twilio/recording-done?payeeId=${payeeId}"
-        method="POST"
-        playBeep="true"
-      />
+      <Say voice="alice">Hi, how are you doing today?</Say>
+
+      <Pause length="1" />
+      <Say voice="alice">I am Jenifer, from Went Dentals.</Say>
+
+      <Pause length="1" />
+      <Say voice="alice">The patient name is John Merick. The date of birth is March thirty first nineteen ninety two.</Say>
+
+      <Pause length="1" />
+      <Say voice="alice">The tax I D is one seven zero one zero two.</Say>
+
+      <Pause length="1" />
+      <Say voice="alice">The address is eight sixteen West Main Street, Danville, Virginia, two four five four one.</Say>
+
+      <Pause length="1" />
+      <Say voice="alice">Can I get the coverage details of the patient?</Say>
+
+      <Pause length="1" />
+      <Say voice="alice">Can you provide the deductible amount?</Say>
+
+      <Pause length="1" />
+      <Say voice="alice">What is the copay?</Say>
+
+      <Pause length="1" />
+      <Say voice="alice">What is the validity of the insurance?</Say>
+
+      <Pause length="1" />
+      <Say voice="alice">Thank you, I am good.</Say>
+
+      <Pause length="1" />
+      <Say voice="alice">Thank you.</Say>
     </Response>
   `.trim();
   }
