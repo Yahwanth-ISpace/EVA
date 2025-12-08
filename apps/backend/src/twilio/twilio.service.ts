@@ -178,8 +178,7 @@ export class TwilioService {
         <Pause length="0.2" />
         <Record
           playBeep="false"
-          timeout="3"
-          maxLength="60"
+          maxLength="30"
           action="${backendBaseUrl}/twilio/step?step=${nextStep}&amp;payeeId=${payeeId}"
           method="POST"
         />
