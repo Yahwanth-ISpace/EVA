@@ -172,13 +172,13 @@ export class TwilioService {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
 
+      // <Pause length="0.2" />
+
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
-        <Say voice="joanna">${escapedText}</Say>
-        <Pause length="0.2" />
+        <Say voice="Polly.Joanna">${escapedText}</Say>
         <Record
-          playBeep="false"
-          maxLength="30"
+          maxLength=30
           action="${backendBaseUrl}/twilio/step?step=${nextStep}&amp;payeeId=${payeeId}"
           method="POST"
         />
