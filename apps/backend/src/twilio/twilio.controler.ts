@@ -61,22 +61,72 @@ export class TwilioController {
   //   res.type('text/xml').send(twiml);
   // }
 
- @Post('step')
-async handleStep(@Body() body, @Query('step') step: string, @Query('payeeId') payeeId: string) {
-  const recordingUrl = body?.RecordingUrl;
+  // Step handler - Twilio uses GET for initial call, POST for subsequent redirects
+  @Get('step')
+  @Post('step')
+  async handleStep(
+    @Body() body: any,
+    @Query('step') step: string,
+    @Query('payeeId') payeeId: string,
+    @Res() res: Response,
+  ) {
+    console.log('=== Twilio Step Request ===');
+    console.log('Step:', step);
+    console.log('PayeeId:', payeeId);
+    console.log('Has RecordingUrl:', !!body?.RecordingUrl);
+    console.log('==========================');
 
-  if (recordingUrl) {
-    await this.twilioService.handleRecording(recordingUrl, payeeId);
+    if (!payeeId) {
+      const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">Sorry, there was an error processing this call.</Say>
+  <Hangup/>
+</Response>`;
+      res.type('text/xml').send(errorTwiml);
+      return;
+    }
+
+    try {
+      const recordingUrl = body?.RecordingUrl;
+
+      // Handle recording if present (from previous step)
+      if (recordingUrl) {
+        console.log('Processing recording from previous step');
+        try {
+          await this.twilioService.handleRecording(recordingUrl, payeeId);
+        } catch (err) {
+          console.error('Error handling recording:', err);
+          // Continue even if recording fails
+        }
+      }
+
+      const currentStep = parseInt(step || '0', 10);
+
+      // Check if we've reached the end
+      if (currentStep >= this.twilioService.steps.length) {
+        const endTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">Thank you. Goodbye.</Say>
+  <Hangup/>
+</Response>`;
+        res.type('text/xml').send(endTwiml);
+        return;
+      }
+
+      // Generate TwiML for current step
+      const twiml = this.twilioService.generateTwiML(currentStep, payeeId);
+      console.log('Generated TwiML for step:', currentStep);
+      res.type('text/xml').send(twiml);
+    } catch (error: any) {
+      console.error('Error in handleStep:', error);
+      const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">Sorry, an error occurred. Please try again later.</Say>
+  <Hangup/>
+</Response>`;
+      res.type('text/xml').send(errorTwiml);
+    }
   }
-
-  const next = parseInt(step, 10) + 1;
-
-  if (next >= this.twilioService.steps.length) {
-    return `<Response><Say voice="alice">Thank you. Goodbye.</Say><Hangup/></Response>`;
-  }
-
-  return this.twilioService.generateTwiML(next, payeeId);
-}
 
 
   // Step 3: Twilio hits this after recording is done

@@ -154,17 +154,35 @@ export class TwilioService {
   //   return steps[step] ?? steps['12'];
   // }
 
-   generateTwiML(stepIndex: number,payeeId: string) {
-    return `
-    <Response>
-      <Say voice="alice">${this.steps[stepIndex]}</Say>
-      <Record
-        maxLength="30"
-        action="${backendBaseUrl}/twilio/step?step=${stepIndex}&payeeId=${payeeId}"
-        method="POST"
-      />
-    </Response>
-  `.trim();
+  generateTwiML(stepIndex: number, payeeId: string): string {
+    const stepText = this.steps[stepIndex];
+    if (!stepText) {
+      // If step doesn't exist, end the call
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">Thank you. Goodbye.</Say>
+  <Hangup/>
+</Response>`;
+    }
+
+    const nextStep = stepIndex + 1;
+    // Escape XML special characters in step text
+    const escapedText = stepText
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">${escapedText}</Say>
+  <Record
+    maxLength="30"
+    action="${backendBaseUrl}/twilio/step?step=${nextStep}&amp;payeeId=${payeeId}"
+    method="POST"
+    playBeep="true"
+  />
+</Response>`;
+    return twiml;
   }
 
   // STEP 3: Called when recording is done — downloads and uploads to backend
