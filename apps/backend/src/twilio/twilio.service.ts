@@ -220,18 +220,36 @@ export class TwilioService {
   // }
 
   async handleRecording(recordingUrl: string, payeeId: string) {
-    const localPath = await this.downloadRecording(recordingUrl);
+    try {
+      const localFilePath = await this.downloadRecording(recordingUrl);
 
-    const form = new FormData();
-    form.append('file', fs.createReadStream(localPath));
+      const form = new FormData();
+      form.append('file', fs.createReadStream(localFilePath));
 
-    await axios.post(
-      `${process.env.BACKEND_URL}/verifications/from-audio/${payeeId}`,
-      form,
-      { headers: form.getHeaders() },
-    );
+      console.log('Uploading file to verifications service:', localFilePath);
 
-    fs.unlinkSync(localPath);
+      const uploadResponse = await axios.post(
+        `${backendBaseUrl}/verifications/from-audio/${payeeId}`,
+        form,
+        {
+          headers: {
+            ...form.getHeaders(),
+            Authorization: `Bearer ${apiToken}`,
+          },
+        },
+      );
+
+      fs.unlinkSync(localFilePath);
+
+      console.log('Recording uploaded successfully:', uploadResponse.data);
+      return {
+        message: 'Recording uploaded successfully to verifications service',
+        result: uploadResponse.data,
+      };
+    } catch (err) {
+      console.error('Error uploading recording:', err);
+      throw new HttpException('Failed to handle recording', 500);
+    }
   }
 
   // STEP 4: Helper to download audio file from Twilio
