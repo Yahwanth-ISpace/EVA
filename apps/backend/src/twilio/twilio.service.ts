@@ -174,7 +174,7 @@ export class TwilioService {
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
       <Response>
-        <Say voice="joanna-neural">${escapedText}</Say>
+        <Say voice="joanna">${escapedText}</Say>
         <Pause length="0.2" />
         <Record
           playBeep="false"
