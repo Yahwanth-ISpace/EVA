@@ -172,17 +172,17 @@ export class TwilioService {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
 
-      // <Pause length="0.2" />
-
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-      <Response>
-        <Say voice="Polly.Joanna">${escapedText}</Say>
-        <Record
-          maxLength=30
-          action="${backendBaseUrl}/twilio/step?step=${nextStep}&amp;payeeId=${payeeId}"
-          method="POST"
-        />
-      </Response>`;
+<Response>
+  <Say voice="alice">${escapedText}</Say>
+  <Record
+    timeout=3
+    maxLength=30
+    action="${backendBaseUrl}/twilio/step?step=${nextStep}&amp;payeeId=${payeeId}"
+    method="POST"
+    playBeep="false"
+  />
+</Response>`;
     return twiml;
   }
 
@@ -221,36 +221,23 @@ export class TwilioService {
   // }
 
   async handleRecording(recordingUrl: string, payeeId: string) {
-    try {
-      const localFilePath = await this.downloadRecording(recordingUrl);
+    const localPath = await this.downloadRecording(recordingUrl);
 
-      const form = new FormData();
-      form.append('file', fs.createReadStream(localFilePath));
+    const form = new FormData();
+    form.append('file', fs.createReadStream(localPath));
 
-      console.log('Uploading file to verifications service:', localFilePath);
-
-      const uploadResponse = await axios.post(
-        `${backendBaseUrl}/verifications/from-audio/${payeeId}`,
-        form,
-        {
-          headers: {
-            ...form.getHeaders(),
-            Authorization: `Bearer ${apiToken}`,
-          },
+    await axios.post(
+      `${process.env.BACKEND_URL}/verifications/from-audio/${payeeId}`,
+      form,
+      {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${apiToken}`,
         },
-      );
+      },
+    );
 
-      fs.unlinkSync(localFilePath);
-
-      console.log('Recording uploaded successfully:', uploadResponse.data);
-      return {
-        message: 'Recording uploaded successfully to verifications service',
-        result: uploadResponse.data,
-      };
-    } catch (err) {
-      console.error('Error uploading recording:', err);
-      throw new HttpException('Failed to handle recording', 500);
-    }
+    fs.unlinkSync(localPath);
   }
 
   // STEP 4: Helper to download audio file from Twilio
