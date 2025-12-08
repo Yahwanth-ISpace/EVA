@@ -62,7 +62,6 @@ export class TwilioController {
   // }
 
   // Step handler - Twilio uses GET for initial call, POST for subsequent redirects
-  @Get('step')
   @Post('step')
   async handleStep(
     @Body() body: any,
