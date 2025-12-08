@@ -179,7 +179,6 @@ export class TwilioService {
     maxLength="30"
     action="${backendBaseUrl}/twilio/step?step=${nextStep}&amp;payeeId=${payeeId}"
     method="POST"
-    playBeep="true"
   />
 </Response>`;
     return twiml;
@@ -228,7 +227,9 @@ export class TwilioService {
     await axios.post(
       `${process.env.BACKEND_URL}/verifications/from-audio/${payeeId}`,
       form,
-      { headers: form.getHeaders() },
+      {
+        headers: { ...form.getHeaders(), Authorization: `Bearer ${apiToken}` },
+      },
     );
 
     fs.unlinkSync(localPath);
