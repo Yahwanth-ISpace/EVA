@@ -40,7 +40,7 @@ export class TwilioService {
     return client.calls.create({
       to,
       from: fromNumber,
-      url: `${backendBaseUrl}/twilio/ivr-script?payeeId=${payeeId}&step=0`,
+      url: `${backendBaseUrl}/twilio/step?step=0&payeeId=${payeeId}`,
       record: true,
     });
   }

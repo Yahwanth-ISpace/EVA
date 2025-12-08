@@ -49,17 +49,17 @@ export class TwilioController {
 
   //   res.type('text/xml').send(twiml);
   // }
-  @Get('ivr-script')
-  async startCall(
-    @Query('payeeId') payeeId: string,
-    @Query('step') step: string,
-    @Res() res,
-  ) {
-    const stepIndex = parseInt(step ?? '0', 10);
+  // @Get('ivr-script')
+  // async startCall(
+  //   @Query('payeeId') payeeId: string,
+  //   @Query('step') step: string,
+  //   @Res() res,
+  // ) {
+  //   const stepIndex = parseInt(step ?? '0', 10);
 
-    const twiml = this.twilioService.generateStepTwiML(stepIndex, payeeId);
-    res.type('text/xml').send(twiml);
-  }
+  //   const twiml = this.twilioService.generateStepTwiML(stepIndex, payeeId);
+  //   res.type('text/xml').send(twiml);
+  // }
 
   @Post('step')
   async handleStep(
