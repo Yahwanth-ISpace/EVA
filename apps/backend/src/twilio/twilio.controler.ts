@@ -50,8 +50,14 @@ export class TwilioController {
   //   res.type('text/xml').send(twiml);
   // }
   @Get('ivr-script')
-  async startCall(@Query('payeeId') payeeId: string, @Res() res) {
-    const twiml = this.twilioService.generateStepTwiML(0, payeeId);
+  async startCall(
+    @Query('payeeId') payeeId: string,
+    @Query('step') step: string,
+    @Res() res,
+  ) {
+    const stepIndex = parseInt(step ?? '0', 10);
+
+    const twiml = this.twilioService.generateStepTwiML(stepIndex, payeeId);
     res.type('text/xml').send(twiml);
   }
 
