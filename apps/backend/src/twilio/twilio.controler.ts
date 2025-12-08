@@ -61,31 +61,23 @@ export class TwilioController {
   //   res.type('text/xml').send(twiml);
   // }
 
-  @Post('step')
-  async handleStep(
-    @Body() body,
-    @Query('step') step: string,
-    @Query('payeeId') payeeId: string,
-  ) {
-    const recordingUrl = body?.RecordingUrl;
+ @Post('step')
+async handleStep(@Body() body, @Query('step') step: string, @Query('payeeId') payeeId: string) {
+  const recordingUrl = body?.RecordingUrl;
 
-    if (recordingUrl) {
-      await this.twilioService.handleRecording(recordingUrl, payeeId);
-    }
-
-    const next = parseInt(step, 10) + 1;
-
-    if (next >= this.twilioService.steps.length) {
-      return `
-      <Response>
-        <Say voice="alice">Thank you. Goodbye.</Say>
-        <Hangup/>
-      </Response>
-    `.trim();
-    }
-
-    return this.twilioService.generateStepTwiML(next, payeeId);
+  if (recordingUrl) {
+    await this.twilioService.handleRecording(recordingUrl, payeeId);
   }
+
+  const next = parseInt(step, 10) + 1;
+
+  if (next >= this.twilioService.steps.length) {
+    return `<Response><Say voice="alice">Thank you. Goodbye.</Say><Hangup/></Response>`;
+  }
+
+  return this.twilioService.generateStepTwiML(next, payeeId);
+}
+
 
   // Step 3: Twilio hits this after recording is done
   @Post('call-recording')
