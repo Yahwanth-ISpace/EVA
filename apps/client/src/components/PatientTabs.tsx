@@ -113,7 +113,7 @@ export default function PatientTabs() {
               : "No verifications found."}
           </p>
         ) : (
-          <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 h-[500px] flex-1 overflow-x-hidden overflow-y-auto pr-2 custom-scrollbar py-3 px-1">
+          <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 max-h-[500px] flex-1 overflow-x-hidden overflow-y-auto pr-2 custom-scrollbar py-3 px-1">
             {activeTab === "appointments"
               ? appointments.map((appt) => (
                   <AppointmentCard

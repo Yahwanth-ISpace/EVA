@@ -105,7 +105,7 @@ export class TwilioController {
       if (currentStep >= this.twilioService.steps.length) {
         const endTwiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">Thank you. Goodbye.</Say>
+  <Say voice="alice">Ending the call, Goodbye.</Say>
   <Hangup/>
 </Response>`;
         res.type('text/xml').send(endTwiml);

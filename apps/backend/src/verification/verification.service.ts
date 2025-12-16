@@ -65,18 +65,96 @@ export class VerificationService {
         throw new BadRequestException('AI failed to extract insurance details');
       }
 
-      // 3. SAVE IN DATABASE
-      const record = await this.prisma.verification.create({
-        data: {
+      // 3. FIND OR CREATE VERIFICATION RECORD
+      // Find the most recent verification for this payeeId (within the last hour to avoid merging old calls)
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      const existingVerification = await this.prisma.verification.findFirst({
+        where: {
           payeeId,
-          coverage: extracted.coverage ?? null,
-          deductible: extracted.deductible ?? null,
-          copay: extracted.copay ?? null,
-          validity: extracted.validity ?? null,
-          transcript: transcript,
+          createdAt: {
+            gte: oneHourAgo, // Only consider recent verifications (within last hour)
+          },
         },
+        orderBy: { createdAt: 'desc' },
         include: { payee: true },
       });
+
+      // Helper function to check if a value is meaningful (not null, undefined, or empty string)
+      const hasValue = (value: string | null | undefined): boolean => {
+        return value !== null && value !== undefined && value.trim().length > 0;
+      };
+
+      // Prepare update data - merge new values with existing ones
+      // Only update fields that have new meaningful values (don't null out existing values)
+      const updateData: any = {
+        transcript: existingVerification
+          ? `${existingVerification.transcript}\n\n---\n\n${transcript}`
+          : transcript,
+      };
+
+      // Merge coverage: use new value if provided and meaningful, otherwise keep existing
+      if (hasValue(extracted.coverage)) {
+        updateData.coverage = extracted.coverage;
+      } else if (existingVerification?.coverage) {
+        updateData.coverage = existingVerification.coverage;
+      }
+
+      // Merge deductible: use new value if provided and meaningful, otherwise keep existing
+      if (hasValue(extracted.deductible)) {
+        updateData.deductible = extracted.deductible;
+      } else if (existingVerification?.deductible) {
+        updateData.deductible = existingVerification.deductible;
+      }
+
+      // Merge copay: use new value if provided and meaningful, otherwise keep existing
+      if (hasValue(extracted.copay)) {
+        updateData.copay = extracted.copay;
+      } else if (existingVerification?.copay) {
+        updateData.copay = existingVerification.copay;
+      }
+
+      // Merge validity: use new value if provided and meaningful, otherwise keep existing
+      if (hasValue(extracted.validity)) {
+        updateData.validity = extracted.validity;
+      } else if (existingVerification?.validity) {
+        updateData.validity = existingVerification.validity;
+      }
+
+      console.log('Merged data:', {
+        coverage: updateData.coverage,
+        deductible: updateData.deductible,
+        copay: updateData.copay,
+        validity: updateData.validity,
+        transcriptLength: updateData.transcript?.length,
+        isUpdate: !!existingVerification,
+      });
+
+      let record;
+      if (existingVerification) {
+        // UPDATE existing record
+        console.log(
+          `Updating existing verification ${existingVerification.id} for payeeId: ${payeeId}`,
+        );
+        record = await this.prisma.verification.update({
+          where: { id: existingVerification.id },
+          data: updateData,
+          include: { payee: true },
+        });
+      } else {
+        // CREATE new record
+        console.log(`Creating new verification for payeeId: ${payeeId}`);
+        record = await this.prisma.verification.create({
+          data: {
+            payeeId,
+            coverage: extracted.coverage ?? null,
+            deductible: extracted.deductible ?? null,
+            copay: extracted.copay ?? null,
+            validity: extracted.validity ?? null,
+            transcript: transcript,
+          },
+          include: { payee: true },
+        });
+      }
 
       return record;
     } catch (err) {
