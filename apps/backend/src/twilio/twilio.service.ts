@@ -19,16 +19,16 @@ const client = twilio(accountSid, authToken);
 @Injectable()
 export class TwilioService {
   steps = [
-    'Hi how are you doing today?',
-    'I am Jenifer from Went Dentals.',
-    'The patient name is John Merick. Date of birth is March 31st 1992.',
-    'The Tax ID is 1 7 0 1 0 1',
-    'The address is 816 West Main Street, Danville, Virginia, 24541.',
-    'Can I get the coverage details of the patient?',
-    'Can you provide the deductible amount?',
-    'What is the copay?',
-    'What is the validity of the insurance?',
-    'Thank you. I am good.',
+    'Hi, how are you doing today?',
+    'Sure, I am Jenifer, from Went Dentals.',
+    'Yes, The patient name is, John Merick. Date of birth is, March 31st 1992.',
+    'Sure, The Tax ID is, 1 7 0 1 0 1',
+    'Yeah, The address is 816 West, Main Street, Danville, Virginia, 24541.',
+    'I want the coverage details of the patient?',
+    'Got you, Can you provide the deductible amount?',
+    'done, What is the copay?',
+    'May i know, what is the validity of the insurance?',
+    'Thank you. I am done here.',
   ];
 
   // STEP 1: Make the actual call
@@ -160,7 +160,7 @@ export class TwilioService {
       // If step doesn't exist, end the call
       return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">Thank you. Goodbye.</Say>
+  <Say voice="Polly.Joanna-Neural">Ending the call now.</Say>
   <Hangup/>
 </Response>`;
     }
@@ -174,11 +174,12 @@ export class TwilioService {
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">${escapedText}</Say>
+  <Say voice="Polly.Joanna-Neural">${escapedText}</Say>
   <Record
     maxLength="30"
     action="${backendBaseUrl}/twilio/step?step=${nextStep}&amp;payeeId=${payeeId}"
     method="POST"
+    playBeep="false"
   />
 </Response>`;
     return twiml;
