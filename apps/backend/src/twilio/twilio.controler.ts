@@ -1,67 +1,35 @@
 import {
   Controller,
-  Get,
   Post,
   Query,
   Body,
   Res,
   BadRequestException,
-  Req,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { TwilioService } from './twilio.service';
+import { ElevenLabsService } from '../voice/elevenlabs.service';
 
 const backendBaseUrl = process.env.BACKEND_URL;
 
+/**
+ * TwilioController handles phone call infrastructure via Twilio
+ * All voice generation is handled by ElevenLabsService (not Twilio's voice)
+ */
 @Controller('twilio')
 export class TwilioController {
-  constructor(private readonly twilioService: TwilioService) {}
+  constructor(
+    private readonly twilioService: TwilioService,
+    private readonly elevenLabsService: ElevenLabsService,
+  ) {}
 
-  // Step 1: Make a call
+  // STEP 1: Initiate outbound call
   @Post('call')
   async initiateCall(@Body() body: { to: string; payeeId: string }) {
-    console.log('Initiating call to:', body.to, 'for payeeId:', body.payeeId);
     return this.twilioService.makeCall(body.to, body.payeeId);
   }
 
-  // Step 2: Twilio fetches this TwiML when the call is answered
-  // @Post('ivr-script')
-  // startScript(@Query('payeeId') payeeId: string, @Res() res: Response) {
-  //   const twiml = this.twilioService.getStepTwiml('1', payeeId);
-  //   res.type('text/xml').send(twiml);
-  // }
-
-  // Helper step for the IVR Script
-  // @Post('ivr-step')
-  // async ivrStep(
-  //   @Query('step') step: string,
-  //   @Query('payeeId') payeeId: string,
-  //   @Body() body,
-  //   @Res() res: Response,
-  // ) {
-  //   const recordingUrl = body.RecordingUrl ? body.RecordingUrl + '.mp3' : null;
-
-  //   if (recordingUrl) {
-  //     await this.twilioService.handleCallRecording(recordingUrl, payeeId);
-  //   }
-
-  //   const twiml = this.twilioService.getStepTwiml(step, payeeId);
-
-  //   res.type('text/xml').send(twiml);
-  // }
-  // @Get('ivr-script')
-  // async startCall(
-  //   @Query('payeeId') payeeId: string,
-  //   @Query('step') step: string,
-  //   @Res() res,
-  // ) {
-  //   const stepIndex = parseInt(step ?? '0', 10);
-
-  //   const twiml = this.twilioService.generateStepTwiML(stepIndex, payeeId);
-  //   res.type('text/xml').send(twiml);
-  // }
-
-  // Step handler - Twilio uses GET for initial call, POST for subsequent redirects
+  // STEP 2: Main IVR step handler
   @Post('step')
   async handleStep(
     @Body() body: any,
@@ -69,125 +37,150 @@ export class TwilioController {
     @Query('payeeId') payeeId: string,
     @Res() res: Response,
   ) {
-    console.log('=== Twilio Step Request ===');
-    console.log('Step:', step);
-    console.log('PayeeId:', payeeId);
-    console.log('Has RecordingUrl:', !!body?.RecordingUrl);
-    console.log('==========================');
-
     if (!payeeId) {
-      const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">Sorry, there was an error processing this call.</Say>
-  <Hangup/>
-</Response>`;
-      res.type('text/xml').send(errorTwiml);
+      const errorAudio = await this.elevenLabsService.synthesize(
+        'Sorry, there was an error processing this call.',
+      );
+
+      res.type('text/xml').send(`
+        <Response>
+          <Play>${errorAudio}</Play>
+          <Hangup/>
+        </Response>
+      `);
       return;
     }
 
     try {
       const recordingUrl = body?.RecordingUrl;
 
-      // Handle recording if present (from previous step)
+      // Handle previous step recording
       if (recordingUrl) {
-        console.log('Processing recording from previous step');
-        try {
-          await this.twilioService.handleRecording(recordingUrl, payeeId);
-        } catch (err) {
-          console.error('Error handling recording:', err);
-          // Continue even if recording fails
-        }
+        await this.twilioService.handleRecording(recordingUrl, payeeId);
       }
 
       const currentStep = parseInt(step || '0', 10);
 
-      // Check if we've reached the end
+      // End of steps
       if (currentStep >= this.twilioService.steps.length) {
-        const endTwiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">Ending the call, Goodbye.</Say>
-  <Hangup/>
-</Response>`;
-        res.type('text/xml').send(endTwiml);
+        const goodbyeAudio = await this.elevenLabsService.synthesize(
+          'Thank you for your time. Ending the call now. Goodbye.',
+        );
+
+        res.type('text/xml').send(`
+          <Response>
+            <Play>${goodbyeAudio}</Play>
+            <Hangup/>
+          </Response>
+        `);
         return;
       }
 
-      // Generate TwiML for current step
-      const twiml = this.twilioService.generateTwiML(currentStep, payeeId);
-      console.log('Generated TwiML for step:', currentStep);
-      res.type('text/xml').send(twiml);
-    } catch (error: any) {
-      console.error('Error in handleStep:', error);
-      const errorTwiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">Sorry, an error occurred. Please try again later.</Say>
-  <Hangup/>
-</Response>`;
-      res.type('text/xml').send(errorTwiml);
+      // Get step prompt text (your existing logic)
+      const stepPrompt =
+        this.twilioService.steps[currentStep] ??
+        'Please respond after the beep.';
+
+      const audioUrl = await this.elevenLabsService.synthesize(stepPrompt);
+
+      res.type('text/xml').send(`
+        <Response>
+          <Play>${audioUrl}</Play>
+
+          <Record
+            timeout="5"
+            maxLength="20"
+            playBeep="true"
+            action="${backendBaseUrl}/twilio/step?step=${currentStep + 1}&payeeId=${payeeId}"
+            method="POST"
+          />
+        </Response>
+      `);
+    } catch (error) {
+      const errorAudio = await this.elevenLabsService.synthesize(
+        'Sorry, an unexpected error occurred. Please try again later.',
+      );
+
+      res.type('text/xml').send(`
+        <Response>
+          <Play>${errorAudio}</Play>
+          <Hangup/>
+        </Response>
+      `);
     }
   }
 
-
-  // Step 3: Twilio hits this after recording is done
+  // STEP 3: Explicit recording webhook (optional, still supported)
   @Post('call-recording')
   async handleRecording(@Body() body: any, @Query('payeeId') payeeId: string) {
-    const recordingUrl = body.RecordingUrl + '.mp3';
+    const recordingUrl = body?.RecordingUrl;
     if (!recordingUrl) {
       throw new BadRequestException('Missing RecordingUrl from Twilio');
     }
-    console.log('Recording URL:', recordingUrl, 'for payeeId:', payeeId);
+
     return this.twilioService.handleRecording(recordingUrl, payeeId);
   }
 
-  // Step 4: Twilio hits this to confirm thats all the user has to say
+  // STEP 4: Ask "Is that all?" using ElevenLabs
   @Post('recording-done')
-  async getPostRecordingTwiML(
+  async postRecordingConfirmation(
     @Body() body: any,
     @Query('payeeId') payeeId: string,
-  ): Promise<string> {
-    const recordingUrl = body.RecordingUrl;
-    const recordingUrlWithExt = recordingUrl + '.mp3';
-    if (!recordingUrlWithExt) {
-      throw new BadRequestException('Missing RecordingUrl from Twilio');
+  ) {
+    const recordingUrl = body?.RecordingUrl;
+    if (!recordingUrl) {
+      throw new BadRequestException('Missing RecordingUrl');
     }
 
-    // Call the service method to handle the recording
-    await this.twilioService.handleRecording(recordingUrlWithExt, payeeId);
+    await this.twilioService.handleRecording(recordingUrl, payeeId);
 
-    // Then respond with the TwiML to ask user "Is that all you have?"
+    const questionAudio = await this.elevenLabsService.synthesize(
+      'Is that all the information you would like to provide?',
+    );
+
     return `
-    <Response>
-      <Say>Is that all you have?</Say>
-      <Gather input="speech" timeout="5" action="/twilio/gather-response?payeeId=${payeeId}" method="POST">
-      </Gather>
-      <Say>We didn't get your response. Goodbye!</Say>
-      <Hangup/>
-    </Response>
-  `.trim();
+      <Response>
+        <Play>${questionAudio}</Play>
+
+        <Gather
+          input="speech"
+          timeout="5"
+          action="${backendBaseUrl}/twilio/gather-response?payeeId=${payeeId}"
+          method="POST"
+        />
+      </Response>
+    `;
   }
 
-  // Step 5: Handle user response from Gather
+  // STEP 5: Handle Gather response
   @Post('gather-response')
-  handleGather(@Body() body: any, @Query('payeeId') payeeId: string): string {
-    const speechResult = body.SpeechResult?.toLowerCase() ?? '';
+  async handleGather(@Body() body: any, @Query('payeeId') payeeId: string) {
+    const speechResult = body?.SpeechResult?.toLowerCase() ?? '';
 
     if (speechResult.includes('yes')) {
+      const byeAudio = await this.elevenLabsService.synthesize(
+        'Thank you. Ending the call now. Goodbye.',
+      );
+
       return `
-      <Response>
-        <Say>Thank you. Ending the call now.</Say>
-        <Hangup/>
-      </Response>
-    `.trim();
+        <Response>
+          <Play>${byeAudio}</Play>
+          <Hangup/>
+        </Response>
+      `;
     }
 
-    console.log('User response:', speechResult);
+    const continueAudio = await this.elevenLabsService.synthesize(
+      'Okay. Please provide the remaining details after the beep.',
+    );
 
-    // If user said "no" or something else
     return `
-    <Response>
-      <Say>Okay, please provide more details.</Say>
-      <Redirect method="POST">${backendBaseUrl}/twilio/ivr-script?payeeId=${payeeId}</Redirect>
-    </Response>
-  `.trim();
+      <Response>
+        <Play>${continueAudio}</Play>
+        <Redirect method="POST">
+          ${backendBaseUrl}/twilio/step?step=0&payeeId=${payeeId}
+        </Redirect>
+      </Response>
+    `;
   }
 }
