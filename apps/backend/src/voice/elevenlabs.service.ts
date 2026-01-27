@@ -9,7 +9,8 @@ export class ElevenLabsService {
   private readonly logger = new Logger(ElevenLabsService.name);
   private readonly apiKey = process.env.ELEVENLABS_API_KEY?.trim();
   private readonly voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
-  private readonly modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_monolingual_v1';
+  // Updated to use a supported free tier model (eleven_monolingual_v1 is deprecated)
+  private readonly modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5';
 
   constructor() {
     if (!this.apiKey) {
@@ -74,10 +75,49 @@ export class ElevenLabsService {
       
       return audioUrl;
     } catch (err) {
-      this.logger.error('ElevenLabs TTS failed:', err.response?.data || err.message);
+      // Parse error response properly
+      let errorMessage = err.message;
+      let errorDetails: any = null;
+
+      if (err.response?.data) {
+        // Handle buffer response (convert to string/JSON)
+        if (Buffer.isBuffer(err.response.data)) {
+          try {
+            const errorText = err.response.data.toString('utf-8');
+            errorDetails = JSON.parse(errorText);
+            errorMessage = errorDetails?.detail?.message || 
+                          errorDetails?.detail?.status || 
+                          errorDetails?.message || 
+                          errorText;
+          } catch (parseErr) {
+            errorMessage = err.response.data.toString('utf-8');
+          }
+        } else if (typeof err.response.data === 'object') {
+          errorDetails = err.response.data;
+          errorMessage = errorDetails?.detail?.message || 
+                        errorDetails?.detail?.status || 
+                        errorDetails?.message || 
+                        JSON.stringify(errorDetails);
+        } else {
+          errorMessage = err.response.data;
+        }
+      }
+
+      // Log the full error for debugging
+      this.logger.error('ElevenLabs TTS failed:', {
+        message: errorMessage,
+        status: err.response?.status,
+        details: errorDetails,
+      });
+
       throw new HttpException(
-        `ElevenLabs TTS failed: ${err.response?.data?.detail?.message || err.message}`,
-        500,
+        {
+          statusCode: err.response?.status || 500,
+          message: `ElevenLabs TTS failed: ${errorMessage}`,
+          error: 'TTS_FAILED',
+          details: errorDetails,
+        },
+        err.response?.status || 500,
       );
     }
   }
