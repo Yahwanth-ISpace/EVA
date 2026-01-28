@@ -200,6 +200,70 @@ export class VerificationService {
     });
   }
 
+  /**
+   * Merge extracted insurance data into the current verification for a payee (used by media-stream flow).
+   * Finds or creates a recent verification and updates only the provided fields; optionally appends transcript.
+   */
+  async mergeExtractedData(
+    payeeId: string,
+    extracted: Partial<{
+      coverage: string | null;
+      deductible: string | null;
+      copay: string | null;
+      validity: string | null;
+    }>,
+    transcriptToAppend?: string,
+  ) {
+    const payee = await this.prisma.payee.findUnique({
+      where: { id: payeeId },
+    });
+    if (!payee) throw new NotFoundException('Payee not found');
+
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const existing = await this.prisma.verification.findFirst({
+      where: { payeeId, createdAt: { gte: oneHourAgo } },
+      orderBy: { createdAt: 'desc' },
+      include: { payee: true },
+    });
+
+    const hasValue = (v: string | null | undefined) =>
+      v !== null && v !== undefined && String(v).trim().length > 0;
+
+    const updateData: any = {};
+    if (transcriptToAppend?.trim()) {
+      updateData.transcript = existing
+        ? `${existing.transcript}\n\n---\n\n${transcriptToAppend}`
+        : transcriptToAppend;
+    }
+    for (const key of ['coverage', 'deductible', 'copay', 'validity'] as const) {
+      const val = extracted[key];
+      if (hasValue(val)) {
+        updateData[key] = val;
+      } else if (existing && (existing[key] ?? '').toString().trim()) {
+        updateData[key] = existing[key];
+      }
+    }
+
+    if (existing) {
+      return this.prisma.verification.update({
+        where: { id: existing.id },
+        data: updateData,
+        include: { payee: true },
+      });
+    }
+    return this.prisma.verification.create({
+      data: {
+        payeeId,
+        coverage: updateData.coverage ?? null,
+        deductible: updateData.deductible ?? null,
+        copay: updateData.copay ?? null,
+        validity: updateData.validity ?? null,
+        transcript: updateData.transcript ?? transcriptToAppend ?? '',
+      },
+      include: { payee: true },
+    });
+  }
+
   async findById(id: string) {
     const verification = await this.prisma.verification.findUnique({
       where: { id },

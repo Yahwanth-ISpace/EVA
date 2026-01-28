@@ -9,5 +9,6 @@ import { TranscriptionModule } from 'src/transcription/transcription.module';
   imports: [PrismaModule, AiModule, TranscriptionModule],
   controllers: [VerificationController],
   providers: [VerificationService],
+  exports: [VerificationService],
 })
 export class VerificationModule {}
