@@ -70,7 +70,15 @@ export class ElevenLabsService {
 
       fs.writeFileSync(filePath, response.data);
 
-      const audioUrl = `${process.env.BACKEND_PUBLIC_URL}/audio/${fileName}`;
+      const baseUrl =
+        process.env.BACKEND_PUBLIC_URL?.trim() ||
+        `http://localhost:${process.env.PORT ?? 3000}`;
+      if (!process.env.BACKEND_PUBLIC_URL?.trim()) {
+        this.logger.warn(
+          'BACKEND_PUBLIC_URL is not set. Using localhost fallback for audio URLs. Set it in production for correct public URLs.',
+        );
+      }
+      const audioUrl = `${baseUrl}/audio/${fileName}`;
       this.logger.debug(`Generated audio: ${audioUrl}`);
       
       return audioUrl;
