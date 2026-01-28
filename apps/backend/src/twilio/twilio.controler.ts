@@ -23,6 +23,53 @@ export class TwilioController {
     private readonly elevenLabsService: ElevenLabsService,
   ) {}
 
+  /**
+   * Inbound call webhook — "A call comes in" (Twilio POST to /twilio/inbound).
+   * Returns TwiML to start the IVR flow. Uses INBOUND_PAYEE_ID or "inbound".
+   */
+  @Post('inbound')
+  async handleInbound(@Body() body: Record<string, string>, @Res() res: Response) {
+    const payeeId =
+      process.env.INBOUND_PAYEE_ID?.trim() || body?.payeeId || 'inbound';
+
+    try {
+      const welcomeAudio = await this.elevenLabsService.synthesize(
+        'Thank you for calling. Please hold while we connect you.',
+      );
+
+      res.type('text/xml').send(`
+        <Response>
+          <Play>${welcomeAudio}</Play>
+          <Redirect method="POST">${backendBaseUrl}/twilio/step?step=0&amp;payeeId=${encodeURIComponent(payeeId)}</Redirect>
+        </Response>
+      `);
+    } catch (error) {
+      const errorAudio = await this.elevenLabsService.synthesize(
+        'Sorry, we are unable to take your call right now. Please try again later.',
+      );
+      res.type('text/xml').send(`
+        <Response>
+          <Play>${errorAudio}</Play>
+          <Hangup/>
+        </Response>
+      `);
+    }
+  }
+
+  /**
+   * Call status callback — "Call status changes" (Twilio POST to /twilio/status).
+   * Acknowledge with 200; optionally log CallSid, CallStatus, etc.
+   */
+  @Post('status')
+  async handleStatusCallback(@Body() body: Record<string, string>) {
+    const { CallSid, CallStatus } = body ?? {};
+    if (CallSid && CallStatus) {
+      // Optional: log or persist for analytics
+      console.log(`[Twilio] Call ${CallSid} status: ${CallStatus}`);
+    }
+    return {};
+  }
+
   // STEP 1: Initiate outbound call
   @Post('call')
   async initiateCall(@Body() body: { to: string; payeeId: string }) {
