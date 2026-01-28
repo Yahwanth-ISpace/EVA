@@ -206,7 +206,7 @@ Respond with ONLY a JSON object. No markdown. No extra text. nextMessage must be
       let nextMessage =
         typeof parsed.nextMessage === 'string' && parsed.nextMessage.trim()
           ? parsed.nextMessage.trim()
-          : 'Got it. What else can you tell me?';
+          : 'What else can you tell me?';
       const maxMessageLength = 200;
       if (nextMessage.length > maxMessageLength) {
         nextMessage = nextMessage.slice(0, maxMessageLength).trim();
@@ -218,7 +218,7 @@ Respond with ONLY a JSON object. No markdown. No extra text. nextMessage must be
       return { nextMessage, extractedUpdates, endCall };
     } catch {
       return {
-        nextMessage: 'Got it. What else can you tell me?',
+        nextMessage: 'What else can you tell me?',
         extractedUpdates: {},
         endCall: false,
       };

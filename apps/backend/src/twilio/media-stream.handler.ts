@@ -20,8 +20,16 @@ const SILENCE_RATIO_THRESHOLD = 0.85;
 const MAX_BUFFER_BYTES = 120_000;
 /** Fallback: process at most every N ms if we have enough audio and no silence detected */
 const FALLBACK_PROCESS_INTERVAL_MS = 3000;
-/** Short phrase played immediately after user speaks so they hear something while we process (reduces perceived delay). */
-const QUICK_ACK_PHRASE = 'Got it.';
+/** Short phrases played immediately after user speaks (varied for more human feel). One picked at random each time. */
+const QUICK_ACK_PHRASES = [
+  'Got it.',
+  'Sure.',
+  'Okay.',
+  'Thanks.',
+  'Noted.',
+  'Right.',
+  'Understood.',
+];
 /** Chunk size to send back to Twilio (40ms = 320 bytes at 8kHz mulaw) */
 const OUTBOUND_CHUNK_BYTES = 320;
 
@@ -93,8 +101,8 @@ interface StreamState {
   extractedData: ExtractedData;
   /** When true, we've said goodbye and shouldn't process more */
   callEnded: boolean;
-  /** Pre-generated audio for QUICK_ACK_PHRASE so we can play it instantly (no TTS wait) and reduce perceived delay */
-  cachedAckAudio: Buffer | null;
+  /** Pre-generated audio for quick ack phrases (phrase -> buffer) so we can play instantly and vary responses */
+  cachedAckAudios: Record<string, Buffer>;
 }
 
 @Injectable()
@@ -123,7 +131,7 @@ export class MediaStreamHandlerService {
         validity: null,
       },
       callEnded: false,
-      cachedAckAudio: null,
+      cachedAckAudios: {},
     };
 
     const send = (obj: object) => {
@@ -196,12 +204,14 @@ export class MediaStreamHandlerService {
         }
 
         const playQuickAck = async (): Promise<void> => {
-          if (state.cachedAckAudio?.length) {
-            await playAudio(state.cachedAckAudio);
+          const phrase = QUICK_ACK_PHRASES[Math.floor(Math.random() * QUICK_ACK_PHRASES.length)];
+          const cached = state.cachedAckAudios[phrase];
+          if (cached?.length) {
+            await playAudio(cached);
           } else {
-            const ack = await this.elevenLabsAudioStack.synthesize(QUICK_ACK_PHRASE);
+            const ack = await this.elevenLabsAudioStack.synthesize(phrase);
             if (ack?.length) {
-              state.cachedAckAudio = ack;
+              state.cachedAckAudios[phrase] = ack;
               await playAudio(ack);
             }
           }
@@ -228,21 +238,10 @@ export class MediaStreamHandlerService {
           if (hasValue(extractedUpdates.deductible ?? null)) state.extractedData.deductible = extractedUpdates.deductible ?? null;
           if (hasValue(extractedUpdates.copay ?? null)) state.extractedData.copay = extractedUpdates.copay ?? null;
           if (hasValue(extractedUpdates.validity ?? null)) state.extractedData.validity = extractedUpdates.validity ?? null;
-
-          if (state.payeeId) {
-            this.verificationService
-              .pushExtractedData(
-                state.payeeId,
-                state.extractedData,
-                isIdleOrEmpty ? undefined : userSaid,
-              )
-              .catch((e) =>
-                this.logger.warn('[MediaStream] Push extracted failed', (e as Error)?.message),
-              );
-          }
+          // DB update happens only at end of call (see 'stop' event)
         }
 
-        const toSpeak = (nextMessage ?? '').trim() || 'Got it. What else can you tell me?';
+        const toSpeak = (nextMessage ?? '').trim() || 'What else can you tell me?';
         if (!(nextMessage ?? '').trim()) {
           this.logger.warn('[MediaStream] AI returned empty nextMessage, using fallback');
         }
@@ -298,15 +297,17 @@ export class MediaStreamHandlerService {
                   fullName: `${info.firstName} ${info.lastName}`.trim(),
                   dobFormatted: info.dob ? formatDobForSpeech(info.dob) : null,
                 };
-                await this.verificationService.startVerificationCall(state.payeeId);
               }
             }
             if (!state.patientInfo) state.patientInfo = STATIC_PATIENT_INFO;
             await speak(CONVERSATION_GREETING);
             (async () => {
               try {
-                const ack = await this.elevenLabsAudioStack.synthesize(QUICK_ACK_PHRASE);
-                if (ack?.length) state.cachedAckAudio = ack;
+                const toPreload = QUICK_ACK_PHRASES.slice(0, 3);
+                for (const phrase of toPreload) {
+                  const ack = await this.elevenLabsAudioStack.synthesize(phrase);
+                  if (ack?.length) state.cachedAckAudios[phrase] = ack;
+                }
               } catch {
                 // ignore; will generate on first use
               }
