@@ -9,20 +9,37 @@ import { TranscriptionService } from '../transcription/transcription.service';
 import { ElevenLabsAudioStackService } from '../voice/elevenlabs-audio-stack.service';
 import { VerificationService } from '../verification/verification.service';
 
-/** Minimum mulaw bytes to process (~1.5 sec at 8kHz) */
-const MIN_BUFFER_BYTES = 12_000;
-/** Process interval when we have enough audio (ms) */
-const PROCESS_INTERVAL_MS = 2500;
+/** Minimum speech bytes before we consider processing (~1 sec at 8kHz mulaw) */
+const MIN_SPEECH_BYTES = 8_000;
+/** Tail bytes to check for silence (~0.5 sec). When this tail is silent, user likely stopped. */
+const SILENCE_TAIL_BYTES = 4_000;
+/** Fraction of tail bytes that must be "silent" to trigger (0–1) */
+const SILENCE_RATIO_THRESHOLD = 0.85;
+/** Max buffer before we process anyway (~15 sec) so we don't wait forever */
+const MAX_BUFFER_BYTES = 120_000;
+/** Fallback: process at most every N ms if we have enough audio and no silence detected */
+const FALLBACK_PROCESS_INTERVAL_MS = 4000;
 /** Chunk size to send back to Twilio (40ms = 320 bytes at 8kHz mulaw) */
 const OUTBOUND_CHUNK_BYTES = 320;
 
-/** Verification script: questions we ask in order (coverage, deductible, copay, validity). */
-const VERIFICATION_QUESTIONS = [
-  'Can you please provide the coverage details of the patient?',
-  'What is the deductible amount?',
-  'What is the copay?',
-  'What is the validity of the insurance?',
-];
+/** Mulaw: 0xFF and 0x7F are typical silence; treat nearby as silent too */
+function isSilentByte(b: number): boolean {
+  return b === 0xff || b === 0x7f || Math.abs(b - 0xff) <= 2;
+}
+
+/** Check if the last SILENCE_TAIL_BYTES of buffer are mostly silence */
+function isSilenceAtEnd(buffer: Buffer): boolean {
+  if (buffer.length < SILENCE_TAIL_BYTES) return false;
+  const tail = buffer.subarray(buffer.length - SILENCE_TAIL_BYTES);
+  let silent = 0;
+  for (let i = 0; i < tail.length; i++) {
+    if (isSilentByte(tail[i])) silent++;
+  }
+  return silent / tail.length >= SILENCE_RATIO_THRESHOLD;
+}
+
+/** First thing the bot says when the stream starts */
+const CONVERSATION_GREETING = 'Hi, how are you?';
 
 interface ExtractedData {
   coverage: string | null;
@@ -35,13 +52,12 @@ interface StreamState {
   buffer: Buffer[];
   streamSid: string | null;
   processing: boolean;
-  processTimer: ReturnType<typeof setInterval> | null;
-  /** Payee ID for this call (from WebSocket URL). */
+  /** Fallback timer when silence isn't detected */
+  fallbackTimer: ReturnType<typeof setInterval> | null;
   payeeId: string | null;
-  /** Current question index (0..VERIFICATION_QUESTIONS.length). */
-  currentStep: number;
-  /** Extracted insurance data so far (for merging and interruption handling). */
   extractedData: ExtractedData;
+  /** When true, we've said goodbye and shouldn't process more */
+  callEnded: boolean;
 }
 
 @Injectable()
@@ -55,25 +71,20 @@ export class MediaStreamHandlerService {
     private readonly verificationService: VerificationService,
   ) {}
 
-  /**
-   * Handle a new Media Stream WebSocket connection.
-   * @param ws - Twilio Media Stream WebSocket
-   * @param payeeId - Optional payee ID from query string (e.g. ?payeeId=xxx)
-   */
   handleConnection(ws: WebSocket, payeeId?: string | null): void {
     const state: StreamState = {
       buffer: [],
       streamSid: null,
       processing: false,
-      processTimer: null,
+      fallbackTimer: null,
       payeeId: payeeId ?? null,
-      currentStep: 0,
       extractedData: {
         coverage: null,
         deductible: null,
         copay: null,
         validity: null,
       },
+      callEnded: false,
     };
 
     const send = (obj: object) => {
@@ -100,11 +111,27 @@ export class MediaStreamHandlerService {
       }
     };
 
-    const processBuffer = async () => {
-      if (state.processing || !state.streamSid) return;
+    const tryTriggerProcess = () => {
+      if (state.processing || state.callEnded || !state.streamSid) return;
       const combined = Buffer.concat(state.buffer);
-      if (combined.length < MIN_BUFFER_BYTES) return;
-      state.buffer = [];
+      if (combined.length < MIN_SPEECH_BYTES) return;
+
+      const shouldProcess =
+        isSilenceAtEnd(combined) ||
+        combined.length >= MAX_BUFFER_BYTES;
+
+      if (shouldProcess) {
+        state.buffer = [];
+        if (state.fallbackTimer) {
+          clearInterval(state.fallbackTimer);
+          state.fallbackTimer = null;
+        }
+        processBuffer(combined);
+      }
+    };
+
+    const processBuffer = async (combined: Buffer) => {
+      if (state.processing || state.callEnded) return;
       state.processing = true;
 
       const tmpDir = os.tmpdir();
@@ -123,34 +150,15 @@ export class MediaStreamHandlerService {
 
         this.logger.log(`[MediaStream] User said: ${transcript}`);
 
-        const currentQuestion = VERIFICATION_QUESTIONS[state.currentStep] ?? '';
-        const isInterruption = await this.aiService.classifySegment(transcript, currentQuestion);
+        const { nextMessage, extractedUpdates, endCall } =
+          await this.aiService.getNextConversationTurn(transcript, state.extractedData);
 
-        if (isInterruption === 'interruption') {
-          // Handle correction or general question: parse updates, merge, speak reply, stay on same question
-          const { updates, reply } = await this.aiService.handleInterruption(
-            transcript,
-            state.extractedData,
-          );
-          if (Object.keys(updates).length > 0) {
-            state.extractedData = { ...state.extractedData, ...updates };
-            if (state.payeeId) {
-              await this.verificationService.mergeExtractedData(
-                state.payeeId,
-                state.extractedData,
-                transcript,
-              );
-            }
-          }
-          await speak(reply);
-        } else {
-          // Answer path: extract insurance details, merge, save, advance to next question
-          const extracted = await this.aiService.extractInsuranceDetails(transcript);
-          const hasValue = (v: string | null) => v != null && String(v).trim().length > 0;
-          if (hasValue(extracted.coverage)) state.extractedData.coverage = extracted.coverage;
-          if (hasValue(extracted.deductible)) state.extractedData.deductible = extracted.deductible;
-          if (hasValue(extracted.copay)) state.extractedData.copay = extracted.copay;
-          if (hasValue(extracted.validity)) state.extractedData.validity = extracted.validity;
+        const hasValue = (v: string | null) => v != null && String(v).trim().length > 0;
+        if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+          if (hasValue(extractedUpdates.coverage ?? null)) state.extractedData.coverage = extractedUpdates.coverage ?? null;
+          if (hasValue(extractedUpdates.deductible ?? null)) state.extractedData.deductible = extractedUpdates.deductible ?? null;
+          if (hasValue(extractedUpdates.copay ?? null)) state.extractedData.copay = extractedUpdates.copay ?? null;
+          if (hasValue(extractedUpdates.validity ?? null)) state.extractedData.validity = extractedUpdates.validity ?? null;
 
           if (state.payeeId) {
             await this.verificationService.mergeExtractedData(
@@ -159,14 +167,16 @@ export class MediaStreamHandlerService {
               transcript,
             );
           }
+        }
 
-          state.currentStep += 1;
-          if (state.currentStep >= VERIFICATION_QUESTIONS.length) {
-            await speak('Thank you. I have all the information. Goodbye.');
-            return;
+        await speak(nextMessage);
+
+        if (endCall) {
+          state.callEnded = true;
+          if (state.fallbackTimer) {
+            clearInterval(state.fallbackTimer);
+            state.fallbackTimer = null;
           }
-          const nextQuestion = VERIFICATION_QUESTIONS[state.currentStep];
-          await speak(`Got it. ${nextQuestion}`);
         }
       } catch (err: any) {
         this.logger.warn('[MediaStream] Process buffer failed', err?.message);
@@ -199,17 +209,12 @@ export class MediaStreamHandlerService {
       if (event === 'start') {
         state.streamSid = msg?.streamSid ?? null;
         this.logger.log(`[MediaStream] Start streamSid=${state.streamSid} payeeId=${state.payeeId ?? 'none'}`);
-        state.processTimer = setInterval(processBuffer, PROCESS_INTERVAL_MS);
-        // Speak first question (or greeting if no payeeId)
+        startFallbackTimer();
         (async () => {
           try {
-            if (state.payeeId != null && VERIFICATION_QUESTIONS.length > 0) {
-              await speak(VERIFICATION_QUESTIONS[0]);
-            } else {
-              await speak('Hello. I\'m listening. How can I help you today?');
-            }
+            await speak(CONVERSATION_GREETING);
           } catch (e) {
-            this.logger.warn('[MediaStream] Initial greeting failed', (e as Error)?.message);
+            this.logger.warn('[MediaStream] Greeting failed', (e as Error)?.message);
           }
         })();
         return;
@@ -219,29 +224,44 @@ export class MediaStreamHandlerService {
         try {
           const payload = Buffer.from(msg.media.payload, 'base64');
           state.buffer.push(payload);
+          tryTriggerProcess();
         } catch {}
         return;
       }
 
       if (event === 'stop') {
-        if (state.processTimer) {
-          clearInterval(state.processTimer);
-          state.processTimer = null;
+        if (state.fallbackTimer) {
+          clearInterval(state.fallbackTimer);
+          state.fallbackTimer = null;
         }
         this.logger.log('[MediaStream] Stop');
       }
     });
 
     ws.on('close', () => {
-      if (state.processTimer) {
-        clearInterval(state.processTimer);
-        state.processTimer = null;
+      if (state.fallbackTimer) {
+        clearInterval(state.fallbackTimer);
+        state.fallbackTimer = null;
       }
     });
 
     ws.on('error', (err) => {
       this.logger.warn('[MediaStream] WebSocket error', err?.message);
     });
+
+    // Fallback: if we never detect silence but have enough audio, process every N seconds
+    const startFallbackTimer = () => {
+      if (state.fallbackTimer) return;
+      state.fallbackTimer = setInterval(() => {
+        const combined = Buffer.concat(state.buffer);
+        if (combined.length >= MIN_SPEECH_BYTES) {
+          state.buffer = [];
+          clearInterval(state.fallbackTimer!);
+          state.fallbackTimer = null;
+          processBuffer(combined);
+        }
+      }, FALLBACK_PROCESS_INTERVAL_MS);
+    };
   }
 
   /** Convert raw mulaw (8kHz mono) file to wav for transcription API */

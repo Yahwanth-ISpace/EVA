@@ -116,6 +116,69 @@ Examples:
     }
   }
 
+  /**
+   * Conversational turn: given what the user said and what we have so far,
+   * return the next thing for the bot to say and any extracted field updates.
+   * Used for the streaming flow: bot speaks → user speaks → silence → process → bot responds.
+   */
+  public async getNextConversationTurn(
+    transcript: string,
+    currentExtracted: {
+      coverage: string | null;
+      deductible: string | null;
+      copay: string | null;
+      validity: string | null;
+    },
+  ): Promise<{
+    nextMessage: string;
+    extractedUpdates: Partial<{
+      coverage: string | null;
+      deductible: string | null;
+      copay: string | null;
+      validity: string | null;
+    }>;
+    endCall?: boolean;
+  }> {
+    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const current = JSON.stringify(currentExtracted);
+    const prompt = `You are a friendly voice agent for an insurance verification call. Keep replies short (one or two sentences) and natural for speech.
+
+Data we have so far: ${current}
+
+The user just said: "${transcript}"
+
+Do two things:
+1. If they provided any coverage, deductible, copay, or validity info (or corrected something), put ONLY those fields in "extractedUpdates" with the value. Otherwise use {}.
+2. Say the next thing: acknowledge what they said and ask for the next piece of info we still need, or answer a question, or say goodbye if they're done or we have everything.
+
+If the user said goodbye, or we have all four fields (coverage, deductible, copay, validity) and they confirmed, set "endCall" to true and say a short goodbye.
+
+Respond with ONLY a JSON object. No markdown. Format:
+{"nextMessage": "What to say next (short, for TTS)", "extractedUpdates": {} or {"coverage": "..."}, "endCall": true or false}`;
+
+    const result = await model.generateContent(prompt);
+    let jsonString = result.response.text()?.trim() ?? '{}';
+    if (jsonString.startsWith('```')) {
+      jsonString = jsonString.replace(/```json|```/gi, '').trim();
+    }
+    try {
+      const parsed = JSON.parse(jsonString);
+      const nextMessage =
+        typeof parsed.nextMessage === 'string' && parsed.nextMessage.trim()
+          ? parsed.nextMessage.trim()
+          : 'Got it. What else can you tell me?';
+      const extractedUpdates = parsed.extractedUpdates ?? {};
+      const endCall = parsed.endCall === true;
+      return { nextMessage, extractedUpdates, endCall };
+    } catch {
+      return {
+        nextMessage: 'Got it. What else can you tell me?',
+        extractedUpdates: {},
+        endCall: false,
+      };
+    }
+  }
+
   public async extractInsuranceDetails(text: string): Promise<{
     coverage: string | null;
     deductible: string | null;
