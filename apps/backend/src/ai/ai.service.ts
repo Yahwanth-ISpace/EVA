@@ -149,6 +149,24 @@ Examples:
   }> {
     const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const current = JSON.stringify(currentExtracted);
+
+    const hasVal = (v: string | null) => v != null && String(v).trim().length > 0;
+    const nextFieldToAsk =
+      !hasVal(currentExtracted.coverage)
+        ? 'coverage'
+        : !hasVal(currentExtracted.deductible)
+          ? 'deductible'
+          : !hasVal(currentExtracted.copay)
+            ? 'copay'
+            : !hasVal(currentExtracted.validity)
+              ? 'validity'
+              : null;
+
+    const oneFieldRule =
+      nextFieldToAsk === null
+        ? 'We have all four fields. If the user confirmed or said goodbye, set endCall true and say a short goodbye. Otherwise ask if they want to add or change anything.'
+        : `CRITICAL: Ask for ONE field only: "${nextFieldToAsk}". Do not ask for coverage, deductible, copay, or validity together. Say one short sentence only, e.g. "What is the ${nextFieldToAsk}?" or "Could you tell me the ${nextFieldToAsk}?" Keep nextMessage under 15 words.`;
+
     const patientBlock = patientInfo
       ? `
 Patient info you can disclose when asked:
@@ -171,12 +189,12 @@ The user just said: "${transcript}"
 
 Do two things:
 1. If they provided any coverage, deductible, copay, or validity info (or corrected something), put ONLY those fields in "extractedUpdates" with the value. Otherwise use {}.
-2. Say the next thing: answer any identity or patient question as above; otherwise acknowledge what they said and ask for the next piece of info we still need (coverage, deductible, copay, validity), or say goodbye if they're done or we have everything.
+2. Say the next thing: If the user did not respond, was silent, or was inaudible (e.g. transcript says "User did not respond or was inaudible" or similar): set extractedUpdates to {} and say "Sorry, can you repeat that again?" then ask for the single next field we still need (one short sentence), or "Anything else?" if we have all four. Otherwise answer any identity or patient question as above; otherwise follow this rule: ${oneFieldRule}
 
-If the user said goodbye, or we have all four fields (coverage, deductible, copay, validity) and they confirmed, set "endCall" to true and say a short goodbye.
+If the user said goodbye, or we have all four fields and they confirmed, set "endCall" to true and say a short goodbye.
 
-Respond with ONLY a JSON object. No markdown. Format:
-{"nextMessage": "What to say next (short, for TTS)", "extractedUpdates": {} or {"coverage": "..."}, "endCall": true or false}`;
+Respond with ONLY a JSON object. No markdown. No extra text. nextMessage must be one short sentence (under 15 words when asking for a field). Format:
+{"nextMessage": "One short sentence only", "extractedUpdates": {} or {"coverage": "..."}, "endCall": true or false}`;
 
     const result = await model.generateContent(prompt);
     let jsonString = result.response.text()?.trim() ?? '{}';
@@ -185,10 +203,16 @@ Respond with ONLY a JSON object. No markdown. Format:
     }
     try {
       const parsed = JSON.parse(jsonString);
-      const nextMessage =
+      let nextMessage =
         typeof parsed.nextMessage === 'string' && parsed.nextMessage.trim()
           ? parsed.nextMessage.trim()
           : 'Got it. What else can you tell me?';
+      const maxMessageLength = 200;
+      if (nextMessage.length > maxMessageLength) {
+        nextMessage = nextMessage.slice(0, maxMessageLength).trim();
+        const lastPeriod = nextMessage.lastIndexOf('.');
+        if (lastPeriod > 80) nextMessage = nextMessage.slice(0, lastPeriod + 1);
+      }
       const extractedUpdates = parsed.extractedUpdates ?? {};
       const endCall = parsed.endCall === true;
       return { nextMessage, extractedUpdates, endCall };

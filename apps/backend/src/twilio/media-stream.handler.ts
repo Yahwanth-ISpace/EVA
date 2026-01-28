@@ -51,7 +51,7 @@ function formatDobForSpeech(dob: Date): string {
 
 /** First thing EVA (John from Went Dentals) says when the stream starts */
 const CONVERSATION_GREETING =
-  "Hi, this is John calling from Went Dentals. I'm calling to verify patient benefit details.";
+  "Hi, this is John calling from, Went Dentals. I'm calling to verify, patient benefit details.";
 
 interface ExtractedData {
   coverage: string | null;
@@ -134,9 +134,10 @@ export class MediaStreamHandlerService {
     };
 
     const speak = async (text: string) => {
+      if (!text?.trim()) return;
       try {
         const mulawAudio = await this.elevenLabsAudioStack.synthesize(text);
-        await playAudio(mulawAudio);
+        if (mulawAudio?.length) await playAudio(mulawAudio);
       } catch (e) {
         this.logger.warn('[MediaStream] TTS failed', (e as Error)?.message);
       }
@@ -174,16 +175,21 @@ export class MediaStreamHandlerService {
         this.mulawRawToWav(rawPath, wavPath);
 
         const { transcript } = await this.transcriptionService.transcribeAudio(wavPath);
-        if (!transcript?.trim()) {
-          state.processing = false;
-          return;
-        }
+        const userSaid = (transcript ?? '').trim();
+        const isIdleOrEmpty = !userSaid || /^(um|uh|eh|ah|hmm|mmm)$/i.test(userSaid);
+        const effectiveTranscript = isIdleOrEmpty
+          ? 'User did not respond or was inaudible.'
+          : userSaid;
 
-        this.logger.log(`[MediaStream] User said: ${transcript}`);
+        if (isIdleOrEmpty) {
+          this.logger.log('[MediaStream] User idle or inaudible, prompting repeat');
+        } else {
+          this.logger.log(`[MediaStream] User said: ${userSaid}`);
+        }
 
         const { nextMessage, extractedUpdates, endCall } =
           await this.aiService.getNextConversationTurn(
-            transcript,
+            effectiveTranscript,
             state.extractedData,
             state.patientInfo,
           );
@@ -200,7 +206,7 @@ export class MediaStreamHandlerService {
               await this.verificationService.pushExtractedData(
                 state.payeeId,
                 state.extractedData,
-                transcript,
+                isIdleOrEmpty ? undefined : userSaid,
               );
             } catch (e) {
               this.logger.warn('[MediaStream] Push extracted failed', (e as Error)?.message);
@@ -208,7 +214,11 @@ export class MediaStreamHandlerService {
           }
         }
 
-        await speak(nextMessage);
+        const toSpeak = (nextMessage ?? '').trim() || 'Got it. What else can you tell me?';
+        if (!(nextMessage ?? '').trim()) {
+          this.logger.warn('[MediaStream] AI returned empty nextMessage, using fallback');
+        }
+        await speak(toSpeak);
 
         if (endCall) {
           state.callEnded = true;
