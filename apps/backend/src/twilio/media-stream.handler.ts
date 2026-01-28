@@ -51,7 +51,7 @@ function formatDobForSpeech(dob: Date): string {
 
 /** First thing EVA (John from Went Dentals) says when the stream starts */
 const CONVERSATION_GREETING =
-  "Hi, this is John calling from Went Dentals. I'm calling to verify patient benefits details. How can I help you today?";
+  "Hi, this is John calling from Went Dentals. I'm calling to verify patient benefit details.";
 
 interface ExtractedData {
   coverage: string | null;
@@ -60,13 +60,21 @@ interface ExtractedData {
   validity: string | null;
 }
 
-/** Patient info for disclosure when user asks (full name, DOB, first name) */
+/** Patient info for disclosure when user asks (full name, DOB, first name, last name) */
 interface PatientInfo {
   firstName: string;
   lastName: string;
   fullName: string;
   dobFormatted: string | null;
 }
+
+/** Static patient data when no payee is loaded (for testing / inbound calls). */
+const STATIC_PATIENT_INFO: PatientInfo = {
+  firstName: 'Sarah',
+  lastName: 'Johnson',
+  fullName: 'Sarah Johnson',
+  dobFormatted: 'March 15, 1985',
+};
 
 interface StreamState {
   buffer: Buffer[];
@@ -188,11 +196,15 @@ export class MediaStreamHandlerService {
           if (hasValue(extractedUpdates.validity ?? null)) state.extractedData.validity = extractedUpdates.validity ?? null;
 
           if (state.payeeId) {
-            await this.verificationService.mergeExtractedData(
-              state.payeeId,
-              state.extractedData,
-              transcript,
-            );
+            try {
+              await this.verificationService.pushExtractedData(
+                state.payeeId,
+                state.extractedData,
+                transcript,
+              );
+            } catch (e) {
+              this.logger.warn('[MediaStream] Push extracted failed', (e as Error)?.message);
+            }
           }
         }
 
@@ -248,8 +260,10 @@ export class MediaStreamHandlerService {
                   fullName: `${info.firstName} ${info.lastName}`.trim(),
                   dobFormatted: info.dob ? formatDobForSpeech(info.dob) : null,
                 };
+                await this.verificationService.startVerificationCall(state.payeeId);
               }
             }
+            if (!state.patientInfo) state.patientInfo = STATIC_PATIENT_INFO;
             await speak(CONVERSATION_GREETING);
           } catch (e) {
             this.logger.warn('[MediaStream] Greeting failed', (e as Error)?.message);
@@ -274,8 +288,8 @@ export class MediaStreamHandlerService {
         }
         this.logger.log('[MediaStream] Stop');
         if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
-          this.verificationService.mergeExtractedData(state.payeeId, state.extractedData).catch((e) =>
-            this.logger.warn('[MediaStream] Final merge on stop failed', (e as Error)?.message),
+          this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
+            this.logger.warn('[MediaStream] Final push on stop failed', (e as Error)?.message),
           );
         }
       }

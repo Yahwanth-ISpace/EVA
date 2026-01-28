@@ -294,4 +294,43 @@ export class VerificationService {
       dob: payee.dob,
     };
   }
+
+  /**
+   * Start a verification record when a call begins (so extracted data can be pushed and updated).
+   */
+  async startVerificationCall(payeeId: string): Promise<{ id: string } | null> {
+    const payee = await this.prisma.payee.findUnique({
+      where: { id: payeeId },
+    });
+    if (!payee) return null;
+    const record = await this.prisma.verification.create({
+      data: {
+        payeeId,
+        transcript: 'Call started.',
+        coverage: null,
+        deductible: null,
+        copay: null,
+        validity: null,
+      },
+      select: { id: true },
+    });
+    return { id: record.id };
+  }
+
+  /**
+   * Push extracted data to the verification record (finds or creates recent verification for payeeId).
+   * Used by media stream and by the push-extracted endpoint.
+   */
+  async pushExtractedData(
+    payeeId: string,
+    extracted: {
+      coverage?: string | null;
+      deductible?: string | null;
+      copay?: string | null;
+      validity?: string | null;
+    },
+    transcriptToAppend?: string,
+  ) {
+    return this.mergeExtractedData(payeeId, extracted, transcriptToAppend);
+  }
 }

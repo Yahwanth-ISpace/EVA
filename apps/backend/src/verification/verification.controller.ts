@@ -43,6 +43,24 @@ export class VerificationController {
     return this.verificationService.simulateVerification(id, transcript);
   }
 
+  /** Push extracted benefit data from a call (e.g. media stream). Creates or updates verification for payeeId. */
+  @UseGuards(ApiTokenGuard)
+  @Post(':payeeId/push-extracted')
+  async pushExtracted(
+    @Param('payeeId') payeeId: string,
+    @Body()
+    body: {
+      coverage?: string | null;
+      deductible?: string | null;
+      copay?: string | null;
+      validity?: string | null;
+      transcript?: string;
+    },
+  ) {
+    const { transcript, ...extracted } = body;
+    return this.verificationService.pushExtractedData(payeeId, extracted, transcript);
+  }
+
   @Post('from-audio/:payeeId')
   @UseGuards(ApiTokenGuard)
   @UseInterceptors(
