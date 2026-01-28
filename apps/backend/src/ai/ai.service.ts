@@ -79,7 +79,7 @@ Reply with ONLY one word: answer OR interruption`;
     }>;
     reply: string;
   }> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = this.gemini.getGenerativeModel({ model: 'gemini-3-flash' });
     const current = JSON.stringify(currentExtracted, null, 0);
     const prompt = `You are handling an interruption during a patient benefits verification call. You are John from Went Dentals. Never say you are a bot or virtual assistant.
 
