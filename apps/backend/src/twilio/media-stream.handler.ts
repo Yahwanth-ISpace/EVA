@@ -8,6 +8,7 @@ import { AiService } from '../ai/ai.service';
 import { TranscriptionService } from '../transcription/transcription.service';
 import { ElevenLabsAudioStackService } from '../voice/elevenlabs-audio-stack.service';
 import { VerificationService } from '../verification/verification.service';
+import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
 /** Minimum speech bytes before we consider processing (~1 sec at 8kHz mulaw) */
 const MIN_SPEECH_BYTES = 8_000;
@@ -273,7 +274,8 @@ export class MediaStreamHandlerService {
     );
     if (result.status !== 0 || result.error) {
       const stderr = (result.stderr ?? Buffer.alloc(0)).toString('utf-8');
-      throw new Error(`mulaw to wav failed: ${stderr || result.error?.message}`);
+      const errMsg = getFfmpegErrorMessage(result.error, stderr);
+      throw new Error(errMsg);
     }
   }
 }

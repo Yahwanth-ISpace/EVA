@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ElevenLabsService } from './elevenlabs.service';
+import { getFfmpegErrorMessage } from './ffmpeg-check';
 
 /**
  * Produces 8 kHz mulaw audio buffers for Twilio Media Streams.
@@ -45,8 +46,9 @@ export class ElevenLabsAudioStackService {
       );
       if (result.status !== 0 || result.error) {
         const stderr = (result.stderr ?? Buffer.alloc(0)).toString('utf-8');
-        this.logger.warn('ffmpeg mulaw conversion failed', { stderr });
-        throw new Error(`ffmpeg mulaw failed: ${stderr || result.error?.message}`);
+        const errMsg = getFfmpegErrorMessage(result.error, stderr);
+        this.logger.warn('ffmpeg mulaw conversion failed', { stderr: stderr || result.error?.message });
+        throw new Error(errMsg);
       }
       return result.stdout ?? Buffer.alloc(0);
     } finally {
