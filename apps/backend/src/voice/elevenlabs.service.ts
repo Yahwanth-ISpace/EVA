@@ -9,8 +9,8 @@ export class ElevenLabsService {
   private readonly logger = new Logger(ElevenLabsService.name);
   private readonly apiKey = process.env.ELEVENLABS_API_KEY?.trim();
   private readonly voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
-  // Updated to use a supported free tier model (eleven_monolingual_v1 is deprecated)
-  private readonly modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5';
+  // Eleven Flash v2.5 — overridable via ELEVENLABS_MODEL_ID
+  private readonly modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5';
 
   constructor() {
     if (!this.apiKey) {
