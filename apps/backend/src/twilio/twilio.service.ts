@@ -43,7 +43,7 @@ export class TwilioService {
     return client.calls.create({
       to,
       from: fromNumber,
-      url: `${backendBaseUrl}/twilio/step?step=0&payeeId=${payeeId}`,
+      url: `${backendBaseUrl}/twilio/inbound-stream?payeeId=${payeeId}`,
       record: true,
     });
   }

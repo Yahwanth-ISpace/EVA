@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   Post,
   Query,
   Body,
@@ -57,16 +58,37 @@ export class TwilioController {
   }
 
   /**
-   * Inbound call with Media Stream: Twilio speaks with ElevenLabs, streams audio to us,
-   * we transcribe with Whisper, extract info with LLM, update backend, handle interruptions.
-   * Use this URL as the webhook for inbound/outbound calls to enable the streaming flow.
+   * Inbound/outbound call with Media Stream: Twilio connects the call to our WebSocket.
+   * We speak with ElevenLabs, stream user audio to Whisper, LLM extracts or handles
+   * interruptions, update backend, respond with TTS. Accepts GET (outbound) and POST (inbound).
    */
   @Post('inbound-stream')
-  async handleInboundStream(@Body() body: Record<string, string>, @Res() res: Response) {
+  async handleInboundStreamPost(
+    @Body() body: Record<string, string>,
+    @Query('payeeId') payeeIdQuery: string,
+    @Res() res: Response,
+  ) {
     const payeeId =
-      process.env.INBOUND_PAYEE_ID?.trim() || body?.payeeId || 'inbound';
-    const base = (process.env.BACKEND_PUBLIC_URL || process.env.BACKEND_URL || `http://localhost:${process.env.PORT ?? 3000}`).trim();
-    const streamUrl = base.replace(/^http/, 'ws') + '/twilio/media-stream?payeeId=' + encodeURIComponent(payeeId);
+      payeeIdQuery ||
+      process.env.INBOUND_PAYEE_ID?.trim() ||
+      body?.payeeId ||
+      'inbound';
+    this.sendStreamTwiML(payeeId, res);
+  }
+
+  @Get('inbound-stream')
+  async handleInboundStreamGet(@Query('payeeId') payeeId: string, @Res() res: Response) {
+    const id = payeeId || process.env.INBOUND_PAYEE_ID?.trim() || 'inbound';
+    this.sendStreamTwiML(id, res);
+  }
+
+  private sendStreamTwiML(payeeId: string, res: Response) {
+    const base = (
+      process.env.BACKEND_URL ||
+      `http://localhost:${process.env.PORT ?? 3000}`
+    ).trim();
+    const streamUrl =
+      base.replace(/^http/, 'ws') + '/twilio/media-stream?payeeId=' + encodeURIComponent(payeeId);
 
     res.type('text/xml').send(`
       <Response>
