@@ -274,4 +274,24 @@ export class VerificationService {
 
     return verification;
   }
+
+  /**
+   * Get patient (payee) info for the call so EVA can disclose full name and DOB when asked.
+   */
+  async getPayeePatientInfo(payeeId: string): Promise<{
+    firstName: string;
+    lastName: string;
+    dob: Date | null;
+  } | null> {
+    const payee = await this.prisma.payee.findUnique({
+      where: { id: payeeId },
+      select: { firstName: true, lastName: true, dob: true },
+    });
+    if (!payee) return null;
+    return {
+      firstName: payee.firstName,
+      lastName: payee.lastName,
+      dob: payee.dob,
+    };
+  }
 }

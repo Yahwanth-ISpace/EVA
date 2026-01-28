@@ -39,14 +39,33 @@ function isSilenceAtEnd(buffer: Buffer): boolean {
   return silent / tail.length >= SILENCE_RATIO_THRESHOLD;
 }
 
-/** First thing the bot says when the stream starts */
-const CONVERSATION_GREETING = 'Hi, how are you?';
+/** Format date for natural speech (e.g. "March 31, 1992") */
+function formatDobForSpeech(dob: Date): string {
+  const d = new Date(dob);
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const month = months[d.getMonth()];
+  const day = d.getDate();
+  const year = d.getFullYear();
+  return `${month} ${day}, ${year}`;
+}
+
+/** First thing EVA (John from Went Dentals) says when the stream starts */
+const CONVERSATION_GREETING =
+  "Hi, this is John calling from Went Dentals. I'm calling to verify patient benefits details. How can I help you today?";
 
 interface ExtractedData {
   coverage: string | null;
   deductible: string | null;
   copay: string | null;
   validity: string | null;
+}
+
+/** Patient info for disclosure when user asks (full name, DOB, first name) */
+interface PatientInfo {
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  dobFormatted: string | null;
 }
 
 interface StreamState {
@@ -56,6 +75,8 @@ interface StreamState {
   /** Fallback timer when silence isn't detected */
   fallbackTimer: ReturnType<typeof setInterval> | null;
   payeeId: string | null;
+  /** Patient (payee) info so EVA can disclose full name and DOB when asked */
+  patientInfo: PatientInfo | null;
   extractedData: ExtractedData;
   /** When true, we've said goodbye and shouldn't process more */
   callEnded: boolean;
@@ -79,6 +100,7 @@ export class MediaStreamHandlerService {
       processing: false,
       fallbackTimer: null,
       payeeId: payeeId ?? null,
+      patientInfo: null,
       extractedData: {
         coverage: null,
         deductible: null,
@@ -152,7 +174,11 @@ export class MediaStreamHandlerService {
         this.logger.log(`[MediaStream] User said: ${transcript}`);
 
         const { nextMessage, extractedUpdates, endCall } =
-          await this.aiService.getNextConversationTurn(transcript, state.extractedData);
+          await this.aiService.getNextConversationTurn(
+            transcript,
+            state.extractedData,
+            state.patientInfo,
+          );
 
         const hasValue = (v: string | null) => v != null && String(v).trim().length > 0;
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
@@ -213,6 +239,17 @@ export class MediaStreamHandlerService {
         startFallbackTimer();
         (async () => {
           try {
+            if (state.payeeId) {
+              const info = await this.verificationService.getPayeePatientInfo(state.payeeId);
+              if (info) {
+                state.patientInfo = {
+                  firstName: info.firstName,
+                  lastName: info.lastName,
+                  fullName: `${info.firstName} ${info.lastName}`.trim(),
+                  dobFormatted: info.dob ? formatDobForSpeech(info.dob) : null,
+                };
+              }
+            }
             await speak(CONVERSATION_GREETING);
           } catch (e) {
             this.logger.warn('[MediaStream] Greeting failed', (e as Error)?.message);
@@ -236,6 +273,11 @@ export class MediaStreamHandlerService {
           state.fallbackTimer = null;
         }
         this.logger.log('[MediaStream] Stop');
+        if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
+          this.verificationService.mergeExtractedData(state.payeeId, state.extractedData).catch((e) =>
+            this.logger.warn('[MediaStream] Final merge on stop failed', (e as Error)?.message),
+          );
+        }
       }
     });
 

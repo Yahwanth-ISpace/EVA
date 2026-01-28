@@ -21,7 +21,7 @@ export class AiService {
    */
   public async replyToUser(userMessage: string): Promise<string> {
     const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const prompt = `You are a helpful voice assistant. Reply briefly and naturally in one or two sentences to this message. Do not use markdown or lists.
+    const prompt = `You are John from Went Dentals, calling to verify patient benefits. Reply briefly and naturally in one or two sentences. If the user asks who you are or who they are talking to, say "I'm John calling from Went Dentals." Never say you are a bot or virtual assistant. Do not use markdown or lists.
 
 User: ${userMessage}
 
@@ -60,7 +60,7 @@ Reply with ONLY one word: answer OR interruption`;
   }
 
   /**
-   * Handle user interruption: parse corrections (e.g. "copay is 25% not 60%") and return updates + reply to speak.
+   * Handle user interruption: parse corrections (e.g. "copay is 25% not 60%") or identity/off-topic questions; return updates + reply to speak.
    */
   public async handleInterruption(
     userMessage: string,
@@ -81,20 +81,21 @@ Reply with ONLY one word: answer OR interruption`;
   }> {
     const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const current = JSON.stringify(currentExtracted, null, 0);
-    const prompt = `You are handling an interruption during an insurance verification call. The user may be correcting a value they said earlier.
+    const prompt = `You are handling an interruption during a patient benefits verification call. You are John from Went Dentals. Never say you are a bot or virtual assistant.
 
 Current extracted data we have: ${current}
 
 What the user just said: "${userMessage}"
 
+If the user asks who you are, to verify yourself, or to identify yourself: set "updates" to {} and put in "reply" a short answer: "I'm John calling from Went Dentals. I'm calling to verify patient benefits details." Then they can continue.
 If the user is correcting or updating a value (e.g. "please update copay to 25%", "it's 25% not 60%", "deductible is actually 500 dollars"), put ONLY those fields in "updates" with the new value. Use "reply" for a short spoken acknowledgment.
-If they are asking a general question, set "updates" to {} and put a brief answer in "reply".
+If they are asking any other general question, set "updates" to {} and put a brief answer in "reply".
 
-Respond with ONLY a single JSON object. No markdown, no code block. Format: {"updates": {"copay": "25%"} or {} or {"deductible": "500"}, "reply": "Short spoken reply"}
+Respond with ONLY a single JSON object. No markdown, no code block. Format: {"updates": {} or {"copay": "25%"}, "reply": "Short spoken reply"}
 
 Examples:
+- "can you verify yourself?" / "who is this?" → {"updates": {}, "reply": "I'm John calling from Went Dentals. I'm calling to verify patient benefits details."}
 - "actually copay is 25% not 60%" → {"updates": {"copay": "25%"}, "reply": "Got it, I've updated copay to 25 percent."}
-- "please update the value I told you before for copay, it is actually 25% not 60%" → {"updates": {"copay": "25%"}, "reply": "Done. I've updated copay to 25 percent."}
 - "what did you get for deductible?" → {"updates": {}, "reply": "I have your deductible as 500 dollars. Say if you want to change it."}
 - "nothing, continue" → {"updates": {}, "reply": "Okay, continuing."}`;
 
@@ -120,6 +121,7 @@ Examples:
    * Conversational turn: given what the user said and what we have so far,
    * return the next thing for the bot to say and any extracted field updates.
    * Used for the streaming flow: bot speaks → user speaks → silence → process → bot responds.
+   * EVA is John from Went Dentals; purpose is to verify patient benefits. Never say virtual bot.
    */
   public async getNextConversationTurn(
     transcript: string,
@@ -129,6 +131,12 @@ Examples:
       copay: string | null;
       validity: string | null;
     },
+    patientInfo?: {
+      firstName: string;
+      lastName: string;
+      fullName: string;
+      dobFormatted: string | null;
+    } | null,
   ): Promise<{
     nextMessage: string;
     extractedUpdates: Partial<{
@@ -141,15 +149,25 @@ Examples:
   }> {
     const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const current = JSON.stringify(currentExtracted);
-    const prompt = `You are a friendly voice agent for an insurance verification call. Keep replies short (one or two sentences) and natural for speech.
-
-Data we have so far: ${current}
+    const patientBlock = patientInfo
+      ? `
+Patient info you can disclose when asked: Full name is ${patientInfo.fullName}. Date of birth is ${patientInfo.dobFormatted ?? 'not provided'}. First name is ${patientInfo.firstName}.
+- If the user asks who you are / verify yourself / identify yourself: reply briefly "I'm John calling from Went Dentals. I'm calling to verify patient benefits details." then continue with the next step (ask for the next field we need). Never say you are a bot or virtual assistant.
+- If the user asks which patient / what patient details do you need / what details: say "The full name of the patient is ${patientInfo.fullName}. Date of birth is ${patientInfo.dobFormatted ?? 'not provided'}. I'll need to verify coverage, deductible, copay, and validity."
+- If the user asks only for the first name of the patient: say "${patientInfo.firstName}."
+`
+      : `
+- If the user asks who you are / verify yourself / identify yourself: reply briefly "I'm John calling from Went Dentals. I'm calling to verify patient benefits details." then continue. Never say you are a bot or virtual assistant.
+`;
+    const prompt = `You are a friendly voice agent for a patient benefits verification call. You are John calling from Went Dentals. Your purpose is to verify patient benefits (coverage, deductible, copay, validity). Keep replies short (one or two sentences) and natural for speech. Never say you are a virtual bot or AI assistant.
+${patientBlock}
+Data we have extracted so far: ${current}
 
 The user just said: "${transcript}"
 
 Do two things:
 1. If they provided any coverage, deductible, copay, or validity info (or corrected something), put ONLY those fields in "extractedUpdates" with the value. Otherwise use {}.
-2. Say the next thing: acknowledge what they said and ask for the next piece of info we still need, or answer a question, or say goodbye if they're done or we have everything.
+2. Say the next thing: answer any identity or patient question as above; otherwise acknowledge what they said and ask for the next piece of info we still need (coverage, deductible, copay, validity), or say goodbye if they're done or we have everything.
 
 If the user said goodbye, or we have all four fields (coverage, deductible, copay, validity) and they confirmed, set "endCall" to true and say a short goodbye.
 
