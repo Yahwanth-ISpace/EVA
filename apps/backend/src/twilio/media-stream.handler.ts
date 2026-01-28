@@ -12,14 +12,16 @@ import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
 /** Minimum speech bytes before we consider processing (~1 sec at 8kHz mulaw) */
 const MIN_SPEECH_BYTES = 8_000;
-/** Tail bytes to check for silence (~0.5 sec). When this tail is silent, user likely stopped. */
-const SILENCE_TAIL_BYTES = 4_000;
+/** Tail bytes to check for silence (~0.3 sec). Smaller = less delay after user stops. */
+const SILENCE_TAIL_BYTES = 2_400;
 /** Fraction of tail bytes that must be "silent" to trigger (0–1) */
 const SILENCE_RATIO_THRESHOLD = 0.85;
 /** Max buffer before we process anyway (~15 sec) so we don't wait forever */
 const MAX_BUFFER_BYTES = 120_000;
 /** Fallback: process at most every N ms if we have enough audio and no silence detected */
-const FALLBACK_PROCESS_INTERVAL_MS = 4000;
+const FALLBACK_PROCESS_INTERVAL_MS = 3000;
+/** Short phrase played immediately after user speaks so they hear something while we process (reduces perceived delay). */
+const QUICK_ACK_PHRASE = 'Got it.';
 /** Chunk size to send back to Twilio (40ms = 320 bytes at 8kHz mulaw) */
 const OUTBOUND_CHUNK_BYTES = 320;
 
@@ -51,7 +53,10 @@ function formatDobForSpeech(dob: Date): string {
 
 /** First thing EVA (John from Went Dentals) says when the stream starts */
 const CONVERSATION_GREETING =
-  "Hi, this is John calling from, Went Dentals. I'm calling to verify, patient benefit details.";
+  "Hi, this is John calling from, Went Dentals.";
+
+// const CONVERSATION_GREETING =
+// "Hi, this is John calling from, Went Dentals. I'm calling to verify, patient benefit details.";
 
 interface ExtractedData {
   coverage: string | null;
@@ -88,6 +93,8 @@ interface StreamState {
   extractedData: ExtractedData;
   /** When true, we've said goodbye and shouldn't process more */
   callEnded: boolean;
+  /** Pre-generated audio for QUICK_ACK_PHRASE so we can play it instantly (no TTS wait) and reduce perceived delay */
+  cachedAckAudio: Buffer | null;
 }
 
 @Injectable()
@@ -99,7 +106,7 @@ export class MediaStreamHandlerService {
     private readonly elevenLabsAudioStack: ElevenLabsAudioStackService,
     private readonly aiService: AiService,
     private readonly verificationService: VerificationService,
-  ) {}
+  ) { }
 
   handleConnection(ws: WebSocket, payeeId?: string | null): void {
     const state: StreamState = {
@@ -116,6 +123,7 @@ export class MediaStreamHandlerService {
         validity: null,
       },
       callEnded: false,
+      cachedAckAudio: null,
     };
 
     const send = (obj: object) => {
@@ -187,12 +195,32 @@ export class MediaStreamHandlerService {
           this.logger.log(`[MediaStream] User said: ${userSaid}`);
         }
 
-        const { nextMessage, extractedUpdates, endCall } =
-          await this.aiService.getNextConversationTurn(
-            effectiveTranscript,
-            state.extractedData,
-            state.patientInfo,
-          );
+        const playQuickAck = async (): Promise<void> => {
+          if (state.cachedAckAudio?.length) {
+            await playAudio(state.cachedAckAudio);
+          } else {
+            const ack = await this.elevenLabsAudioStack.synthesize(QUICK_ACK_PHRASE);
+            if (ack?.length) {
+              state.cachedAckAudio = ack;
+              await playAudio(ack);
+            }
+          }
+        };
+
+        const { nextMessage, extractedUpdates, endCall } = !isIdleOrEmpty
+          ? await Promise.all([
+              playQuickAck(),
+              this.aiService.getNextConversationTurn(
+                effectiveTranscript,
+                state.extractedData,
+                state.patientInfo,
+              ),
+            ]).then(([, turn]) => turn)
+          : await this.aiService.getNextConversationTurn(
+              effectiveTranscript,
+              state.extractedData,
+              state.patientInfo,
+            );
 
         const hasValue = (v: string | null) => v != null && String(v).trim().length > 0;
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
@@ -202,15 +230,15 @@ export class MediaStreamHandlerService {
           if (hasValue(extractedUpdates.validity ?? null)) state.extractedData.validity = extractedUpdates.validity ?? null;
 
           if (state.payeeId) {
-            try {
-              await this.verificationService.pushExtractedData(
+            this.verificationService
+              .pushExtractedData(
                 state.payeeId,
                 state.extractedData,
                 isIdleOrEmpty ? undefined : userSaid,
+              )
+              .catch((e) =>
+                this.logger.warn('[MediaStream] Push extracted failed', (e as Error)?.message),
               );
-            } catch (e) {
-              this.logger.warn('[MediaStream] Push extracted failed', (e as Error)?.message);
-            }
           }
         }
 
@@ -232,10 +260,10 @@ export class MediaStreamHandlerService {
       } finally {
         try {
           fs.unlinkSync(rawPath);
-        } catch {}
+        } catch { }
         try {
           fs.unlinkSync(wavPath);
-        } catch {}
+        } catch { }
         state.processing = false;
       }
     };
@@ -275,6 +303,14 @@ export class MediaStreamHandlerService {
             }
             if (!state.patientInfo) state.patientInfo = STATIC_PATIENT_INFO;
             await speak(CONVERSATION_GREETING);
+            (async () => {
+              try {
+                const ack = await this.elevenLabsAudioStack.synthesize(QUICK_ACK_PHRASE);
+                if (ack?.length) state.cachedAckAudio = ack;
+              } catch {
+                // ignore; will generate on first use
+              }
+            })();
           } catch (e) {
             this.logger.warn('[MediaStream] Greeting failed', (e as Error)?.message);
           }
@@ -287,7 +323,7 @@ export class MediaStreamHandlerService {
           const payload = Buffer.from(msg.media.payload, 'base64');
           state.buffer.push(payload);
           tryTriggerProcess();
-        } catch {}
+        } catch { }
         return;
       }
 
