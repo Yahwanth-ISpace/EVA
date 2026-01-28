@@ -1,0 +1,60 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { spawnSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { ElevenLabsService } from './elevenlabs.service';
+
+/**
+ * Produces 8 kHz mulaw audio buffers for Twilio Media Streams.
+ * Uses ElevenLabs TTS then converts MP3 → mulaw via ffmpeg.
+ */
+@Injectable()
+export class ElevenLabsAudioStackService {
+  private readonly logger = new Logger(ElevenLabsAudioStackService.name);
+
+  constructor(private readonly elevenLabs: ElevenLabsService) {}
+
+  /**
+   * Synthesize text to 8 kHz mulaw mono (Twilio Media Stream format).
+   * Returns a Buffer suitable for chunking and sending as base64 payloads.
+   */
+  async synthesize(text: string): Promise<Buffer> {
+    const mp3Buffer = await this.elevenLabs.synthesizeToBuffer(text);
+    const tmpDir = os.tmpdir();
+    const mp3Path = path.join(
+      tmpDir,
+      `tts_${Date.now()}_${Math.random().toString(36).slice(2)}.mp3`,
+    );
+    try {
+      fs.writeFileSync(mp3Path, mp3Buffer);
+      const result = spawnSync(
+        'ffmpeg',
+        [
+          '-i',
+          mp3Path,
+          '-f',
+          'mulaw',
+          '-ar',
+          '8000',
+          '-ac',
+          '1',
+          '-',
+        ],
+        { encoding: 'buffer', timeout: 30_000 },
+      );
+      if (result.status !== 0 || result.error) {
+        const stderr = (result.stderr ?? Buffer.alloc(0)).toString('utf-8');
+        this.logger.warn('ffmpeg mulaw conversion failed', { stderr });
+        throw new Error(`ffmpeg mulaw failed: ${stderr || result.error?.message}`);
+      }
+      return result.stdout ?? Buffer.alloc(0);
+    } finally {
+      try {
+        fs.unlinkSync(mp3Path);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}

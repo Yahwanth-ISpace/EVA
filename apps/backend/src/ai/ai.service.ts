@@ -16,6 +16,21 @@ export class AiService {
     this.gemini = new GoogleGenerativeAI(apiKey);
   }
 
+  /**
+   * Generate a short conversational reply to the user (e.g. for voice/streaming).
+   */
+  public async replyToUser(userMessage: string): Promise<string> {
+    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const prompt = `You are a helpful voice assistant. Reply briefly and naturally in one or two sentences to this message. Do not use markdown or lists.
+
+User: ${userMessage}
+
+Reply:`;
+    const result = await model.generateContent(prompt);
+    const text = result.response.text()?.trim() ?? 'I didn’t catch that. Could you say it again?';
+    return text;
+  }
+
   public async extractInsuranceDetails(text: string): Promise<{
     coverage: string | null;
     deductible: string | null;

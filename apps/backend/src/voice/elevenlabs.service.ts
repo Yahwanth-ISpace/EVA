@@ -22,53 +22,55 @@ export class ElevenLabsService {
   }
 
   /**
-   * Synthesize text to speech using ElevenLabs API
-   * All voice generation in the application uses this method instead of Twilio's voice
+   * Synthesize text to speech and return raw MP3 bytes (e.g. for streaming/conversion).
    */
-  async synthesize(text: string): Promise<string> {
+  async synthesizeToBuffer(text: string): Promise<Buffer> {
     if (!this.apiKey || !this.voiceId) {
       throw new HttpException(
         'ElevenLabs API key or Voice ID not configured',
         500,
       );
     }
-
     if (!text || text.trim().length === 0) {
       throw new HttpException('Text cannot be empty', 400);
     }
+    const response = await axios.post(
+      `https://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}`,
+      {
+        text,
+        model_id: this.modelId,
+        voice_settings: {
+          stability: 0.6,
+          similarity_boost: 0.75,
+          style: 0.3,
+          use_speaker_boost: true,
+        },
+      },
+      {
+        headers: {
+          'xi-api-key': this.apiKey,
+          'Content-Type': 'application/json',
+        },
+        responseType: 'arraybuffer',
+      },
+    );
+    return Buffer.from(response.data);
+  }
 
+  /**
+   * Synthesize text to speech using ElevenLabs API
+   * All voice generation in the application uses this method instead of Twilio's voice
+   */
+  async synthesize(text: string): Promise<string> {
     try {
-      // Ensure audio directory exists
+      const buffer = await this.synthesizeToBuffer(text);
       const audioDir = path.join(process.cwd(), 'public', 'audio');
       if (!fs.existsSync(audioDir)) {
         fs.mkdirSync(audioDir, { recursive: true });
       }
-
       const fileName = `eva_${uuidv4()}.mp3`;
       const filePath = path.join(audioDir, fileName);
-
-      const response = await axios.post(
-        `https://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}`,
-        {
-          text,
-          model_id: this.modelId,
-          voice_settings: {
-            stability: 0.6,
-            similarity_boost: 0.75,
-            style: 0.3,
-            use_speaker_boost: true,
-          },
-        },
-        {
-          headers: {
-            'xi-api-key': this.apiKey,
-            'Content-Type': 'application/json',
-          },
-          responseType: 'arraybuffer',
-        },
-      );
-
-      fs.writeFileSync(filePath, response.data);
+      fs.writeFileSync(filePath, buffer);
 
       const baseUrl =
         process.env.BACKEND_PUBLIC_URL?.trim() ||
@@ -83,6 +85,7 @@ export class ElevenLabsService {
       
       return audioUrl;
     } catch (err) {
+      if (err instanceof HttpException) throw err;
       // Parse error response properly
       let errorMessage = err.message;
       let errorDetails: any = null;
