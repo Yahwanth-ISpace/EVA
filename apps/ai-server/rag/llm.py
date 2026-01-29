@@ -71,7 +71,7 @@ def generate_answer(
 
     if PROVIDER == "gemini":
         try:
-            model = genai.GenerativeModel("gemini-3-flash")  # v1 only
+            model = genai.GenerativeModel("gemini-flash-latest")  # v1 only
             resp = model.generate_content(prompt)
             return clean_output(resp.text.strip())
         except Exception as e:
