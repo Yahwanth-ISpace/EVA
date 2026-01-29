@@ -20,16 +20,6 @@ const SILENCE_RATIO_THRESHOLD = 0.85;
 const MAX_BUFFER_BYTES = 120_000;
 /** Fallback: process at most every N ms if we have enough audio and no silence detected */
 const FALLBACK_PROCESS_INTERVAL_MS = 3000;
-/** Short phrases played immediately after user speaks (varied for more human feel). One picked at random each time. */
-const QUICK_ACK_PHRASES = [
-  'Got it.',
-  'Sure.',
-  'Okay.',
-  'Thanks.',
-  'Noted.',
-  'Right.',
-  'Understood.',
-];
 /** Chunk size to send back to Twilio (40ms = 320 bytes at 8kHz mulaw) */
 const OUTBOUND_CHUNK_BYTES = 320;
 
@@ -101,8 +91,6 @@ interface StreamState {
   extractedData: ExtractedData;
   /** When true, we've said goodbye and shouldn't process more */
   callEnded: boolean;
-  /** Pre-generated audio for quick ack phrases (phrase -> buffer) so we can play instantly and vary responses */
-  cachedAckAudios: Record<string, Buffer>;
 }
 
 @Injectable()
@@ -131,7 +119,6 @@ export class MediaStreamHandlerService {
         validity: null,
       },
       callEnded: false,
-      cachedAckAudios: {},
     };
 
     const send = (obj: object) => {
@@ -203,34 +190,12 @@ export class MediaStreamHandlerService {
           this.logger.log(`[MediaStream] User said: ${userSaid}`);
         }
 
-        const playQuickAck = async (): Promise<void> => {
-          const phrase = QUICK_ACK_PHRASES[Math.floor(Math.random() * QUICK_ACK_PHRASES.length)];
-          const cached = state.cachedAckAudios[phrase];
-          if (cached?.length) {
-            await playAudio(cached);
-          } else {
-            const ack = await this.elevenLabsAudioStack.synthesize(phrase);
-            if (ack?.length) {
-              state.cachedAckAudios[phrase] = ack;
-              await playAudio(ack);
-            }
-          }
-        };
-
-        const { nextMessage, extractedUpdates, endCall } = !isIdleOrEmpty
-          ? await Promise.all([
-              playQuickAck(),
-              this.aiService.getNextConversationTurn(
-                effectiveTranscript,
-                state.extractedData,
-                state.patientInfo,
-              ),
-            ]).then(([, turn]) => turn)
-          : await this.aiService.getNextConversationTurn(
-              effectiveTranscript,
-              state.extractedData,
-              state.patientInfo,
-            );
+        const { nextMessage, extractedUpdates, endCall } =
+          await this.aiService.getNextConversationTurn(
+            effectiveTranscript,
+            state.extractedData,
+            state.patientInfo,
+          );
 
         const hasValue = (v: string | null) => v != null && String(v).trim().length > 0;
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
@@ -301,17 +266,6 @@ export class MediaStreamHandlerService {
             }
             if (!state.patientInfo) state.patientInfo = STATIC_PATIENT_INFO;
             await speak(CONVERSATION_GREETING);
-            (async () => {
-              try {
-                const toPreload = QUICK_ACK_PHRASES.slice(0, 3);
-                for (const phrase of toPreload) {
-                  const ack = await this.elevenLabsAudioStack.synthesize(phrase);
-                  if (ack?.length) state.cachedAckAudios[phrase] = ack;
-                }
-              } catch {
-                // ignore; will generate on first use
-              }
-            })();
           } catch (e) {
             this.logger.warn('[MediaStream] Greeting failed', (e as Error)?.message);
           }

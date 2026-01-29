@@ -20,7 +20,7 @@ export class AiService {
    * Generate a short conversational reply to the user (e.g. for voice/streaming).
    */
   public async replyToUser(userMessage: string): Promise<string> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = this.gemini.getGenerativeModel({ model: 'gemini-3-flash' });
     const prompt = `You are John from Went Dentals, calling to verify patient benefits. Reply briefly and naturally in one or two sentences. If the user asks who you are or who they are talking to, say "I'm John calling from Went Dentals." Never say you are a bot or virtual assistant. Do not use markdown or lists.
 
 User: ${userMessage}
@@ -41,7 +41,7 @@ Reply:`;
     transcript: string,
     currentQuestion: string,
   ): Promise<'answer' | 'interruption'> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = this.gemini.getGenerativeModel({ model: 'gemini-3-flash' });
     const prompt = `You are classifying a short voice transcript from a phone verification call.
 
 Current question we asked the user: "${currentQuestion}"
@@ -147,7 +147,7 @@ Examples:
     }>;
     endCall?: boolean;
   }> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = this.gemini.getGenerativeModel({ model: 'gemini-3-flash' });
     const current = JSON.stringify(currentExtracted);
 
     const hasVal = (v: string | null) => v != null && String(v).trim().length > 0;
@@ -255,7 +255,7 @@ Respond with ONLY a JSON object. No markdown. No extra text. nextMessage must be
 
       // Gemini model selection — adjust as needed
       const model = this.gemini.getGenerativeModel({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash',
       });
 
       const result = await model.generateContent(prompt);

@@ -1,9 +1,0 @@
-fastapi
-uvicorn[standard]
-python-multipart
-websockets
-sentence-transformers
-torch
-soundfile
-numpy
-sentencepiece
