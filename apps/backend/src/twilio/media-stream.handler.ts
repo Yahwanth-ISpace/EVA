@@ -12,14 +12,14 @@ import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
 /** Minimum speech bytes before we consider processing (~1 sec at 8kHz mulaw) */
 const MIN_SPEECH_BYTES = 8_000;
-/** Tail bytes to check for silence (~0.3 sec). Smaller = less delay after user stops. */
-const SILENCE_TAIL_BYTES = 2_400;
+/** Tail bytes to check for silence (~0.6 sec). Longer = give user time to finish, less rushing. */
+const SILENCE_TAIL_BYTES = 4_800;
 /** Fraction of tail bytes that must be "silent" to trigger (0–1) */
 const SILENCE_RATIO_THRESHOLD = 0.85;
 /** Max buffer before we process anyway (~15 sec) so we don't wait forever */
 const MAX_BUFFER_BYTES = 120_000;
-/** Fallback: process at most every N ms if we have enough audio and no silence detected */
-const FALLBACK_PROCESS_INTERVAL_MS = 3000;
+/** Fallback: process at most every N ms if we have enough audio and no silence detected. Longer = less rush. */
+const FALLBACK_PROCESS_INTERVAL_MS = 5500;
 /** Chunk size to send back to Twilio (40ms = 320 bytes at 8kHz mulaw) */
 const OUTBOUND_CHUNK_BYTES = 320;
 
@@ -179,13 +179,13 @@ export class MediaStreamHandlerService {
 
         const { transcript } = await this.transcriptionService.transcribeAudio(wavPath);
         const userSaid = (transcript ?? '').trim();
-        const isIdleOrEmpty = !userSaid || /^(um|uh|eh|ah|hmm|mmm)$/i.test(userSaid);
+        const isIdleOrEmpty = userSaid.length === 0;
         const effectiveTranscript = isIdleOrEmpty
           ? 'User did not respond or was inaudible.'
           : userSaid;
 
         if (isIdleOrEmpty) {
-          this.logger.log('[MediaStream] User idle or inaudible, prompting repeat');
+          this.logger.log('[MediaStream] No speech detected, prompting repeat');
         } else {
           this.logger.log(`[MediaStream] User said: ${userSaid}`);
         }

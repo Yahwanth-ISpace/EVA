@@ -165,7 +165,7 @@ Examples:
     const oneFieldRule =
       nextFieldToAsk === null
         ? 'We have all four fields. If the user confirmed or said goodbye, set endCall true and say a short goodbye. Otherwise ask if they want to add or change anything.'
-        : `CRITICAL: Ask for ONE field only: "${nextFieldToAsk}". Do not ask for coverage, deductible, copay, or validity together. Say one short sentence only, e.g. "What is the ${nextFieldToAsk}?" or "Could you tell me the ${nextFieldToAsk}?" Keep nextMessage under 15 words.`;
+        : `Ask for ONE field only: "${nextFieldToAsk}". One short sentence, e.g. "What is the ${nextFieldToAsk}?" Keep nextMessage under 15 words.`;
 
     const patientBlock = patientInfo
       ? `
@@ -187,14 +187,18 @@ Data we have extracted so far: ${current}
 
 The user just said: "${transcript}"
 
-Do two things:
-1. If they provided any coverage, deductible, copay, or validity info (or corrected something), put ONLY those fields in "extractedUpdates" with the value. Otherwise use {}.
-2. Say the next thing: If the user did not respond, was silent, or was inaudible (e.g. transcript says "User did not respond or was inaudible" or similar): set extractedUpdates to {} and say "Sorry, can you repeat that again?" then ask for the single next field we still need (one short sentence), or "Anything else?" if we have all four. Otherwise answer any identity or patient question as above; otherwise follow this rule: ${oneFieldRule}
+EXTRACTION (do this first): If the user gave a value for coverage, deductible, copay, or validity, you MUST put it in extractedUpdates. Examples: "50 dollars" or "it is 50$" when we need copay -> {"copay": "50 dollars"}. "500" or "500 dollars" for deductible -> {"deductible": "500 dollars"}. "25 percent" for copay -> {"copay": "25 percent"}. "One year" or "till December" for validity -> {"validity": "one year"}. Extract the value they said even if phrased casually. If they gave no usable value, use {}.
 
-If the user said goodbye, or we have all four fields and they confirmed, set "endCall" to true and say a short goodbye.
+WHAT TO SAY:
+- ONLY if the transcript is exactly "User did not respond or was inaudible" (or clearly means no speech): set extractedUpdates {} and say "Sorry, can you repeat that again?" then ask for the next field. Do NOT say "repeat" if the user said anything that could be a value (numbers, amounts, percentages, dates).
+- If you put a value in extractedUpdates this turn: acknowledge briefly ("Thanks." or "Got it.") then ask for the NEXT field only. Never repeat the same question you just got an answer for.
+- If they gave a value but you did not put it in extractedUpdates, fix that: put the value in extractedUpdates and acknowledge then ask next field.
+- Otherwise answer identity or patient questions as above; else follow: ${oneFieldRule}
 
-Respond with ONLY a JSON object. No markdown. No extra text. nextMessage must be one short sentence (under 15 words when asking for a field). Format:
-{"nextMessage": "One short sentence only", "extractedUpdates": {} or {"coverage": "..."}, "endCall": true or false}`;
+Do not ask the same question again in the same turn after receiving an answer. Move to the next field. If the user said goodbye or we have all four fields and they confirmed, set "endCall" to true and say a short goodbye.
+
+Respond with ONLY a JSON object. No markdown. Format:
+{"nextMessage": "Short sentence", "extractedUpdates": {} or {"copay": "50 dollars"} etc., "endCall": true or false}`;
 
     const result = await model.generateContent(prompt);
     let jsonString = result.response.text()?.trim() ?? '{}';
