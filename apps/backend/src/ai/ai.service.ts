@@ -87,7 +87,7 @@ Current extracted data we have: ${current}
 
 What the user just said: "${userMessage}"
 
-If the user asks who you are, to verify yourself, or to identify yourself: set "updates" to {} and put in "reply" a short answer: "I'm John calling from Went Dentals. I'm calling to verify patient benefits details." Then they can continue.
+If the user asks who you are, to verify yourself, or to identify yourself: set "updates" to {} and put in "reply" a short answer: "I'm John calling from Went Dentals. I'm calling to verify patient benefits details." Then they can continue. Once the patient name and data of birth is provided, you can continue with the verification process. Ask for the fields one by one (one at a time).
 If the user is correcting or updating a value (e.g. "please update copay to 25%", "it's 25% not 60%", "deductible is actually 500 dollars"), put ONLY those fields in "updates" with the new value. Use "reply" for a short spoken acknowledgment.
 If they are asking any other general question, set "updates" to {} and put a brief answer in "reply".
 
@@ -176,7 +176,7 @@ Patient info you can disclose when asked:
 - If the user asks "patient's date of birth" or "date of birth" or "patient's DOB": say "The date of birth is ${patientInfo.dobFormatted ?? 'not provided'}."
 - If the user asks for the first name only: say "The first name is ${patientInfo.firstName}."
 - If the user asks for the last name only: say "The last name is ${patientInfo.lastName}."
-- If the user asks which patient / what patient details do you need / what details: say "The full name of the patient is ${patientInfo.fullName}. Date of birth is ${patientInfo.dobFormatted ?? 'not provided'}. I'll need to verify coverage, deductible, copay, and validity."
+- If the user asks which patient / what patient details do you need / what details: say "The full name of the patient is ${patientInfo.fullName}. Date of birth is ${patientInfo.dobFormatted ?? 'not provided'}. I'll need to patient's benefit details."
 `
       : `
 - If the user asks who you are / verify yourself / identify yourself: reply briefly "I'm John calling from Went Dentals. I'm calling to verify patient benefit details." then continue. Never say you are a bot or virtual assistant.
@@ -185,20 +185,24 @@ Patient info you can disclose when asked:
 ${patientBlock}
 Data we have extracted so far: ${current}
 
+We are currently asking for: ${nextFieldToAsk ?? 'nothing (all done)'}.
+
 The user just said: "${transcript}"
 
-EXTRACTION (do this first): If the user gave a value for coverage, deductible, copay, or validity, you MUST put it in extractedUpdates. Examples: "50 dollars" or "it is 50$" when we need copay -> {"copay": "50 dollars"}. "500" or "500 dollars" for deductible -> {"deductible": "500 dollars"}. "25 percent" for copay -> {"copay": "25 percent"}. "One year" or "till December" for validity -> {"validity": "one year"}. Extract the value they said even if phrased casually. If they gave no usable value, use {}.
+CRITICAL EXTRACTION RULES:
+- If the user said ANYTHING that contains a number, dollar amount ($), or percentage in relation to deductible, copay, coverage, or validity, you MUST put it in extractedUpdates. Examples: "the deductible is 100$" -> {"deductible": "100 dollars"}. "deductible is 100" -> {"deductible": "100"}. "it is 50 dollars" when we need copay -> {"copay": "50 dollars"}. "100 dollars" when we need deductible -> {"deductible": "100 dollars"}. "25 percent" -> {"copay": "25 percent"}. "December 21 2028" or "21/12/28" -> {"validity": "21st Dec 2028"}. When we are asking for "${nextFieldToAsk}", ANY number or amount in the user message is almost certainly the answer - extract it.
+- NEVER say "I didn't get you", "I didn't catch that", "I didn't understand", "could you repeat", "can you share the [field] again" or similar when the user said something that contains a number or amount. Only say "Sorry, can you repeat that again?" when the transcript is exactly "User did not respond or was inaudible".
+- If you extracted a value: say "Thanks." or "Got it." then ask for the NEXT field only. Never ask for the same field again in the same turn.
 
 WHAT TO SAY:
-- ONLY if the transcript is exactly "User did not respond or was inaudible" (or clearly means no speech): set extractedUpdates {} and say "Sorry, can you repeat that again?" then ask for the next field. Do NOT say "repeat" if the user said anything that could be a value (numbers, amounts, percentages, dates).
-- If you put a value in extractedUpdates this turn: acknowledge briefly ("Thanks." or "Got it.") then ask for the NEXT field only. Never repeat the same question you just got an answer for.
-- If they gave a value but you did not put it in extractedUpdates, fix that: put the value in extractedUpdates and acknowledge then ask next field.
+- ONLY if transcript is exactly "User did not respond or was inaudible": extractedUpdates {}, say "Sorry, can you repeat that again?" then ask for the next field.
+- If the user said anything with a number/amount/$/percent: you MUST extract it into extractedUpdates for the field we need (${nextFieldToAsk}), then say "Thanks. What is the [next field]?" Do NOT say you didn't get it. Do NOT ask for the same field again.
 - Otherwise answer identity or patient questions as above; else follow: ${oneFieldRule}
 
-Do not ask the same question again in the same turn after receiving an answer. Move to the next field. If the user said goodbye or we have all four fields and they confirmed, set "endCall" to true and say a short goodbye.
+When all four fields are collected, set endCall true and say "Thank you."
 
 Respond with ONLY a JSON object. No markdown. Format:
-{"nextMessage": "Short sentence", "extractedUpdates": {} or {"copay": "50 dollars"} etc., "endCall": true or false}`;
+{"nextMessage": "Short sentence", "extractedUpdates": {} or {"deductible": "100 dollars"} etc., "endCall": true or false}`;
 
     const result = await model.generateContent(prompt);
     let jsonString = result.response.text()?.trim() ?? '{}';
@@ -211,14 +215,44 @@ Respond with ONLY a JSON object. No markdown. Format:
         typeof parsed.nextMessage === 'string' && parsed.nextMessage.trim()
           ? parsed.nextMessage.trim()
           : 'What else can you tell me?';
+      let extractedUpdates = parsed.extractedUpdates ?? {};
+      const endCall = parsed.endCall === true;
+
+      const looksLikeDidntGet = /didn'?t\s+(get|catch|understand)|can you (repeat|share|say)/i.test(nextMessage);
+      const transcriptHasValue =
+        transcript !== 'User did not respond or was inaudible.' &&
+        /\d+|dollar|percent|%\s*\$/.test(transcript);
+
+      if (
+        nextFieldToAsk &&
+        transcriptHasValue &&
+        Object.keys(extractedUpdates).length === 0
+      ) {
+        const fallback = this.tryExtractFieldFromTranscript(transcript, nextFieldToAsk);
+        if (fallback) {
+          extractedUpdates = { [nextFieldToAsk]: fallback };
+          const nextAfter = this.getNextFieldAfter(currentExtracted, nextFieldToAsk, fallback);
+          nextMessage = nextAfter
+            ? `Thanks. What is the ${nextAfter}?`
+            : 'Thanks. What is the validity?';
+        }
+      } else if (looksLikeDidntGet && nextFieldToAsk && transcriptHasValue) {
+        const fallback = this.tryExtractFieldFromTranscript(transcript, nextFieldToAsk);
+        if (fallback) {
+          extractedUpdates = { [nextFieldToAsk]: fallback };
+          const nextAfter = this.getNextFieldAfter(currentExtracted, nextFieldToAsk, fallback);
+          nextMessage = nextAfter
+            ? `Thanks. What is the ${nextAfter}?`
+            : 'Thanks. What is the validity?';
+        }
+      }
+
       const maxMessageLength = 200;
       if (nextMessage.length > maxMessageLength) {
         nextMessage = nextMessage.slice(0, maxMessageLength).trim();
         const lastPeriod = nextMessage.lastIndexOf('.');
         if (lastPeriod > 80) nextMessage = nextMessage.slice(0, lastPeriod + 1);
       }
-      const extractedUpdates = parsed.extractedUpdates ?? {};
-      const endCall = parsed.endCall === true;
       return { nextMessage, extractedUpdates, endCall };
     } catch {
       return {
@@ -227,6 +261,47 @@ Respond with ONLY a JSON object. No markdown. Format:
         endCall: false,
       };
     }
+  }
+
+  private getNextFieldAfter(
+    current: { coverage: string | null; deductible: string | null; copay: string | null; validity: string | null },
+    justFilled: string,
+    value: string,
+  ): string | null {
+    const updated = { ...current, [justFilled]: value };
+    const has = (v: string | null) => v != null && String(v).trim().length > 0;
+    if (!has(updated.coverage)) return 'coverage';
+    if (!has(updated.deductible)) return 'deductible';
+    if (!has(updated.copay)) return 'copay';
+    if (!has(updated.validity)) return 'validity';
+    return null;
+  }
+
+  private tryExtractFieldFromTranscript(transcript: string, field: string): string | null {
+    const t = transcript.trim().toLowerCase();
+    const dollarMatch = t.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
+    const percentMatch = t.match(/(\d+)\s*%|(\d+)\s*percent/i);
+    const numberMatch = t.match(/\b(\d+)\b/);
+    if (field === 'validity') {
+      const validityMatch = t.match(/year|month|dec|jan|feb|valid|till|until|through/i);
+      if (validityMatch) return transcript.trim().replace(/\s+/g, ' ');
+      return null;
+    }
+    if (dollarMatch) {
+      const num = dollarMatch[1] || dollarMatch[2] || dollarMatch[3];
+      return num ? `${num} dollars` : null;
+    }
+    if (percentMatch && (field === 'copay' || field === 'coverage')) {
+      const num = percentMatch[1] || percentMatch[2];
+      return num ? `${num} percent` : null;
+    }
+    if (numberMatch) {
+      const num = numberMatch[1];
+      if (field === 'deductible' || field === 'copay') return `${num} dollars`;
+      if (field === 'coverage') return num;
+      return num;
+    }
+    return null;
   }
 
   public async extractInsuranceDetails(text: string): Promise<{
