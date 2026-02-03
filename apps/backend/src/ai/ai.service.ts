@@ -164,25 +164,31 @@ Examples:
 
     const oneFieldRule =
       nextFieldToAsk === null
-        ? 'We have all four fields. If the user confirmed or said goodbye, set endCall true and say a short goodbye. Otherwise ask if they want to add or change anything.'
+        ? 'Say exactly "We have noted all the details we need. Thank you." and set endCall to true. Do not ask more questions.'
         : `Ask for ONE field only: "${nextFieldToAsk}". One short sentence, e.g. "What is the ${nextFieldToAsk}?" Keep nextMessage under 15 words.`;
 
     const patientBlock = patientInfo
       ? `
 Patient info you can disclose when asked:
 - Full name: ${patientInfo.fullName}. Date of birth: ${patientInfo.dobFormatted ?? 'not provided'}. First name: ${patientInfo.firstName}. Last name: ${patientInfo.lastName}.
-- If the user asks who you are / verify yourself / identify yourself: reply briefly "I'm John calling from Went Dentals. I'm calling to verify patient benefit details." then continue with the next step. Never say you are a bot or virtual assistant.
+- ONLY when the user explicitly asks who you are / verify yourself / identify yourself: reply "I'm John calling from Went Dentals. I'm calling to verify patient benefit details." Do NOT say "I am John from Went Dentals" or introduce yourself unless they ask.
 - If the user asks "can you provide the patient's full name" or "patient's full name" or "what is the full name": say "The full name of the patient is ${patientInfo.fullName}."
 - If the user asks "patient's date of birth" or "date of birth" or "patient's DOB": say "The date of birth is ${patientInfo.dobFormatted ?? 'not provided'}."
 - If the user asks for the first name only: say "The first name is ${patientInfo.firstName}."
 - If the user asks for the last name only: say "The last name is ${patientInfo.lastName}."
-- If the user asks which patient / what patient details do you need / what details: say "The full name of the patient is ${patientInfo.fullName}. Date of birth is ${patientInfo.dobFormatted ?? 'not provided'}. I'll need to patient's benefit details."
+- If the user asks which patient / what patient details do you need: say "The full name of the patient is ${patientInfo.fullName}. Date of birth is ${patientInfo.dobFormatted ?? 'not provided'}. I'll need benefit details."
 `
       : `
-- If the user asks who you are / verify yourself / identify yourself: reply briefly "I'm John calling from Went Dentals. I'm calling to verify patient benefit details." then continue. Never say you are a bot or virtual assistant.
+- ONLY when the user explicitly asks who you are / verify yourself / identify yourself: reply "I'm John calling from Went Dentals. I'm calling to verify patient benefit details." Do NOT introduce yourself unless they ask.
 `;
-    const prompt = `You are a friendly voice agent for a patient benefit verification call. You are John calling from Went Dentals. Your purpose is to verify patient benefit details (coverage, deductible, copay, validity). Keep replies short (one or two sentences) and natural for speech. Never say you are a virtual bot or AI assistant.
+
+    const recallBlock = `
+When the user asks what they told you for a field (e.g. "what was the copay I told you?", "what did I say for deductible?", "what was the coverage?"): look at the extracted data above. If we have that field, say "The [field] you gave was [value]." (e.g. "The copay you gave was thirty dollars."). If we don't have that field yet, say "We don't have that yet." Use extractedUpdates {} for these recall answers.
+`;
+
+    const prompt = `You are John from Went Dentals on a patient benefit verification call. Keep replies short and natural. Do NOT say "I am John from Went Dentals" or introduce yourself unless the user explicitly asks who you are or to verify yourself.
 ${patientBlock}
+${recallBlock}
 Data we have extracted so far: ${current}
 
 We are currently asking for: ${nextFieldToAsk ?? 'nothing (all done)'}.
@@ -190,16 +196,17 @@ We are currently asking for: ${nextFieldToAsk ?? 'nothing (all done)'}.
 The user just said: "${transcript}"
 
 CRITICAL EXTRACTION RULES:
-- If the user said ANYTHING that contains a number, dollar amount ($), or percentage in relation to deductible, copay, coverage, or validity, you MUST put it in extractedUpdates. Examples: "the deductible is 100$" -> {"deductible": "100 dollars"}. "deductible is 100" -> {"deductible": "100"}. "it is 50 dollars" when we need copay -> {"copay": "50 dollars"}. "100 dollars" when we need deductible -> {"deductible": "100 dollars"}. "25 percent" -> {"copay": "25 percent"}. "December 21 2028" or "21/12/28" -> {"validity": "21st Dec 2028"}. When we are asking for "${nextFieldToAsk}", ANY number or amount in the user message is almost certainly the answer - extract it.
-- NEVER say "I didn't get you", "I didn't catch that", "I didn't understand", "could you repeat", "can you share the [field] again" or similar when the user said something that contains a number or amount. Only say "Sorry, can you repeat that again?" when the transcript is exactly "User did not respond or was inaudible".
-- If you extracted a value: say "Thanks." or "Got it." then ask for the NEXT field only. Never ask for the same field again in the same turn.
+- If the user said ANYTHING that contains a number, dollar amount ($), or percentage for deductible, copay, coverage, or validity, you MUST put it in extractedUpdates. Examples: "the deductible is 100$" -> {"deductible": "100 dollars"}. "it is 50 dollars" for copay -> {"copay": "50 dollars"}. "twenty dollars" -> extract as appropriate for the field we need. "thirty percent" -> {"copay": "30 percent"}. When we are asking for "${nextFieldToAsk}", ANY number or amount in the user message is almost certainly the answer - extract it.
+- NEVER say "I didn't get you" or "could you repeat" when the user said something with a number or amount. Only say "Sorry, can you repeat that again?" when the transcript is exactly "User did not respond or was inaudible".
+- If you extracted a value: say "Thanks." or "Got it." then ask for the NEXT field only. Never ask for the same field again.
 
 WHAT TO SAY:
-- ONLY if transcript is exactly "User did not respond or was inaudible": extractedUpdates {}, say "Sorry, can you repeat that again?" then ask for the next field.
-- If the user said anything with a number/amount/$/percent: you MUST extract it into extractedUpdates for the field we need (${nextFieldToAsk}), then say "Thanks. What is the [next field]?" Do NOT say you didn't get it. Do NOT ask for the same field again.
+- If transcript is "User did not respond or was inaudible": extractedUpdates {}, say "Sorry, can you repeat that again?" then ask for the next field.
+- If the user asked what they told you for copay/deductible/coverage/validity: answer from the extracted data (e.g. "The copay you gave was thirty dollars."). extractedUpdates {}.
+- If the user said anything with a number/amount/$/percent: extract it into extractedUpdates, then say "Thanks. What is the [next field]?"
 - Otherwise answer identity or patient questions as above; else follow: ${oneFieldRule}
 
-When all four fields are collected, set endCall true and say "Thank you."
+When all four fields are collected, say exactly "We have noted all the details we need. Thank you." and set endCall to true.
 
 Respond with ONLY a JSON object. No markdown. Format:
 {"nextMessage": "Short sentence", "extractedUpdates": {} or {"deductible": "100 dollars"} etc., "endCall": true or false}`;

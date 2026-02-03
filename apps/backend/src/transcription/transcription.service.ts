@@ -31,6 +31,7 @@ export class TranscriptionService {
           this.logger.log('Transcription (ElevenLabs) successful');
           return { transcript };
         }
+        this.logger.debug('ElevenLabs returned empty, using Whisper');
       } catch (err: any) {
         this.logger.warn(
           'ElevenLabs transcription failed, falling back to Whisper',

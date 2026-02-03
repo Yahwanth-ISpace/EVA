@@ -179,13 +179,18 @@ export class MediaStreamHandlerService {
 
         const { transcript } = await this.transcriptionService.transcribeAudio(wavPath);
         const userSaid = (transcript ?? '').trim();
-        const isIdleOrEmpty = userSaid.length === 0;
+        const noiseOrTooShort =
+          userSaid.length <= 2 ||
+          /^(you|uh|um|oh|ah|eh|hmm|mmm)$/i.test(userSaid);
+        const isIdleOrEmpty = userSaid.length === 0 || noiseOrTooShort;
         const effectiveTranscript = isIdleOrEmpty
           ? 'User did not respond or was inaudible.'
           : userSaid;
 
-        if (isIdleOrEmpty) {
+        if (userSaid.length === 0) {
           this.logger.log('[MediaStream] No speech detected, prompting repeat');
+        } else if (noiseOrTooShort) {
+          this.logger.log(`[MediaStream] Noise or too short ("${userSaid}"), prompting repeat`);
         } else {
           this.logger.log(`[MediaStream] User said: ${userSaid}`);
         }
