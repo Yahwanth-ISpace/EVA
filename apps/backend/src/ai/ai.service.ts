@@ -198,7 +198,7 @@ The user just said: "${transcript}"
 CRITICAL EXTRACTION RULES:
 - If the user said ANYTHING that contains a number, dollar amount ($), or percentage for deductible, copay, coverage, or validity, you MUST put it in extractedUpdates. Examples: "the deductible is 100$" -> {"deductible": "100 dollars"}. "it is 50 dollars" for copay -> {"copay": "50 dollars"}. "twenty dollars" -> extract as appropriate for the field we need. "thirty percent" -> {"copay": "30 percent"}. When we are asking for "${nextFieldToAsk}", ANY number or amount in the user message is almost certainly the answer - extract it.
 - NEVER say "I didn't get you" or "could you repeat" when the user said something with a number or amount. Only say "Sorry, can you repeat that again?" when the transcript is exactly "User did not respond or was inaudible".
-- If you extracted a value: say "Thanks." or "Got it." then ask for the NEXT field only. Never ask for the same field again.
+- If you extracted a value: say "Thanks." or "Got it." then ask for the NEXT field only. NEVER ask for the same field again in the same turn. Once the user has given a value for the current field, you must extract it and move on to the next field.
 
 WHAT TO SAY:
 - If transcript is "User did not respond or was inaudible": extractedUpdates {}, say "Sorry, can you repeat that again?" then ask for the next field.

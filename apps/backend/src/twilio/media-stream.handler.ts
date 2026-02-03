@@ -8,18 +8,21 @@ import { AiService } from '../ai/ai.service';
 import { TranscriptionService } from '../transcription/transcription.service';
 import { ElevenLabsAudioStackService } from '../voice/elevenlabs-audio-stack.service';
 import { VerificationService } from '../verification/verification.service';
+import { TwilioService } from './twilio.service';
 import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
 /** Minimum speech bytes before we consider processing (~1 sec at 8kHz mulaw) */
 const MIN_SPEECH_BYTES = 8_000;
-/** Tail bytes to check for silence (~0.6 sec). Longer = give user time to finish, less rushing. */
-const SILENCE_TAIL_BYTES = 4_800;
+/** Tail bytes to check for silence (~1 sec). Longer = give user time to answer before we process. */
+const SILENCE_TAIL_BYTES = 8_000;
 /** Fraction of tail bytes that must be "silent" to trigger (0–1) */
 const SILENCE_RATIO_THRESHOLD = 0.85;
 /** Max buffer before we process anyway (~15 sec) so we don't wait forever */
 const MAX_BUFFER_BYTES = 120_000;
-/** Fallback: process at most every N ms if we have enough audio and no silence detected. Longer = less rush. */
-const FALLBACK_PROCESS_INTERVAL_MS = 5500;
+/** Fallback: process at most every N ms. Longer = more time for user to finish answering. */
+const FALLBACK_PROCESS_INTERVAL_MS = 10000;
+/** Minimum ms to wait after EVA speaks before processing (give user time to hear and answer). */
+const ANSWER_WINDOW_MS = 5000;
 /** Chunk size to send back to Twilio (40ms = 320 bytes at 8kHz mulaw) */
 const OUTBOUND_CHUNK_BYTES = 320;
 
@@ -49,12 +52,9 @@ function formatDobForSpeech(dob: Date): string {
   return `${month} ${day}, ${year}`;
 }
 
-/** First thing EVA (John from Went Dentals) says when the stream starts */
+/** First thing EVA says: intro + ask for patient benefit details. */
 const CONVERSATION_GREETING =
-  "Hi, this is John calling from, Went Dentals.";
-
-// const CONVERSATION_GREETING =
-// "Hi, this is John calling from, Went Dentals. I'm calling to verify, patient benefit details.";
+  'Hi, I am John from Went Dentals. May I know the patient benefit details?';
 
 interface ExtractedData {
   coverage: string | null;
@@ -82,6 +82,8 @@ const STATIC_PATIENT_INFO: PatientInfo = {
 interface StreamState {
   buffer: Buffer[];
   streamSid: string | null;
+  /** Twilio call SID for hanging up when we have all details */
+  callSid: string | null;
   processing: boolean;
   /** Fallback timer when silence isn't detected */
   fallbackTimer: ReturnType<typeof setInterval> | null;
@@ -91,6 +93,8 @@ interface StreamState {
   extractedData: ExtractedData;
   /** When true, we've said goodbye and shouldn't process more */
   callEnded: boolean;
+  /** Time (ms) when EVA last spoke; we don't process before ANSWER_WINDOW_MS after this */
+  lastSpeakTime: number;
 }
 
 @Injectable()
@@ -102,12 +106,14 @@ export class MediaStreamHandlerService {
     private readonly elevenLabsAudioStack: ElevenLabsAudioStackService,
     private readonly aiService: AiService,
     private readonly verificationService: VerificationService,
-  ) { }
+    private readonly twilioService: TwilioService,
+  ) {}
 
   handleConnection(ws: WebSocket, payeeId?: string | null): void {
     const state: StreamState = {
       buffer: [],
       streamSid: null,
+      callSid: null,
       processing: false,
       fallbackTimer: null,
       payeeId: payeeId ?? null,
@@ -119,6 +125,7 @@ export class MediaStreamHandlerService {
         validity: null,
       },
       callEnded: false,
+      lastSpeakTime: 0,
     };
 
     const send = (obj: object) => {
@@ -141,6 +148,7 @@ export class MediaStreamHandlerService {
       try {
         const mulawAudio = await this.elevenLabsAudioStack.synthesize(text);
         if (mulawAudio?.length) await playAudio(mulawAudio);
+        state.lastSpeakTime = Date.now();
       } catch (e) {
         this.logger.warn('[MediaStream] TTS failed', (e as Error)?.message);
       }
@@ -148,6 +156,8 @@ export class MediaStreamHandlerService {
 
     const tryTriggerProcess = () => {
       if (state.processing || state.callEnded || !state.streamSid) return;
+      const now = Date.now();
+      if (state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) return;
       const combined = Buffer.concat(state.buffer);
       if (combined.length < MIN_SPEECH_BYTES) return;
 
@@ -208,21 +218,40 @@ export class MediaStreamHandlerService {
           if (hasValue(extractedUpdates.deductible ?? null)) state.extractedData.deductible = extractedUpdates.deductible ?? null;
           if (hasValue(extractedUpdates.copay ?? null)) state.extractedData.copay = extractedUpdates.copay ?? null;
           if (hasValue(extractedUpdates.validity ?? null)) state.extractedData.validity = extractedUpdates.validity ?? null;
-          // DB update happens only at end of call (see 'stop' event)
         }
 
-        const toSpeak = (nextMessage ?? '').trim() || 'What else can you tell me?';
-        if (!(nextMessage ?? '').trim()) {
+        const allCollected =
+          hasValue(state.extractedData.coverage) &&
+          hasValue(state.extractedData.deductible) &&
+          hasValue(state.extractedData.copay) &&
+          hasValue(state.extractedData.validity);
+        const shouldEndCall = endCall || allCollected;
+        const goodbye = 'We have noted all the details we need. Thank you.';
+        const toSpeak = shouldEndCall ? goodbye : ((nextMessage ?? '').trim() || 'What else can you tell me?');
+        if (!shouldEndCall && !(nextMessage ?? '').trim()) {
           this.logger.warn('[MediaStream] AI returned empty nextMessage, using fallback');
         }
         await speak(toSpeak);
 
-        if (endCall) {
+        if (shouldEndCall) {
           state.callEnded = true;
           if (state.fallbackTimer) {
             clearInterval(state.fallbackTimer);
             state.fallbackTimer = null;
           }
+          if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
+            this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
+              this.logger.warn('[MediaStream] Push on endCall failed', (e as Error)?.message),
+            );
+          }
+          const callSidToHangUp = state.callSid;
+          setTimeout(() => {
+            if (callSidToHangUp) {
+              this.twilioService.hangUp(callSidToHangUp).catch((e) =>
+                this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message),
+              );
+            }
+          }, 2500);
         }
       } catch (err: any) {
         this.logger.warn('[MediaStream] Process buffer failed', err?.message);
@@ -253,8 +282,9 @@ export class MediaStreamHandlerService {
       }
 
       if (event === 'start') {
-        state.streamSid = msg?.streamSid ?? null;
-        this.logger.log(`[MediaStream] Start streamSid=${state.streamSid} payeeId=${state.payeeId ?? 'none'}`);
+        state.streamSid = msg?.streamSid ?? msg?.start?.streamSid ?? null;
+        state.callSid = msg?.start?.callSid ?? msg?.callSid ?? null;
+        this.logger.log(`[MediaStream] Start streamSid=${state.streamSid} callSid=${state.callSid ?? 'none'} payeeId=${state.payeeId ?? 'none'}`);
         startFallbackTimer();
         (async () => {
           try {
@@ -317,12 +347,13 @@ export class MediaStreamHandlerService {
       if (state.fallbackTimer) return;
       state.fallbackTimer = setInterval(() => {
         const combined = Buffer.concat(state.buffer);
-        if (combined.length >= MIN_SPEECH_BYTES) {
-          state.buffer = [];
-          clearInterval(state.fallbackTimer!);
-          state.fallbackTimer = null;
-          processBuffer(combined);
-        }
+        if (combined.length < MIN_SPEECH_BYTES) return;
+        const now = Date.now();
+        if (state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) return;
+        state.buffer = [];
+        clearInterval(state.fallbackTimer!);
+        state.fallbackTimer = null;
+        processBuffer(combined);
       }, FALLBACK_PROCESS_INTERVAL_MS);
     };
   }

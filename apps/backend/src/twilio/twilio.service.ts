@@ -32,6 +32,14 @@ export class TwilioService {
   ];
 
   /**
+   * Hang up an active call by SID (e.g. when EVA has collected all details).
+   */
+  async hangUp(callSid: string): Promise<void> {
+    if (!callSid?.trim()) return;
+    await client.calls(callSid).update({ status: 'completed' });
+  }
+
+  /**
    * Make outbound call using Twilio telephony infrastructure
    * Note: All voice generation is handled by ElevenLabs via the webhook
    */
