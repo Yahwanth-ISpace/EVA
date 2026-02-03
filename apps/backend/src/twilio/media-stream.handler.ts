@@ -23,6 +23,8 @@ const MAX_BUFFER_BYTES = 120_000;
 const FALLBACK_PROCESS_INTERVAL_MS = 10000;
 /** Minimum ms to wait after EVA speaks before processing (give user time to hear and answer). */
 const ANSWER_WINDOW_MS = 5000;
+/** Max time allowed on hold before ending the call (9 minutes) */
+const HOLD_MAX_MS = 9 * 60 * 1000;
 /** Chunk size to send back to Twilio (40ms = 320 bytes at 8kHz mulaw) */
 const OUTBOUND_CHUNK_BYTES = 320;
 
@@ -55,6 +57,39 @@ function formatDobForSpeech(dob: Date): string {
 /** First thing EVA says: intro + ask for patient benefit details. */
 const CONVERSATION_GREETING =
   'Hi, I am John from Went Dentals. May I know the patient benefit details?';
+
+const EVA_HOLD_ACK = 'Sure, I am staying on line.';
+const EVA_RESUME_ACK = 'No problem. Let\'s continue.';
+
+/** Detect if user is asking to put the call on hold */
+function isHoldPhrase(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  return (
+    /putting?\s+(?:the\s+)?call\s+on\s+hold/i.test(t) ||
+    /put\s+(?:me\s+)?(?:on\s+)?hold/i.test(t) ||
+    /(?:please\s+)?hold\s+(?:please)?/i.test(t) ||
+    /(?:can you\s+)?(?:please\s+)?(?:wait|hold)/i.test(t) ||
+    /one\s+moment/i.test(t) ||
+    /putting\s+you\s+on\s+hold/i.test(t) ||
+    /i'?m\s+putting\s+(?:the\s+)?call\s+on\s+hold/i.test(t) ||
+    /please\s+wait/i.test(t)
+  );
+}
+
+/** Detect if user is saying they are back from hold */
+function isResumePhrase(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  return (
+    /i'?m\s+back/i.test(t) ||
+    /(?:thank you|thanks)\s+for\s+(?:waiting|holding)/i.test(t) ||
+    /(?:we'?re\s+)?back\s+on\s+(?:the\s+)?line/i.test(t) ||
+    /let'?s\s+continue/i.test(t) ||
+    /ready\s+(?:to\s+)?continue/i.test(t) ||
+    /(?:i'?m\s+)?ready/i.test(t) ||
+    /continue\s+(?:please)?/i.test(t) ||
+    /hold\s+(?:is\s+)?(?:removed|off)/i.test(t)
+  );
+}
 
 interface ExtractedData {
   coverage: string | null;
@@ -95,6 +130,12 @@ interface StreamState {
   callEnded: boolean;
   /** Time (ms) when EVA last spoke; we don't process before ANSWER_WINDOW_MS after this */
   lastSpeakTime: number;
+  /** User put the call on hold; we don't transcribe for conversation until they resume */
+  onHold: boolean;
+  /** When hold started (ms); used for 9-min limit */
+  holdStartedAt: number | null;
+  /** Timeout to end call when hold exceeds 9 min */
+  holdTimeoutId: ReturnType<typeof setTimeout> | null;
 }
 
 @Injectable()
@@ -126,6 +167,9 @@ export class MediaStreamHandlerService {
       },
       callEnded: false,
       lastSpeakTime: 0,
+      onHold: false,
+      holdStartedAt: null,
+      holdTimeoutId: null,
     };
 
     const send = (obj: object) => {
@@ -189,6 +233,85 @@ export class MediaStreamHandlerService {
 
         const { transcript } = await this.transcriptionService.transcribeAudio(wavPath);
         const userSaid = (transcript ?? '').trim();
+
+        // --- Hold / resume handling ---
+        if (state.onHold) {
+          if (isResumePhrase(userSaid)) {
+            state.onHold = false;
+            state.holdStartedAt = null;
+            if (state.holdTimeoutId) {
+              clearTimeout(state.holdTimeoutId);
+              state.holdTimeoutId = null;
+            }
+            this.logger.log('[MediaStream] User resumed from hold');
+            await speak(EVA_RESUME_ACK);
+            const resumeTranscript = 'User said they are back from hold. Continue with the next benefit field.';
+            const { nextMessage: resumeMsg, extractedUpdates: resumeUpdates, endCall: resumeEnd } =
+              await this.aiService.getNextConversationTurn(resumeTranscript, state.extractedData, state.patientInfo);
+            const hasVal = (v: string | null) => v != null && String(v).trim().length > 0;
+            if (resumeUpdates && Object.keys(resumeUpdates).length > 0) {
+              if (hasVal(resumeUpdates.coverage ?? null)) state.extractedData.coverage = resumeUpdates.coverage ?? null;
+              if (hasVal(resumeUpdates.deductible ?? null)) state.extractedData.deductible = resumeUpdates.deductible ?? null;
+              if (hasVal(resumeUpdates.copay ?? null)) state.extractedData.copay = resumeUpdates.copay ?? null;
+              if (hasVal(resumeUpdates.validity ?? null)) state.extractedData.validity = resumeUpdates.validity ?? null;
+            }
+            const toSay = (resumeMsg ?? '').trim() || 'What is the coverage?';
+            await speak(toSay);
+            if (resumeEnd) {
+              state.callEnded = true;
+              if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
+              if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
+                this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
+                  this.logger.warn('[MediaStream] Push on endCall failed', (e as Error)?.message));
+              }
+              const sid = state.callSid;
+              setTimeout(() => { if (sid) this.twilioService.hangUp(sid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message)); }, 2500);
+            } else {
+              startFallbackTimer();
+            }
+          } else if (state.holdStartedAt && Date.now() - state.holdStartedAt > HOLD_MAX_MS) {
+            this.logger.log('[MediaStream] Hold limit exceeded (9 min), ending call');
+            state.callEnded = true;
+            state.onHold = false;
+            state.holdStartedAt = null;
+            if (state.holdTimeoutId) { clearTimeout(state.holdTimeoutId); state.holdTimeoutId = null; }
+            if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
+            if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
+              this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
+                this.logger.warn('[MediaStream] Push on hold timeout failed', (e as Error)?.message));
+            }
+            const sid = state.callSid;
+            if (sid) this.twilioService.hangUp(sid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));
+          }
+          state.processing = false;
+          return;
+        }
+
+        if (!state.onHold && userSaid.length > 0 && isHoldPhrase(userSaid)) {
+          state.onHold = true;
+          state.holdStartedAt = Date.now();
+          if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
+          state.holdTimeoutId = setTimeout(() => {
+            if (state.onHold && !state.callEnded) {
+              this.logger.log('[MediaStream] Hold limit exceeded (9 min), ending call');
+              state.callEnded = true;
+              state.onHold = false;
+              state.holdStartedAt = null;
+              state.holdTimeoutId = null;
+              if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
+              if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
+                this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
+                  this.logger.warn('[MediaStream] Push on hold timeout failed', (e as Error)?.message));
+              }
+              if (state.callSid) this.twilioService.hangUp(state.callSid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));
+            }
+          }, HOLD_MAX_MS);
+          this.logger.log('[MediaStream] User put call on hold');
+          await speak(EVA_HOLD_ACK);
+          state.processing = false;
+          return;
+        }
+
         const noiseOrTooShort =
           userSaid.length <= 2 ||
           /^(you|uh|um|oh|ah|eh|hmm|mmm)$/i.test(userSaid);
@@ -322,6 +445,10 @@ export class MediaStreamHandlerService {
           clearInterval(state.fallbackTimer);
           state.fallbackTimer = null;
         }
+        if (state.holdTimeoutId) {
+          clearTimeout(state.holdTimeoutId);
+          state.holdTimeoutId = null;
+        }
         this.logger.log('[MediaStream] Stop');
         if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
           this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
@@ -335,6 +462,10 @@ export class MediaStreamHandlerService {
       if (state.fallbackTimer) {
         clearInterval(state.fallbackTimer);
         state.fallbackTimer = null;
+      }
+      if (state.holdTimeoutId) {
+        clearTimeout(state.holdTimeoutId);
+        state.holdTimeoutId = null;
       }
     });
 
