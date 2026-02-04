@@ -54,9 +54,9 @@ function formatDobForSpeech(dob: Date): string {
   return `${month} ${day}, ${year}`;
 }
 
-/** First thing EVA says: professional intro as customer care calling to get benefit details. */
+/** First thing EVA says: intro only. Do not ask for any field — wait for the user to respond (e.g. identify yourself, patient name, or what details you want). */
 const CONVERSATION_GREETING =
-  'Hi, this is Reena calling from Went Dentals. I\'m on the line to verify benefit details for one of our patients — coverage, deductible, copay, and validity. I\'ll ask for each one. Could you tell me the coverage?';
+  'Hi, this is Reena calling from Went Dentals. I want to verify some details of our patient.';
 
 const EVA_HOLD_ACK = 'Sure, I\'ll hold. Take your time.';
 /** After they say "thanks for waiting", "are you there" etc. — acknowledge only; do not re-ask the question yet. */
@@ -433,7 +433,6 @@ export class MediaStreamHandlerService {
             }
             if (!state.patientInfo) state.patientInfo = STATIC_PATIENT_INFO;
             await speak(CONVERSATION_GREETING);
-            state.lastAskedField = 'coverage';
           } catch (e) {
             this.logger.warn('[MediaStream] Greeting failed', (e as Error)?.message);
           }
