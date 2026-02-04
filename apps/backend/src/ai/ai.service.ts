@@ -271,7 +271,8 @@ ${afterResumeBlock}
 
 CROSS-QUESTIONING (answer clearly, then return to flow):
 - "What did I say for [field]?" / "What did you get for [field]?" / "Do you have the [field]?" → Answer from Data above. If we have it: "I have the [field] as [value]." If not: "I don't have that one yet." extractedUpdates {}. Then if a field is still missing: "I want to know the [next field]."
-- "Can you repeat?" / "What was the question?" / "Say that again?" → Say ONLY "I want to know the [current field we are asking for]." extractedUpdates {}. Current field to ask: ${nextFieldToAsk ?? 'none'}.
+- "Can you repeat?" / "What was the question?" / "Say that again?" → If we still need a field (nextFieldToAsk is not null): say ONLY "I want to know the [current field]." extractedUpdates {}. If we have all four (nextFieldToAsk is null): say "We have everything we need. Thanks." and set endCall true. Current field to ask: ${nextFieldToAsk ?? 'none'}.
+- "Goodbye" / "That's all" / "We're done" when we are missing any field → Do NOT set endCall true. Say "I still need the [first missing]. Can you provide that?" extractedUpdates {}.
 - "Actually I said X not Y" / "Update [field] to X" / "It's X not Y" → Put the corrected value in extractedUpdates for that field, then say "Got it, I've got that as [value]. Thanks." Then ask for the next missing field if any: "I want to know the [next field]."
 - "Why do you need that?" → Say briefly "We're verifying benefit details for our patient." Then "I want to know the [current field]." extractedUpdates {}.
 - "What about [other field]?" when we're on a different field → If they're asking what we have for that other field: answer (have it or don't). If they're asking to skip to it: "I'll get to that. I want to know the [current field] first." Then repeat the current question. extractedUpdates {}.
@@ -283,13 +284,15 @@ We are currently asking for: ${nextFieldToAsk ?? 'nothing (all done)'}.
 What they just said: "${transcript}"
 
 EXTRACTION:
-- Any number, dollar amount ($), or percentage in their message that fits the current field → put it in extractedUpdates. Examples: "deductible is 100$" → {"deductible": "100 dollars"}; "50 dollars" for copay → {"copay": "50 dollars"}; "thirty percent" → {"copay": "30 percent"}. When we are asking for "${nextFieldToAsk}", a number or amount is very likely the answer — extract it.
+- Any number, dollar amount ($), or percentage in their message that fits a benefit field → put it in extractedUpdates. If they give multiple values in one sentence (e.g. "deductible is 500 and copay is 25 percent"), extract ALL that apply into extractedUpdates. Examples: "deductible is 100$" → {"deductible": "100 dollars"}; "50 dollars" for copay → {"copay": "50 dollars"}; "thirty percent" → {"copay": "30 percent"}. When we are asking for "${nextFieldToAsk}", a number or amount is very likely the answer — extract it.
 - Only ask them to repeat when transcript is exactly "User did not respond or was inaudible". Do not ask to repeat if they gave a number or amount.
-- After extracting a value: acknowledge and ask for the NEXT field only.
+- After extracting a value (or multiple): acknowledge once and ask for the NEXT missing field only.
 
 WHAT TO SAY (check in this order for cross-questions):
 - If they ask what they said or what we have for a field ("what did I say for deductible?", "do you have the copay?"): answer from Data above. "I have the [field] as [value]." or "I don't have that one yet." Then if a field is still missing add "I want to know the [next field]." extractedUpdates {}.
-- If they ask to repeat or "what was the question?": say ONLY "I want to know the ${nextFieldToAsk ?? 'coverage'}." extractedUpdates {}.
+- If they ask to repeat or "what was the question?" and we still have a field to collect (nextFieldToAsk is not null): say ONLY "I want to know the ${nextFieldToAsk ?? 'coverage'}." extractedUpdates {}.
+- If they ask "what was the question?" or "repeat" and we have ALL four fields (nextFieldToAsk is null): say "We have everything we need. Thanks." extractedUpdates {}. Set endCall to true.
+- If they say "goodbye" / "that's all" / "we're done" but we are MISSING any field: do NOT set endCall true. Say "I still need the [first missing field]. Can you provide the [first missing]?" extractedUpdates {}.
 - If they correct a value ("actually it's 50 not 80", "update deductible to 500"): put the new value in extractedUpdates for that field, say "Got it, I've got that. Thanks." Then "I want to know the [next field]." if any missing.
 - If they ask "why do you need that?": "We're verifying benefit details for our patient. I want to know the ${nextFieldToAsk ?? 'coverage'}." extractedUpdates {}.
 - If they ask to confirm ("so deductible is 500?"): "Yes, that's correct." or "I have it as [value]. Let me know if you'd like to change it." Then if more needed: "I want to know the [next field]." extractedUpdates {}.

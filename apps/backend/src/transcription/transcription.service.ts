@@ -16,13 +16,18 @@ export class TranscriptionService {
   /**
    * Transcribe audio file to text. Uses ElevenLabs speech-to-text first (fast, clear).
    * Falls back to Whisper (AI server) if ElevenLabs fails or is not configured.
+   * @param options.skipWhisperFallback - When true (e.g. during hold resume check), do not call Whisper; return empty transcript instead. Avoids 502s on hold music.
    */
-  async transcribeAudio(filePath: string): Promise<{ transcript: string }> {
+  async transcribeAudio(
+    filePath: string,
+    options?: { skipWhisperFallback?: boolean },
+  ): Promise<{ transcript: string }> {
     if (!fs.existsSync(filePath)) {
       throw new Error('File not found');
     }
 
     const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
+    const skipWhisper = options?.skipWhisperFallback === true;
 
     if (apiKey) {
       try {
@@ -31,14 +36,23 @@ export class TranscriptionService {
           this.logger.log('Transcription (ElevenLabs) successful');
           return { transcript };
         }
+        if (skipWhisper) {
+          this.logger.debug('ElevenLabs returned empty, skip Whisper (resume check)');
+          return { transcript: '' };
+        }
         this.logger.debug('ElevenLabs returned empty, using Whisper');
       } catch (err: any) {
+        if (skipWhisper) {
+          this.logger.debug('ElevenLabs failed during resume check, skipping Whisper');
+          return { transcript: '' };
+        }
         this.logger.warn(
           'ElevenLabs transcription failed, falling back to Whisper',
           err?.message ?? err,
         );
       }
     } else {
+      if (skipWhisper) return { transcript: '' };
       this.logger.debug('ELEVENLABS_API_KEY not set, using Whisper');
     }
 

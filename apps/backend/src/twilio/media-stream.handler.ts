@@ -1,3 +1,9 @@
+/**
+ * Media stream handler for EVA voice calls (Twilio bidirectional stream).
+ * Handled edge cases: processing during greeting (lastSpeakTime), transcription failure (fallback TTS),
+ * inaudible-like transcripts ([inaudible], ...), empty/generic AI reply (re-ask lastAskedField),
+ * end-call only when all four fields collected (never end with missing fields).
+ */
 import { Injectable, Logger } from '@nestjs/common';
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
@@ -61,6 +67,21 @@ const CONVERSATION_GREETING =
 const EVA_HOLD_ACK = 'Sure, I\'ll hold. Take your time.';
 /** After they say "thanks for waiting", "are you there" etc. — acknowledge only; do not re-ask the question yet. */
 const EVA_RESUME_ACK = 'No problem, thank you for getting back. I\'m still here.';
+
+/** Duration (ms) to stay on the line after asking "Do you have any questions?" before hanging up if no input */
+const POST_GOODBYE_LISTEN_MS = 10_000;
+
+/** Detect if user is saying thank you / no more questions / goodbye (used in post-goodbye phase) */
+function isThankYouOrGoodbye(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t || t.length < 2) return false;
+  return (
+    /^(thank you|thanks|thank you so much|thanks a lot)/i.test(t) ||
+    /^(no,?\s*)?(that'?s\s+all|nothing else|we'?re\s+done|goodbye|bye)$/i.test(t) ||
+    /^(that'?s\s+all|nothing else|we'?re\s+done|goodbye|bye)(\s|$)/i.test(t) ||
+    /goodbye|that'?s\s+all\s*\.?\s*$/i.test(t)
+  );
+}
 
 /** First missing field in order: coverage → deductible → copay → validity */
 function getFirstMissingField(data: ExtractedData): string | null {
@@ -156,6 +177,11 @@ interface StreamState {
   holdTimeoutId: ReturnType<typeof setTimeout> | null;
   /** Field we were asking when user put call on hold (or current field we are asking). Used so we remember and can accept e.g. "80$" or re-ask only when user says "what do you need?". */
   lastAskedField: string | null;
+  /** When on hold: only this interval runs (every 8s) to check for resume phrase; no other processing. */
+  resumeCheckInterval: ReturnType<typeof setInterval> | null;
+  /** After goodbye we stay for 10s; hang up at this time if no input. */
+  postGoodbyeUntil: number | null;
+  postGoodbyeTimeoutId: ReturnType<typeof setTimeout> | null;
 }
 
 @Injectable()
@@ -191,6 +217,9 @@ export class MediaStreamHandlerService {
       holdStartedAt: null,
       holdTimeoutId: null,
       lastAskedField: null,
+      resumeCheckInterval: null,
+      postGoodbyeUntil: null,
+      postGoodbyeTimeoutId: null,
     };
 
     const send = (obj: object) => {
@@ -219,8 +248,29 @@ export class MediaStreamHandlerService {
       }
     };
 
+    const doPostGoodbyeHangUp = () => {
+      if (state.callEnded) return;
+      state.callEnded = true;
+      state.postGoodbyeUntil = null;
+      if (state.postGoodbyeTimeoutId) {
+        clearTimeout(state.postGoodbyeTimeoutId);
+        state.postGoodbyeTimeoutId = null;
+      }
+      if (state.fallbackTimer) {
+        clearInterval(state.fallbackTimer);
+        state.fallbackTimer = null;
+      }
+      if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
+        this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
+          this.logger.warn('[MediaStream] Push on post-goodbye hang up failed', (e as Error)?.message));
+      }
+      const sid = state.callSid;
+      if (sid) this.twilioService.hangUp(sid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));
+    };
+
     const tryTriggerProcess = () => {
       if (state.processing || state.callEnded || !state.streamSid) return;
+      if (state.onHold) return;
       const now = Date.now();
       if (state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) return;
       const combined = Buffer.concat(state.buffer);
@@ -240,9 +290,13 @@ export class MediaStreamHandlerService {
       }
     };
 
-    const processBuffer = async (combined: Buffer) => {
+    const processBuffer = async (
+      combined: Buffer,
+      opts?: { resumeCheckOnly?: boolean },
+    ) => {
       if (state.processing || state.callEnded) return;
       state.processing = true;
+      const resumeCheckOnly = opts?.resumeCheckOnly === true;
 
       const tmpDir = os.tmpdir();
       const rawPath = path.join(tmpDir, `stream_${Date.now()}_${Math.random().toString(36).slice(2)}.raw`);
@@ -252,7 +306,23 @@ export class MediaStreamHandlerService {
         fs.writeFileSync(rawPath, combined);
         this.mulawRawToWav(rawPath, wavPath);
 
-        const { transcript } = await this.transcriptionService.transcribeAudio(wavPath);
+        let transcript: string;
+        try {
+          const result = await this.transcriptionService.transcribeAudio(
+            wavPath,
+            resumeCheckOnly ? { skipWhisperFallback: true } : undefined,
+          );
+          transcript = result?.transcript ?? '';
+        } catch (transcribeErr: any) {
+          this.logger.warn('[MediaStream] Transcription failed', transcribeErr?.message);
+          state.processing = false;
+          await speak(
+            state.lastAskedField
+              ? `Sorry, I had trouble hearing that. Can you tell me the ${state.lastAskedField} again?`
+              : 'Sorry, I had trouble hearing that. Could you say that again?',
+          ).catch(() => {});
+          return;
+        }
         const userSaid = (transcript ?? '').trim();
 
         // --- Hold / resume handling ---
@@ -264,6 +334,10 @@ export class MediaStreamHandlerService {
             if (state.holdTimeoutId) {
               clearTimeout(state.holdTimeoutId);
               state.holdTimeoutId = null;
+            }
+            if (state.resumeCheckInterval) {
+              clearInterval(state.resumeCheckInterval);
+              state.resumeCheckInterval = null;
             }
             this.logger.log('[MediaStream] User resumed from hold; transcript="' + userSaid + '" lastAskedField=' + (state.lastAskedField ?? 'none'));
             try {
@@ -298,6 +372,16 @@ export class MediaStreamHandlerService {
           state.onHold = true;
           state.holdStartedAt = Date.now();
           if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
+          state.resumeCheckInterval = setInterval(() => {
+            if (!state.onHold || state.callEnded) {
+              if (state.resumeCheckInterval) { clearInterval(state.resumeCheckInterval); state.resumeCheckInterval = null; }
+              return;
+            }
+            const combined = Buffer.concat(state.buffer);
+            state.buffer = [];
+            if (combined.length < MIN_SPEECH_BYTES) return;
+            processBuffer(combined, { resumeCheckOnly: true });
+          }, 8000);
           state.holdTimeoutId = setTimeout(() => {
             if (state.onHold && !state.callEnded) {
               this.logger.log('[MediaStream] Hold limit exceeded (9 min), ending call');
@@ -319,10 +403,48 @@ export class MediaStreamHandlerService {
           return;
         }
 
+        // --- Post-goodbye: stay on line ~10s for questions; if user says thank you / goodbye, say goodbye and hang up ---
+        if (state.postGoodbyeUntil != null) {
+          if (state.postGoodbyeTimeoutId) {
+            clearTimeout(state.postGoodbyeTimeoutId);
+            state.postGoodbyeTimeoutId = null;
+          }
+          const substantive =
+            userSaid.trim().length > 2 &&
+            !/^\[?inaudible\]?\.?$/i.test(userSaid) &&
+            !/^\.{2,}$/.test(userSaid);
+          if (!substantive) {
+            state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
+            state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
+            state.processing = false;
+            return;
+          }
+          if (isThankYouOrGoodbye(userSaid)) {
+            this.logger.log('[MediaStream] Post-goodbye: user said thank you / goodbye, ending call');
+            await speak('You\'re welcome. Thank you for your help. Goodbye.');
+            doPostGoodbyeHangUp();
+            state.processing = false;
+            return;
+          }
+          this.logger.log('[MediaStream] Post-goodbye: user asked a question');
+          try {
+            const reply = await this.aiService.replyToUser(userSaid);
+            await speak(reply);
+            await speak('Do you have any other questions? I\'ll stay on the line for a few more seconds.');
+          } catch (e) {
+            await speak('Sorry, I didn\'t catch that. Do you have any other questions? I\'ll stay on the line for a few more seconds.');
+          }
+          state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
+          state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
+          state.processing = false;
+          return;
+        }
+
         const noiseOrTooShort =
           userSaid.length <= 2 ||
           /^(you|uh|um|oh|ah|eh|hmm|mmm)$/i.test(userSaid);
-        const isIdleOrEmpty = userSaid.length === 0 || noiseOrTooShort;
+        const inaudibleLike = /^\[?inaudible\]?\.?$/i.test(userSaid) || /^\.{2,}$/.test(userSaid) || /^[\s\.\-]+$/.test(userSaid);
+        const isIdleOrEmpty = userSaid.length === 0 || noiseOrTooShort || inaudibleLike;
         const effectiveTranscript = isIdleOrEmpty
           ? 'User did not respond or was inaudible.'
           : userSaid;
@@ -361,31 +483,27 @@ export class MediaStreamHandlerService {
         // Only end when we have all four fields; never end with missing fields
         const shouldEndCall = allCollected;
         const goodbye = 'Thank you, I\'ve noted all the details I need. Thanks for your help.';
-        const toSpeak = shouldEndCall ? goodbye : ((nextMessage ?? '').trim() || 'Is there anything else you can share?');
-        if (!shouldEndCall && !(nextMessage ?? '').trim()) {
-          this.logger.warn('[MediaStream] AI returned empty nextMessage, using fallback');
+        let toSpeak = (nextMessage ?? '').trim();
+        const isGenericFallback = /^(what else|is there anything else)/i.test(toSpeak);
+        if (shouldEndCall) {
+          toSpeak = goodbye;
+          // Will enter post-goodbye below: ask "Do you have any questions?" and stay 10s
+        } else if (!toSpeak || (isGenericFallback && state.lastAskedField)) {
+          toSpeak = state.lastAskedField
+            ? `I want to know the ${state.lastAskedField}.`
+            : (toSpeak || 'Is there anything else you can share?');
+          if (!(nextMessage ?? '').trim() || isGenericFallback) {
+            this.logger.warn('[MediaStream] AI returned empty or generic nextMessage, using fallback');
+          }
         }
         await speak(toSpeak);
 
         if (shouldEndCall) {
-          state.callEnded = true;
-          if (state.fallbackTimer) {
-            clearInterval(state.fallbackTimer);
-            state.fallbackTimer = null;
-          }
-          if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
-            this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
-              this.logger.warn('[MediaStream] Push on endCall failed', (e as Error)?.message),
-            );
-          }
-          const callSidToHangUp = state.callSid;
-          setTimeout(() => {
-            if (callSidToHangUp) {
-              this.twilioService.hangUp(callSidToHangUp).catch((e) =>
-                this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message),
-              );
-            }
-          }, 2500);
+          // Post-goodbye: ask if they have questions and stay on line for 10 seconds
+          await speak('Do you have any questions? I\'ll stay on the line for about 10 seconds in case you\'d like to ask anything.');
+          state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
+          state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
+          startFallbackTimer(); // keep processing buffer so we hear questions or thank you
         }
       } catch (err: any) {
         this.logger.warn('[MediaStream] Process buffer failed', err?.message);
@@ -434,6 +552,7 @@ export class MediaStreamHandlerService {
               }
             }
             if (!state.patientInfo) state.patientInfo = STATIC_PATIENT_INFO;
+            state.lastSpeakTime = Date.now();
             await speak(CONVERSATION_GREETING);
           } catch (e) {
             this.logger.warn('[MediaStream] Greeting failed', (e as Error)?.message);
@@ -460,6 +579,10 @@ export class MediaStreamHandlerService {
           clearTimeout(state.holdTimeoutId);
           state.holdTimeoutId = null;
         }
+        if (state.postGoodbyeTimeoutId) {
+          clearTimeout(state.postGoodbyeTimeoutId);
+          state.postGoodbyeTimeoutId = null;
+        }
         this.logger.log('[MediaStream] Stop');
         if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
           this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
@@ -477,6 +600,10 @@ export class MediaStreamHandlerService {
       if (state.holdTimeoutId) {
         clearTimeout(state.holdTimeoutId);
         state.holdTimeoutId = null;
+      }
+      if (state.postGoodbyeTimeoutId) {
+        clearTimeout(state.postGoodbyeTimeoutId);
+        state.postGoodbyeTimeoutId = null;
       }
     });
 
