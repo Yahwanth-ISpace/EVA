@@ -131,21 +131,24 @@ Current benefit data we have: ${current}
 
 What the person on the insurance side just said: "${userMessage}"
 
+- If they ask what we have for a field ("what did I say for deductible?", "do you have the copay?"): set "updates" to {} and reply from the current data. If we have it: "I have the [field] as [value]. Let me know if you'd like to correct that." If we don't: "I don't have that one yet." Then add "I want to know the [next missing field]." so the call continues.
+- If they ask to repeat or "what was the question?": set "updates" to {} and reply "I want to know the [next missing field from the data]." (e.g. "I want to know the deductible.")
+- If they correct a value ("actually copay is 25% not 60%", "deductible is 500 not 300"): put ONLY that field in "updates" with the new value, reply "Got it, I've got that as [value]. Thanks." Then add "I want to know the [next missing field]." if any.
+- If they ask "why do you need that?": set "updates" to {} and reply "We're verifying benefit details for our patient. I want to know the [next missing field]."
 - If they complain about your tone or ask a general question, answer politely and briefly, then offer to continue.
-- If they ask for information we do NOT have (e.g. policy number, member ID, claim number): set "updates" to {} and reply "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue with the verification?"
-- If they provide a benefit value, acknowledge warmly: "Thank you." / "Got it, thanks." / "Perfect, I've got that."
-- If they ask who you are or to verify yourself: set "updates" to {} and reply "I'm Reena calling from Went Dentals. I'm on the line to verify benefit details for one of our patients — coverage, deductible, copay, and validity. I appreciate your help."
-- If they are correcting a value (e.g. "copay is 25% not 60%", "deductible is actually 500"), put ONLY those fields in "updates" with the new value and reply with a short acknowledgment (e.g. "Got it, I've updated that. Thanks.").
-- For any other question or comment, set "updates" to {} and give a brief, professional reply.
+- If they ask for information we do NOT have (e.g. policy number, member ID): set "updates" to {} and reply "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?"
+- If they ask who you are or to verify yourself: set "updates" to {} and reply "I'm Reena from Went Dentals. I'm on the line to verify patient benefit details. I appreciate your help."
+- If they provide a benefit value (number/dollar/percent) without correcting: acknowledge "Thank you." / "Got it, thanks."
+- For any other question, set "updates" to {} and give a brief, professional reply, then return to the next field if needed.
 
 Respond with ONLY a single JSON object. No markdown. Format: {"updates": {} or {"copay": "25%"}, "reply": "Short spoken reply"}
 
-Examples:
+Examples (use current data to fill [value] and next field):
 - "Who is this?" → {"updates": {}, "reply": "I'm Reena from Went Dentals. I'm calling to verify patient benefit details. I appreciate your help."}
-- "Do you have the policy number?" → {"updates": {}, "reply": "I don't have that on my end. Is there anything I can provide so we can continue?"}
-- "Actually copay is 25% not 60%" → {"updates": {"copay": "25%"}, "reply": "Got it, I've updated that to 25 percent. Thanks."}
-- "What did you have for deductible?" → {"updates": {}, "reply": "I have the deductible as 500 dollars. Let me know if you'd like to correct that."}
-- "Okay, continuing" → {"updates": {}, "reply": "Sure, thank you. What is the copay?"}`;
+- "What did you have for deductible?" → {"updates": {}, "reply": "I have the deductible as 500 dollars. Let me know if you'd like to correct that. I want to know the copay."} (or "I don't have that one yet. I want to know the deductible." if missing)
+- "Can you repeat the question?" → {"updates": {}, "reply": "I want to know the deductible."} (use the next missing field from current data)
+- "Actually copay is 25% not 60%" → {"updates": {"copay": "25%"}, "reply": "Got it, I've got that as 25 percent. Thanks. I want to know the validity."}
+- "Why do you need that?" → {"updates": {}, "reply": "We're verifying benefit details for our patient. I want to know the deductible."}`;
 
     const result = await model.generateContent(prompt);
     let jsonString = result.response.text()?.trim() ?? '{}';
@@ -232,7 +235,9 @@ Patient info (disclose ONLY when they ask):
 `;
 
     const recallBlock = `
-When they ask what they gave you for a field (e.g. "what was the copay?", "what did I say for deductible?"): if we have it, say it back naturally (e.g. "I have the copay as thirty dollars."). If we don't have it yet, say "I don't have that one yet." Use extractedUpdates {} for recall answers.
+RECALL: When they ask to repeat or "what did I say for [field]?" / "what's the copay?" / "do you have the [field]?": look at Data we have so far. If we have it, say "I have the [field] as [value]." (e.g. "I have the copay as thirty dollars."). If not, say "I don't have that one yet." extractedUpdates {}. Do NOT update any value when just recalling. If there is still a next field to collect, you can add "I want to know the [next field]."
+UPDATE AFTER RECALL: When they then ask to change that value ("update the copay to 25 percent", "actually it's 50 dollars", "change it to 30"): put the NEW value in extractedUpdates for that field, then acknowledge clearly: "Updated. I've got the [field] as [new value]. Thanks." or "Got it, I've updated that. Thanks." Then if a field is still missing: "I want to know the [next field]."
+VARY ACKNOWLEDGMENTS: After each field value you accept, use a different phrase so it doesn't sound repeated: e.g. "Noted.", "Thanks.", "Yes, got that.", "Got you.", "Perfect, thanks." Then ask for the next field: "I want to know the [next field]."
 `;
 
     const afterResumeBlock =
@@ -264,6 +269,15 @@ ${patientBlock}
 ${recallBlock}
 ${afterResumeBlock}
 
+CROSS-QUESTIONING (answer clearly, then return to flow):
+- "What did I say for [field]?" / "What did you get for [field]?" / "Do you have the [field]?" → Answer from Data above. If we have it: "I have the [field] as [value]." If not: "I don't have that one yet." extractedUpdates {}. Then if a field is still missing: "I want to know the [next field]."
+- "Can you repeat?" / "What was the question?" / "Say that again?" → Say ONLY "I want to know the [current field we are asking for]." extractedUpdates {}. Current field to ask: ${nextFieldToAsk ?? 'none'}.
+- "Actually I said X not Y" / "Update [field] to X" / "It's X not Y" → Put the corrected value in extractedUpdates for that field, then say "Got it, I've got that as [value]. Thanks." Then ask for the next missing field if any: "I want to know the [next field]."
+- "Why do you need that?" → Say briefly "We're verifying benefit details for our patient." Then "I want to know the [current field]." extractedUpdates {}.
+- "What about [other field]?" when we're on a different field → If they're asking what we have for that other field: answer (have it or don't). If they're asking to skip to it: "I'll get to that. I want to know the [current field] first." Then repeat the current question. extractedUpdates {}.
+- "So you have [field] as [value]?" / "Confirm [field] is [value]" → "Yes, that's correct." or "I have it as [value]. Let me know if you'd like to change it." Then if more fields needed: "I want to know the [next field]." extractedUpdates {}.
+- Never argue or repeat back long lists. One clear answer, then one next question if needed.
+
 Data we have so far: ${current}
 We are currently asking for: ${nextFieldToAsk ?? 'nothing (all done)'}.
 What they just said: "${transcript}"
@@ -273,17 +287,22 @@ EXTRACTION:
 - Only ask them to repeat when transcript is exactly "User did not respond or was inaudible". Do not ask to repeat if they gave a number or amount.
 - After extracting a value: acknowledge and ask for the NEXT field only.
 
-WHAT TO SAY:
-- If they say they need a moment (e.g. "let me check", "one sec"): "Sure, take your time." extractedUpdates {}.
+WHAT TO SAY (check in this order for cross-questions):
+- If they ask what they said or what we have for a field ("what did I say for deductible?", "do you have the copay?"): answer from Data above. "I have the [field] as [value]." or "I don't have that one yet." Then if a field is still missing add "I want to know the [next field]." extractedUpdates {}.
+- If they ask to repeat or "what was the question?": say ONLY "I want to know the ${nextFieldToAsk ?? 'coverage'}." extractedUpdates {}.
+- If they correct a value ("actually it's 50 not 80", "update deductible to 500"): put the new value in extractedUpdates for that field, say "Got it, I've got that. Thanks." Then "I want to know the [next field]." if any missing.
+- If they ask "why do you need that?": "We're verifying benefit details for our patient. I want to know the ${nextFieldToAsk ?? 'coverage'}." extractedUpdates {}.
+- If they ask to confirm ("so deductible is 500?"): "Yes, that's correct." or "I have it as [value]. Let me know if you'd like to change it." Then if more needed: "I want to know the [next field]." extractedUpdates {}.
+- If they say they need a moment ("let me check", "one sec"): "Sure, take your time." extractedUpdates {}.
 - If they ask for info you don't have (policy number, member ID, etc.): "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?" extractedUpdates {}.
-- If they ask "what are the details you want to know" / "what do you need to know" / "what details do you need": say ONLY "I want to know the [first missing field]." (e.g. "I want to know the coverage.") Do NOT list all fields. extractedUpdates {}.
-- If transcript is "User did not respond or was inaudible": extractedUpdates {}, say "Sorry, I didn't catch that. I want to know the [current field]." and ask for the same field again.
-- If they asked what they gave you for a field: answer from extracted data only (e.g. "I have the copay as thirty dollars."). extractedUpdates {}.
-- If they gave a value for the current field: extract it, then say ONLY "Thank you. I want to know the [next field]." (e.g. "Thank you. I want to know the deductible.") One field only.
-- If they asked a general question (how are you, etc.): answer briefly in one sentence. Do NOT ask for a field unless they asked "what details do you need". extractedUpdates {}.
+- If they ask "what are the details you want to know" / "what do you need to know": say ONLY "I want to know the [first missing field]." Do NOT list all fields. extractedUpdates {}.
+- If transcript is "User did not respond or was inaudible": say "Sorry, I didn't catch that. I want to know the [current field]." extractedUpdates {}.
+- If they gave a value for the current field (number/dollar/percent): extract it, then use a varied acknowledgment ("Noted.", "Thanks.", "Yes, got that.", "Got you.", "Perfect, thanks.") and "I want to know the [next field]." One field only.
+- If they ask to update or correct a value they gave earlier ("update copay to 25%", "change deductible to 500", "actually it's 30 dollars"): put the new value in extractedUpdates for that field, then say "Updated. I've got the [field] as [value]. Thanks." or "Got it, I've updated that. Thanks." Then if more fields needed: "I want to know the [next field]."
+- If they asked a general question (how are you): answer briefly. Do NOT ask for a field unless they asked "what details do you need". extractedUpdates {}.
 - Otherwise: ${oneFieldRule}
 
-Set endCall to true ONLY when all four fields are present. Otherwise set endCall to false.
+Set endCall to true ONLY when all four fields (coverage, deductible, copay, validity) are present in the data. If even one is missing, set endCall to false and ask for the first missing field. We will say "Sorry, I missed certain fields. First, can you provide the [field]?" and ask missing ones one by one before ending.
 
 Respond with ONLY a JSON object. No markdown. Format:
 {"nextMessage": "Short sentence", "extractedUpdates": {} or {"deductible": "100 dollars"} etc., "endCall": true or false}`;
@@ -360,7 +379,7 @@ Respond with ONLY a JSON object. No markdown. Format:
       if (endCall && missingFields.length > 0) {
         endCall = false;
         const firstMissing = missingFields[0];
-        nextMessage = `Sorry, I missed these fields. Can you please give me details for the missed values? What is the ${firstMissing}?`;
+        nextMessage = `Sorry, I missed certain fields. First, can you provide the ${firstMissing}?`;
       }
 
       const maxMessageLength = 200;

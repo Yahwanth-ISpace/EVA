@@ -87,13 +87,14 @@ function isHoldPhrase(text: string): boolean {
   );
 }
 
-/** Detect if user is saying they are back from hold (e.g. thanks for waiting, are you there/online) */
+/** Detect if user is saying they are back from hold. When matched, we stop hold, speak ack, and transcription + full conversation flow resume from the next user message. */
 function isResumePhrase(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (!t) return false;
   return (
     /i'?m\s+back/i.test(t) ||
     /(?:thank you|thanks)\s+for\s+(?:waiting|holding)/i.test(t) ||
+    /thanks?\s+for\s+staying\s+on\s+hold/i.test(t) ||
     /thanks?\s+for\s+waiting\s+on\s+(?:the\s+)?call/i.test(t) ||
     /thanks?\s+for\s+waiting\s+on\s+hold/i.test(t) ||
     /(?:we'?re\s+)?back\s+on\s+(?:the\s+)?line/i.test(t) ||
@@ -357,8 +358,9 @@ export class MediaStreamHandlerService {
           hasValue(state.extractedData.deductible) &&
           hasValue(state.extractedData.copay) &&
           hasValue(state.extractedData.validity);
-        const shouldEndCall = endCall || allCollected;
-        const goodbye = 'That\'s everything I need. Thank you so much for your help.';
+        // Only end when we have all four fields; never end with missing fields
+        const shouldEndCall = allCollected;
+        const goodbye = 'Thank you, I\'ve noted all the details I need. Thanks for your help.';
         const toSpeak = shouldEndCall ? goodbye : ((nextMessage ?? '').trim() || 'Is there anything else you can share?');
         if (!shouldEndCall && !(nextMessage ?? '').trim()) {
           this.logger.warn('[MediaStream] AI returned empty nextMessage, using fallback');
