@@ -8,6 +8,7 @@ import {
 } from "react-router-dom";
 
 import AppointmentForm from "./pages/AppointmentForm";
+import AppointmentDetail from "./pages/AppointmentDetail";
 import Dashboard from "./pages/Dashboard";
 import ErrorPage from "./pages/ErrorPage";
 import InsuranceDetails from "./pages/InsuranceDetails";
@@ -59,6 +60,14 @@ function App() {
               element={
                 <ProtectedRoute allowedRoles={["ADMIN", "PAYEE"]}>
                   <AppointmentForm />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/appointments/:id"
+              element={
+                <ProtectedRoute allowedRoles={["ADMIN", "PAYEE"]}>
+                  <AppointmentDetail />
                 </ProtectedRoute>
               }
             />

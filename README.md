@@ -1,6 +1,6 @@
-# 🦷 CovrAi: AI-Powered Dental Insurance Verification System
+# 🦷 EVA: AI-Powered Dental Insurance Verification System
 
-CovrAi is a monorepo that automates the process of verifying dental insurance coverage using voice calls and AI. The system transcribes phone call audio, extracts insurance details using an LLM (e.g., Mistral via Ollama), and stores the results for each patient.
+EVA is a monorepo that automates the process of verifying dental insurance coverage using voice calls and AI. The system transcribes phone call audio, extracts insurance details using an LLM (e.g., Mistral via Ollama), and stores the results for each patient.
 
 ## 🏗️ Monorepo Structure
 
@@ -82,7 +82,7 @@ npm run dev
 
 ## 🧪 Testing with Postman
 
-Use the provided `CovrAi.postman_collection.json` file to test all endpoints including:
+Use the provided `EVA.postman_collection.json` file to test all endpoints including:
 
 - `POST /auth/login` & `/auth/register`
 - `POST /verification/from-audio/:patientId`

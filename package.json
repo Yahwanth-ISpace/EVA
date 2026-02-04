@@ -1,5 +1,5 @@
 {
-  "name": "covrai",
+  "name": "eva",
   "version": "1.0.0",
   "scripts": {
     "start:backend": "cd apps/backend && npm run start:dev",

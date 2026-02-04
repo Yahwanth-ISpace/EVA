@@ -42,7 +42,13 @@ export class TranscriptionService {
     const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
     const skipWhisper = options?.skipWhisperFallback === true;
 
-    if (apiKey) {
+    // ElevenLabs often returns empty for very short audio (< ~0.5 sec). Skip it for tiny files to avoid "empty → Whisper" and delay.
+    const stat = fs.statSync(filePath);
+    const fileSizeBytes = stat.size;
+    const minBytesForElevenLabs = 6_000; // ~0.75 sec at 8kHz mulaw; below this use Whisper directly or return empty
+    const useElevenLabs = apiKey && fileSizeBytes >= minBytesForElevenLabs;
+
+    if (useElevenLabs) {
       try {
         const transcript = await this.transcribeWithElevenLabs(filePath, apiKey);
         if (transcript != null && transcript.trim().length > 0) {
@@ -66,7 +72,11 @@ export class TranscriptionService {
       }
     } else {
       if (skipWhisper) return { transcript: '' };
-      this.logger.debug('ELEVENLABS_API_KEY not set, using Whisper');
+      if (apiKey && fileSizeBytes < minBytesForElevenLabs) {
+        this.logger.debug('Audio too short for ElevenLabs (' + fileSizeBytes + ' bytes), using Whisper');
+      } else if (!apiKey) {
+        this.logger.debug('ELEVENLABS_API_KEY not set, using Whisper');
+      }
     }
 
     return this.transcribeWithWhisper(filePath);

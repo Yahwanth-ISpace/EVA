@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
 
@@ -6,131 +5,96 @@ import {
   deleteAppointment,
   getAppointments,
 } from "../redux/actions/appointmentsActions";
-import {
-  deleteVerification,
-  getVerifications,
-} from "../redux/actions/verificationActions";
 import type { AppDispatch, RootState } from "../redux/store";
-import AppointmentCard from "./AppointementCard";
-import VerificationCard from "./VerificationCard";
+import type { AppointmentRecord } from "../redux/types/appointmentsTypes";
+import type { VerificationRecord } from "../redux/types/verificationTypes";
+import AppointmentCardUnified from "./AppointmentCardUnified";
 
 const SkeletonCard = () => (
-  <div className="w-[373px] h-[260px] max-w-sm shadow-lg animate-pulse rounded-2xl">
-    <div className="bg-gray-300 h-[92px] w-full rounded-t-2xl"></div>
-    <div className="bg-white flex-1 p-5 space-y-4">
-      <div className="h-4 bg-gray-300 rounded w-3/4"></div>
-      <div className="h-4 bg-gray-300 rounded w-1/2"></div>
-      <div className="h-4 bg-gray-300 rounded w-2/3"></div>
-      <div className="h-4 bg-gray-300 rounded w-1/3"></div>
+  <div className="w-full max-w-sm rounded-2xl overflow-hidden bg-slate-50 border border-slate-100 animate-pulse min-h-[160px] flex flex-col relative shadow-[0_1px_3px_0_rgba(0,0,0,0.08),0_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <div className="absolute top-4 right-4 w-24 h-6 bg-slate-200 rounded-full" />
+    <div className="p-5 pt-10 flex-1">
+      <div className="mt-3 h-6 bg-slate-200 rounded-md w-4/5" />
+      <div className="mt-3 space-y-2">
+        <div className="h-4 bg-slate-200 rounded w-1/2" />
+        <div className="h-4 bg-slate-200 rounded w-2/3" />
+      </div>
     </div>
+    <div className="absolute bottom-4 right-4 w-9 h-9 bg-slate-200 rounded-lg" />
   </div>
 );
 
+function getVerificationForPayee(
+  verifications: VerificationRecord[],
+  payeeId: string,
+): VerificationRecord | undefined {
+  return verifications.find((v) => v.payee?.id === payeeId);
+}
+
 export default function PatientTabs() {
-  const [activeTab, setActiveTab] = useState<"appointments" | "verifications">(
-    "appointments"
-  );
   const navigate = useNavigate();
   const dispatch = useDispatch<AppDispatch>();
 
-  // Select state from Redux
   const { appointments, loading: loadingAppointments } = useSelector(
-    (state: RootState) => state.appointmentsState
+    (state: RootState) => state.appointmentsState,
   );
   const { verifications, loading: loadingVerifications } = useSelector(
-    (state: RootState) => state.verificationsState
+    (state: RootState) => state.verificationsState,
   );
 
-  // Handlers
-  const handleEdit = (id: string, type: "appointment" | "verification") => {
-    if (type === "verification") {
-      navigate(`/insurance/${id}/edit`);
-    } else {
-      navigate(`/appointments/${id}/edit`);
-    }
+  const loading = loadingAppointments || loadingVerifications;
+
+  const handleOpenDetails = (appointmentId: string) => {
+    navigate(`/appointments/${appointmentId}`);
   };
 
-  const handleDelete = (id: string, type: "appointment" | "verification") => {
-    const confirmed = window.confirm(
-      "Are you sure you want to delete this record?"
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    if (type === "verification") {
-      dispatch(deleteVerification(id));
-      dispatch(getVerifications());
-    } else {
-      dispatch(deleteAppointment(id));
-      dispatch(getAppointments());
-    }
+  const handleDelete = (appointmentId: string) => {
+    dispatch(deleteAppointment(appointmentId));
+    dispatch(getAppointments());
   };
-
-  const loading =
-    activeTab === "appointments" ? loadingAppointments : loadingVerifications;
-
-  const data = activeTab === "appointments" ? appointments : verifications;
 
   return (
-    <div className="flex flex-col gap-3 relative">
-      {/* Tabs */}
-      <div className="flex border-b border-gray-200 ">
-        <button
-          className={`px-4 py-2 font-medium ${
-            activeTab === "appointments"
-              ? "border-b-2 border-blue-500 text-blue-600"
-              : "text-gray-500"
-          }`}
-          onClick={() => setActiveTab("appointments")}
-        >
+    <div className="flex flex-col relative flex-1 min-h-0 overflow-hidden">
+      <div className="shrink-0 flex items-center gap-3 mb-1">
+        <h2 className="text-xl font-semibold text-slate-800 tracking-tight">
           Appointments
-        </button>
-        <button
-          className={`px-4 py-2 font-medium ${
-            activeTab === "verifications"
-              ? "border-b-2 border-blue-500 text-blue-600"
-              : "text-gray-500"
-          }`}
-          onClick={() => setActiveTab("verifications")}
-        >
-          Verifications
-        </button>
+        </h2>
       </div>
-
-      {/* Content */}
-      <div className="content-wrapper">
+      <div className="shrink-0 h-px bg-slate-200 my-4" role="presentation" />
+      <div className="content-wrapper flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 custom-scrollbar">
         {loading ? (
-          <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 w-full h-[500px] overflow-x-hidden overflow-y-auto pr-5 custom-scrollbar py-3 px-1">
+          <div className="grid gap-5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 w-full">
             {Array.from({ length: 6 }).map((_, idx) => (
               <SkeletonCard key={idx} />
             ))}
           </div>
-        ) : data.length === 0 ? (
-          <p className="text-center text-gray-500 mt-10">
-            {activeTab === "appointments"
-              ? "No appointments found."
-              : "No verifications found."}
-          </p>
+        ) : appointments.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 px-4 rounded-xl bg-slate-50 border border-slate-100">
+            <p className="text-slate-500 text-center text-sm">
+              No appointments yet.
+            </p>
+            <p className="text-slate-400 text-center text-xs mt-1">
+              New appointments will appear here.
+            </p>
+          </div>
         ) : (
-          <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 max-h-[500px] flex-1 overflow-x-hidden overflow-y-auto pr-2 custom-scrollbar py-3 px-1">
-            {activeTab === "appointments"
-              ? appointments.map((appt) => (
-                  <AppointmentCard
-                    key={appt.id}
-                    appt={appt}
-                    handleEdit={handleEdit}
-                    handleDelete={handleDelete}
-                  />
-                ))
-              : verifications.map((ver) => (
-                  <VerificationCard
-                    key={ver.id}
-                    record={ver}
-                    handleEdit={handleEdit}
-                    handleDelete={handleDelete}
-                  />
-                ))}
+          <div className="grid gap-5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 w-full">
+            {appointments.map((appt: AppointmentRecord) => {
+              const verification = getVerificationForPayee(
+                verifications,
+                appt.payeeId,
+              );
+              const isVerified = Boolean(verification);
+              return (
+                <AppointmentCardUnified
+                  key={appt.id}
+                  appt={appt}
+                  isVerified={isVerified}
+                  onOpenDetails={handleOpenDetails}
+                  onDelete={handleDelete}
+                />
+              );
+            })}
           </div>
         )}
       </div>

@@ -31,7 +31,7 @@ export default function Navbar() {
           </div>
           <div className="titleWrapper flex flex-col text-center">
             <h1 className="text-3xl font-bold text-gray-900 pr-5 text-center">
-              CovrAi
+              EVA
             </h1>
             {/* <hr className="text-gray-400" />
                 <h3 className="text-xs text-gray-500 font-mono mt-1 tracking-widest">

@@ -39,7 +39,7 @@ export default function AppointmentForm() {
   const { providers } = useSelector((state: RootState) => state.providersState);
   const { offices } = useSelector((state: RootState) => state.officesState);
   const { loading, error } = useSelector(
-    (state: RootState) => state.appointmentsState
+    (state: RootState) => state.appointmentsState,
   );
 
   const [step, setStep] = useState(1);
@@ -100,7 +100,7 @@ export default function AppointmentForm() {
   };
 
   const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
   ) => {
     const { name, value } = e.target;
     if (name === "providerId") {
@@ -124,7 +124,7 @@ export default function AppointmentForm() {
     setStatus("");
     try {
       const combinedDateTime = new Date(
-        `${appointmentDate}T${appointmentTime}`
+        `${appointmentDate}T${appointmentTime}`,
       ).toISOString();
 
       const { name, dob, ...payloadRest } = formData;
@@ -149,9 +149,9 @@ export default function AppointmentForm() {
   };
 
   return (
-    <div className="PatientForm">
+    <div className="PatientForm pt-5">
       <Navbar />
-      <div className="section-wrapper flex flex-col gap-y-3 mt-5">
+      <div className="section-wrapper flex flex-col gap-y-3 mt-5 text-black">
         <div className="buttonWrapper max-w-7xl w-full mx-auto px-6">
           <button
             type="button"
@@ -251,7 +251,7 @@ export default function AppointmentForm() {
                       {offices
                         .filter(
                           (office: Office) =>
-                            office.providerId === formData.providerId
+                            office.providerId === formData.providerId,
                         )
                         .map((office: Office) => (
                           <option key={office.id} value={office.id}>
