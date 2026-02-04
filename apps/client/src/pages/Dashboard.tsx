@@ -22,18 +22,16 @@ export default function Dashboard() {
   }, [dispatch]);
 
   return (
-    <div className="Dashboard">
-      {/* Header */}
+    <div className="Dashboard flex flex-col h-screen max-h-screen bg-slate-50/50 overflow-hidden pt-5">
       <Navbar />
-      <div className="section-wrapper flex flex-col gap-y-3 mt-5">
-        <div className="flex justify-between items-center px-6">
-          <h2 className="text-2xl font-mono text-blue-700 tracking-[0.2em]">
+      <div className="section-wrapper flex flex-col flex-1 min-h-0 mt-6">
+        <div className="flex justify-between items-center px-2 sm:px-4 shrink-0">
+          <h1 className="text-2xl font-semibold text-blue-600 tracking-widest">
             Dashboard
-          </h2>
+          </h1>
         </div>
 
-        {/* Body */}
-        <Container className="pb-8">
+        <Container className="pb-8 mt-5 flex-1 min-h-0">
           <Role role="ADMIN">
             <AdminInsuranceTable
               records={verificationData}

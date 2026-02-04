@@ -17,7 +17,7 @@ async function bootstrap() {
 
   if (!isFfmpegAvailable()) {
     console.warn(
-      '[CovrAi] ffmpeg not found. Media stream (TTS + transcription) will fail until ffmpeg is installed and on PATH. ' +
+      '[EVA] ffmpeg not found. Media stream (TTS + transcription) will fail until ffmpeg is installed and on PATH. ' +
         'Install: https://ffmpeg.org/download.html (Windows: choco install ffmpeg; macOS: brew install ffmpeg; Linux: apt install ffmpeg).',
     );
   }

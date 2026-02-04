@@ -25,10 +25,12 @@ import { VerificationService } from '../verification/verification.service';
 import { TwilioService } from './twilio.service';
 import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
-/** Minimum speech bytes before we consider processing (~0.25 sec at 8kHz mulaw) — smaller = faster trigger */
-const MIN_SPEECH_BYTES = 2_000;
+/** Minimum speech bytes before we consider processing (~1 sec at 8kHz mulaw) — longer = fewer empty transcripts from ElevenLabs */
+const MIN_SPEECH_BYTES = 8_000;
 /** Tail bytes to check for silence (~0.25 sec). Smaller = process sooner after user stops. */
 const SILENCE_TAIL_BYTES = 2_000;
+/** When transcript is empty, only say "please repeat" if we had at least this much audio (~4 sec). Otherwise skip speaking to avoid cutting off the user. */
+const MIN_BYTES_BEFORE_REPEAT = 32_000;
 /** Fraction of tail bytes that must be "silent" to trigger (0–1) */
 const SILENCE_RATIO_THRESHOLD = 0.85;
 /** Max buffer before we process anyway (~8 sec) — smaller chunks = faster ElevenLabs response */
@@ -315,12 +317,18 @@ export class MediaStreamHandlerService {
     };
 
     const pushToVerificationService = () => {
-      if (!state.payeeId) return;
+      if (!state.payeeId) {
+        this.logger.warn('[MediaStream] Verification NOT saved: payeeId is missing. Pass payeeId in the media-stream URL (e.g. ?payeeId=...) so verification can be stored.');
+        return;
+      }
       const hasAny = state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity;
-      if (!hasAny) return;
-      this.logger.log('[MediaStream] Saving verification (call ended): payeeId=' + state.payeeId + ' extracted=' + JSON.stringify(state.extractedData));
+      if (!hasAny) {
+        this.logger.log('[MediaStream] Verification not saved: no extracted data.');
+        return;
+      }
+      this.logger.log('[MediaStream] Saving verification to DB: payeeId=' + state.payeeId + ' extracted=' + JSON.stringify(state.extractedData));
       this.aiService.saveCallVerification(state.payeeId, state.extractedData).then(() => {
-        this.logger.log('[MediaStream] Verification saved for payeeId=' + state.payeeId);
+        this.logger.log('[MediaStream] Verification saved successfully for payeeId=' + state.payeeId);
       }).catch((e) =>
         this.logger.warn('[MediaStream] Save verification failed', (e as Error)?.message));
     };
@@ -512,10 +520,17 @@ export class MediaStreamHandlerService {
           /^(you|uh|um|oh|ah|eh|hmm|mmm)$/i.test(userSaid);
         const inaudibleLike = /^\[?inaudible\]?\.?$/i.test(userSaid) || /^\.{2,}$/.test(userSaid) || /^[\s\.\-]+$/.test(userSaid);
         const isIdleOrEmpty = userSaid.length === 0 || noiseOrTooShort || inaudibleLike;
+        // When transcript is empty but we had very little audio, skip saying "repeat" so we don't cut off the user (next chunk may have speech).
+        const skipRepeatForShortAudio = userSaid.length === 0 && combined.length < MIN_BYTES_BEFORE_REPEAT;
         const effectiveTranscript = isIdleOrEmpty
           ? 'User did not respond or was inaudible.'
           : userSaid;
 
+        if (skipRepeatForShortAudio) {
+          this.logger.log('[MediaStream] Empty transcript but short audio (' + combined.length + ' bytes), skipping repeat to avoid cutting off user');
+          state.processing = false;
+          return;
+        }
         if (userSaid.length === 0) {
           this.logger.log('[MediaStream] No speech detected, prompting repeat');
         } else if (noiseOrTooShort) {
@@ -677,7 +692,10 @@ export class MediaStreamHandlerService {
         }
         this.logger.log('[MediaStream] Stop');
         if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
+          this.logger.log('[MediaStream] Call stopped with extracted data — pushing to verification DB.');
           pushToVerificationService();
+        } else if (!state.payeeId) {
+          this.logger.warn('[MediaStream] Call stopped but payeeId missing — verification NOT saved. Use ?payeeId=... in stream URL.');
         }
       }
     });

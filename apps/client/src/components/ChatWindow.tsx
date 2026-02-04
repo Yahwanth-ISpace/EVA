@@ -94,7 +94,7 @@ const ChatWindow: React.FC<Props> = ({ payerId, userId, onClose }) => {
       <div className="flex flex-col w-full h-full bg-white rounded shadow-lg">
         {/* Header */}
         <div className="flex justify-between items-center px-6 py-3 border-b bg-gray-50">
-          <h2 className="text-xl font-semibold text-blue-700">CovrAi</h2>
+          <h2 className="text-xl font-semibold text-blue-700">EVA</h2>
           <div className="flex space-x-4 items-center">
             <button
               onClick={handleClearHistory}

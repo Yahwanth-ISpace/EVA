@@ -254,14 +254,16 @@ export class VerificationService {
     }));
 
     if (existingVerification) {
-      return this.prisma.verification.update({
+      const updated = await this.prisma.verification.update({
         where: { id: existingVerification.id },
         data: updateData,
         include: { payee: true },
       });
+      this.logger.log('Verification DB updated: id=' + updated.id + ' payeeId=' + payeeId);
+      return updated;
     }
 
-    return this.prisma.verification.create({
+    const created = await this.prisma.verification.create({
       data: {
         payeeId,
         coverage: extracted.coverage ?? null,
@@ -272,6 +274,8 @@ export class VerificationService {
       },
       include: { payee: true },
     });
+    this.logger.log('Verification DB created: id=' + created.id + ' payeeId=' + payeeId);
+    return created;
   }
 
   async findAll(user: { userId: string; role: string }) {
