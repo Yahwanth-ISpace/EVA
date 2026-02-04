@@ -2,6 +2,7 @@ import { Injectable, HttpException, Logger } from '@nestjs/common';
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
+import type { Readable } from 'stream';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
@@ -61,6 +62,45 @@ export class ElevenLabsService {
       },
     );
     return Buffer.from(response.data);
+  }
+
+  /**
+   * Synthesize text to speech with chunked streaming. Returns a Node.js Readable stream of MP3 bytes
+   * so the consumer can start playing audio before the full response is received (faster time-to-first-audio).
+   */
+  async synthesizeToStream(text: string): Promise<Readable> {
+    if (!this.apiKey || !this.voiceId) {
+      throw new HttpException(
+        'ElevenLabs API key or Voice ID not configured',
+        500,
+      );
+    }
+    if (!text || text.trim().length === 0) {
+      throw new HttpException('Text cannot be empty', 400);
+    }
+    const response = await axios.post(
+      `https://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}/stream`,
+      {
+        text,
+        model_id: this.modelId,
+        voice_settings: {
+          stability: 0.6,
+          similarity_boost: 0.5,
+          style: 0.0,
+          use_speaker_boost: true,
+        },
+        optimize_streaming_latency: 4,
+      },
+      {
+        headers: {
+          'xi-api-key': this.apiKey,
+          'Content-Type': 'application/json',
+        },
+        responseType: 'stream',
+        timeout: 60000,
+      },
+    );
+    return response.data as Readable;
   }
 
   /**

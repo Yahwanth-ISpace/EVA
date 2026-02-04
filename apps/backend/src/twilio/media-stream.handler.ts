@@ -17,16 +17,16 @@ import { VerificationService } from '../verification/verification.service';
 import { TwilioService } from './twilio.service';
 import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
-/** Minimum speech bytes before we consider processing (~0.5 sec at 8kHz mulaw) — smaller = faster trigger */
-const MIN_SPEECH_BYTES = 4_000;
-/** Tail bytes to check for silence (~0.5 sec). Smaller = process sooner after user stops. */
-const SILENCE_TAIL_BYTES = 4_000;
+/** Minimum speech bytes before we consider processing (~0.25 sec at 8kHz mulaw) — smaller = faster trigger */
+const MIN_SPEECH_BYTES = 2_000;
+/** Tail bytes to check for silence (~0.25 sec). Smaller = process sooner after user stops. */
+const SILENCE_TAIL_BYTES = 2_000;
 /** Fraction of tail bytes that must be "silent" to trigger (0–1) */
 const SILENCE_RATIO_THRESHOLD = 0.85;
-/** Max buffer before we process anyway (~15 sec) so we don't wait forever */
-const MAX_BUFFER_BYTES = 120_000;
+/** Max buffer before we process anyway (~8 sec) — smaller chunks = faster ElevenLabs response */
+const MAX_BUFFER_BYTES = 64_000;
 /** Fallback: process at most every N ms. Shorter = faster response when silence isn't detected. */
-const FALLBACK_PROCESS_INTERVAL_MS = 6000;
+const FALLBACK_PROCESS_INTERVAL_MS = 4000;
 /** Minimum ms to wait after EVA speaks before processing (give user time to hear and answer). */
 const ANSWER_WINDOW_MS = 3500;
 /** Max time allowed on hold before ending the call (9 minutes) */
@@ -62,13 +62,13 @@ function formatDobForSpeech(dob: Date): string {
 
 /** First thing EVA says: intro only. Do not ask for any field — wait for the user to respond (e.g. identify yourself, patient name, or what details you want). */
 const CONVERSATION_GREETING =
-  'Hi, this is Reena calling from Went Dentals. I want to verify some details of our patient.';
+  'Hi, this is Reena calling from Went Dentals. How are you doing today?';
 
 const EVA_HOLD_ACK = 'Sure, I\'ll hold. Take your time.';
 /** After they say "thanks for waiting", "are you there" etc. — acknowledge only; do not re-ask the question yet. */
-const EVA_RESUME_ACK = 'No problem, thank you for getting back. I\'m still here.';
+const EVA_RESUME_ACK = 'No problem, thank you for getting back. I\'m on the call.';
 
-/** Duration (ms) to stay on the line after asking "Do you have anything else to ask?" before hanging up if no input */
+/** Duration (ms) to stay on the line after saying goodbye (in case user responds); then hang up if no input */
 const POST_GOODBYE_LISTEN_MS = 10_000;
 
 /** Detect if user is saying thank you / no more questions / goodbye (used in post-goodbye phase) */
@@ -240,8 +240,16 @@ export class MediaStreamHandlerService {
     const speak = async (text: string) => {
       if (!text?.trim()) return;
       try {
-        const mulawAudio = await this.elevenLabsAudioStack.synthesize(text);
-        if (mulawAudio?.length) await playAudio(mulawAudio);
+        // Prefer streaming TTS so playback starts as soon as first chunks arrive (faster response)
+        try {
+          for await (const mulawChunk of this.elevenLabsAudioStack.synthesizeStream(text)) {
+            if (mulawChunk?.length) await playAudio(mulawChunk);
+          }
+        } catch (streamErr: any) {
+          this.logger.debug('[MediaStream] TTS stream failed, using full buffer', (streamErr as Error)?.message);
+          const mulawAudio = await this.elevenLabsAudioStack.synthesize(text);
+          if (mulawAudio?.length) await playAudio(mulawAudio);
+        }
         state.lastSpeakTime = Date.now();
       } catch (e) {
         this.logger.warn('[MediaStream] TTS failed', (e as Error)?.message);
@@ -403,7 +411,7 @@ export class MediaStreamHandlerService {
           return;
         }
 
-        // --- Post-goodbye: stay on line ~10s for questions; if user says thank you / goodbye, say goodbye and hang up ---
+        // --- Post-goodbye: we said closing line and are waiting briefly; if user says something, answer or end ---
         if (state.postGoodbyeUntil != null) {
           if (state.postGoodbyeTimeoutId) {
             clearTimeout(state.postGoodbyeTimeoutId);
@@ -421,21 +429,18 @@ export class MediaStreamHandlerService {
           }
           if (isThankYouOrGoodbye(userSaid)) {
             this.logger.log('[MediaStream] Post-goodbye: user said thank you / goodbye, ending call');
-            await speak('Okay, done. Thank you.');
             doPostGoodbyeHangUp();
             state.processing = false;
             return;
           }
-          this.logger.log('[MediaStream] Post-goodbye: user asked a question');
+          this.logger.log('[MediaStream] Post-goodbye: user said something, answering then ending');
           try {
             const reply = await this.aiService.replyToUser(userSaid);
             await speak(reply);
-            await speak('Do you have anything else to ask?');
           } catch (e) {
-            await speak('Sorry, I didn\'t catch that. Do you have anything else to ask?');
+            await speak('Sorry, I didn\'t catch that.');
           }
-          state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
-          state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
+          doPostGoodbyeHangUp();
           state.processing = false;
           return;
         }
@@ -482,12 +487,12 @@ export class MediaStreamHandlerService {
           hasValue(state.extractedData.validity);
         // Only end when we have all four fields; never end with missing fields
         const shouldEndCall = allCollected;
-        const goodbye = 'Thank you, I\'ve noted all the details I need. Thanks for your help.';
+        const goodbye = 'Thank you for confirming the details. That\'s all I have. Have a good day.';
         let toSpeak = (nextMessage ?? '').trim();
         const isGenericFallback = /^(what else|is there anything else)/i.test(toSpeak);
         if (shouldEndCall) {
           toSpeak = goodbye;
-          // Will enter post-goodbye below: ask "Do you have any questions?" and stay 10s
+          // Will enter post-goodbye below: stay on line briefly in case user responds, then hang up
         } else if (!toSpeak || (isGenericFallback && state.lastAskedField)) {
           toSpeak = state.lastAskedField
             ? `So then I need the ${state.lastAskedField}.`
@@ -499,11 +504,10 @@ export class MediaStreamHandlerService {
         await speak(toSpeak);
 
         if (shouldEndCall) {
-          // Post-goodbye: ask if they have questions and stay on line for 10 seconds
-          await speak('Do you have anything else to ask?');
+          // Post-goodbye: already said "Thank you for confirming... Have a good day." — stay on line briefly in case user responds
           state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
           state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
-          startFallbackTimer(); // keep processing buffer so we hear questions or thank you
+          startFallbackTimer(); // keep processing buffer so we hear if user says something or thank you
         }
       } catch (err: any) {
         this.logger.warn('[MediaStream] Process buffer failed', err?.message);

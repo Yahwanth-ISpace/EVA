@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -74,6 +74,29 @@ export class ElevenLabsAudioStackService {
         fs.unlinkSync(mp3Path);
       } catch {
         // ignore
+      }
+    }
+  }
+
+  /**
+   * Synthesize text to 8 kHz mulaw and yield chunks as they are ready (streaming).
+   * Enables faster time-to-first-audio: playback can start before the full sentence is synthesized.
+   * Use this for lower latency; fall back to synthesize() if streaming fails.
+   */
+  async *synthesizeStream(text: string): AsyncGenerator<Buffer, void, unknown> {
+    const modulated = addSpeechPauses(text);
+    const mp3Stream = await this.elevenLabs.synthesizeToStream(modulated);
+    const child = spawn(
+      'ffmpeg',
+      ['-i', 'pipe:0', '-f', 'mulaw', '-ar', '8000', '-ac', '1', '-'],
+      { stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    mp3Stream.pipe(child.stdin);
+    child.stdin.on('error', () => {}); // EPIPE when ffmpeg closes early
+    child.stderr?.on('data', () => {}); // discard ffmpeg progress to stderr
+    for await (const chunk of child.stdout) {
+      if (chunk && (chunk as Buffer).length > 0) {
+        yield chunk as Buffer;
       }
     }
   }
