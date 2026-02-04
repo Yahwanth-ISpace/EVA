@@ -68,7 +68,7 @@ const EVA_HOLD_ACK = 'Sure, I\'ll hold. Take your time.';
 /** After they say "thanks for waiting", "are you there" etc. — acknowledge only; do not re-ask the question yet. */
 const EVA_RESUME_ACK = 'No problem, thank you for getting back. I\'m still here.';
 
-/** Duration (ms) to stay on the line after asking "Do you have any questions?" before hanging up if no input */
+/** Duration (ms) to stay on the line after asking "Do you have anything else to ask?" before hanging up if no input */
 const POST_GOODBYE_LISTEN_MS = 10_000;
 
 /** Detect if user is saying thank you / no more questions / goodbye (used in post-goodbye phase) */
@@ -421,7 +421,7 @@ export class MediaStreamHandlerService {
           }
           if (isThankYouOrGoodbye(userSaid)) {
             this.logger.log('[MediaStream] Post-goodbye: user said thank you / goodbye, ending call');
-            await speak('You\'re welcome. Thank you for your help. Goodbye.');
+            await speak('Okay, done. Thank you.');
             doPostGoodbyeHangUp();
             state.processing = false;
             return;
@@ -430,9 +430,9 @@ export class MediaStreamHandlerService {
           try {
             const reply = await this.aiService.replyToUser(userSaid);
             await speak(reply);
-            await speak('Do you have any other questions? I\'ll stay on the line for a few more seconds.');
+            await speak('Do you have anything else to ask?');
           } catch (e) {
-            await speak('Sorry, I didn\'t catch that. Do you have any other questions? I\'ll stay on the line for a few more seconds.');
+            await speak('Sorry, I didn\'t catch that. Do you have anything else to ask?');
           }
           state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
           state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
@@ -490,7 +490,7 @@ export class MediaStreamHandlerService {
           // Will enter post-goodbye below: ask "Do you have any questions?" and stay 10s
         } else if (!toSpeak || (isGenericFallback && state.lastAskedField)) {
           toSpeak = state.lastAskedField
-            ? `I want to know the ${state.lastAskedField}.`
+            ? `So then I need the ${state.lastAskedField}.`
             : (toSpeak || 'Is there anything else you can share?');
           if (!(nextMessage ?? '').trim() || isGenericFallback) {
             this.logger.warn('[MediaStream] AI returned empty or generic nextMessage, using fallback');
@@ -500,7 +500,7 @@ export class MediaStreamHandlerService {
 
         if (shouldEndCall) {
           // Post-goodbye: ask if they have questions and stay on line for 10 seconds
-          await speak('Do you have any questions? I\'ll stay on the line for about 10 seconds in case you\'d like to ask anything.');
+          await speak('Do you have anything else to ask?');
           state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
           state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
           startFallbackTimer(); // keep processing buffer so we hear questions or thank you

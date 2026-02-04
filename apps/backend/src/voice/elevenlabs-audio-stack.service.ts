@@ -9,7 +9,23 @@ import { getFfmpegErrorMessage } from './ffmpeg-check';
 /**
  * Produces 8 kHz mulaw audio buffers for Twilio Media Streams.
  * Uses ElevenLabs TTS then converts MP3 → mulaw via ffmpeg.
+ * Applies light voice modulation (pauses) so speech doesn't run on continuously.
  */
+
+/**
+ * Insert natural pauses so TTS doesn't read continuously. Uses ellipsis so the
+ * engine adds a brief breath between phrases (e.g. "Thanks... I want to know the deductible.").
+ */
+function addSpeechPauses(text: string): string {
+  if (!text || text.trim().length === 0) return text;
+  let t = text.trim();
+  // After a period + space, add ellipsis so next sentence has a breath
+  t = t.replace(/\.\s+/g, '... ');
+  // Comma then "I want" -> ellipsis for a breath (e.g. "Got it, I want" -> "Got it... I want")
+  t = t.replace(/,\s+(I want to know)/gi, '... $1');
+  return t.replace(/\s+/g, ' ').replace(/\.{4,}/g, '...').trim();
+}
+
 @Injectable()
 export class ElevenLabsAudioStackService {
   private readonly logger = new Logger(ElevenLabsAudioStackService.name);
@@ -19,9 +35,11 @@ export class ElevenLabsAudioStackService {
   /**
    * Synthesize text to 8 kHz mulaw mono (Twilio Media Stream format).
    * Returns a Buffer suitable for chunking and sending as base64 payloads.
+   * Applies light pauses for more human-like pacing.
    */
   async synthesize(text: string): Promise<Buffer> {
-    const mp3Buffer = await this.elevenLabs.synthesizeToBuffer(text);
+    const modulated = addSpeechPauses(text);
+    const mp3Buffer = await this.elevenLabs.synthesizeToBuffer(modulated);
     const tmpDir = os.tmpdir();
     const mp3Path = path.join(
       tmpDir,
