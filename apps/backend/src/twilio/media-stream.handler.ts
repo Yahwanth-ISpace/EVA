@@ -60,6 +60,8 @@ const CONVERSATION_GREETING =
 
 const EVA_HOLD_ACK = 'Sure, I am staying on line.';
 const EVA_RESUME_ACK = 'No problem. Let\'s continue.';
+/** Played immediately when we start processing user speech so they hear feedback instead of long silence */
+const EVA_PROCESSING_HOLD = 'One moment please.';
 
 /** Detect if user is asking to put the call on hold */
 function isHoldPhrase(text: string): boolean {
@@ -136,6 +138,8 @@ interface StreamState {
   holdStartedAt: number | null;
   /** Timeout to end call when hold exceeds 9 min */
   holdTimeoutId: ReturnType<typeof setTimeout> | null;
+  /** When we started "processing hold" (EVA thinking); used for logging and capture */
+  processingHoldStartedAt: number | null;
 }
 
 @Injectable()
@@ -170,6 +174,7 @@ export class MediaStreamHandlerService {
       onHold: false,
       holdStartedAt: null,
       holdTimeoutId: null,
+      processingHoldStartedAt: null,
     };
 
     const send = (obj: object) => {
@@ -231,8 +236,15 @@ export class MediaStreamHandlerService {
         fs.writeFileSync(rawPath, combined);
         this.mulawRawToWav(rawPath, wavPath);
 
-        const { transcript } = await this.transcriptionService.transcribeAudio(wavPath);
-        const userSaid = (transcript ?? '').trim();
+        state.processingHoldStartedAt = Date.now();
+        this.logger.log('[MediaStream] Processing hold started');
+        const [, transcriptResult] = await Promise.all([
+          speak(EVA_PROCESSING_HOLD),
+          this.transcriptionService.transcribeAudio(wavPath),
+        ]);
+        state.processingHoldStartedAt = null;
+        this.logger.log('[MediaStream] Processing hold ended, transcript ready');
+        const userSaid = (transcriptResult?.transcript ?? '').trim();
 
         // --- Hold / resume handling ---
         if (state.onHold) {
@@ -386,6 +398,7 @@ export class MediaStreamHandlerService {
           fs.unlinkSync(wavPath);
         } catch { }
         state.processing = false;
+        state.processingHoldStartedAt = null;
       }
     };
 

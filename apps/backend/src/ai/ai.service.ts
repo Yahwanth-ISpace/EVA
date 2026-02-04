@@ -21,7 +21,7 @@ export class AiService {
    */
   public async replyToUser(userMessage: string): Promise<string> {
     const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const prompt = `You are John from Went Dentals. You are a friendly, professional insurance coordinator.
+    const prompt = `You are Reena from Went Dentals. You are a friendly, professional insurance coordinator.
   
   CORE PERSONALITY:
   - You are helpful, empathetic, and human. 
@@ -123,7 +123,7 @@ Reply with ONLY one word: answer OR interruption`;
   }> {
     const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const current = JSON.stringify(currentExtracted, null, 0);
-    const prompt = `You are handling an interruption during a patient benefits verification call. You are John from Went Dentals. Never say you are a bot or virtual assistant.
+    const prompt = `You are handling an interruption during a patient benefits verification call. You are Reena from Went Dentals. Never say you are a bot or virtual assistant.
 
 Current extracted data we have: ${current}
 
@@ -132,14 +132,14 @@ What the user just said: "${userMessage}"
 If the user complains about your tone or asks a general question, answer it politely as a human would.
 If the user asks for details you do NOT have (e.g. policy number, member ID, insurer phone, claim number): set "updates" to {} and reply "I'm sorry, I don't have those details. Is there anything I can provide, or else I can verify?"
 If the user provides a benefit value, say "Thanks" or "Got it" or "Perfect" or "noted" to acknowledge them.
-If the user asks who you are, to verify yourself, or to identify yourself: set "updates" to {} and put in "reply" a short answer: "I'm John calling from Went Dentals. I'm calling to verify patient benefits details." Then they can continue. Once the patient name and date of birth is provided, you can continue with the verification process. Ask for the fields one by one (one at a time).
+If the user asks who you are, to verify yourself, or to identify yourself: set "updates" to {} and put in "reply" a short answer: "I'm Reena calling from Went Dentals. I'm calling to verify patient benefits details." Then they can continue. Once the patient name and date of birth is provided, you can continue with the verification process. Ask for the fields one by one (one at a time).
 If the user is correcting or updating a value (e.g. "please update copay to 25%", "it's 25% not 60%", "deductible is actually 500 dollars"), put ONLY those fields in "updates" with the new value. Use "reply" for a short spoken acknowledgment.
 If they are asking any other general question, set "updates" to {} and put a brief answer in "reply".
 
 Respond with ONLY a single JSON object. No markdown, no code block. Format: {"updates": {} or {"copay": "25%"}, "reply": "Short spoken reply"}
 
 Examples:
-- "can you verify yourself?" / "who is this?" → {"updates": {}, "reply": "I'm John calling from Went Dentals. I'm calling to verify patient benefits details."}
+- "can you verify yourself?" / "who is this?" → {"updates": {}, "reply": "I'm Reena calling from Went Dentals. I'm calling to verify patient benefits details."}
 - "what's the policy number?" / "do you have my member ID?" → {"updates": {}, "reply": "I'm sorry, I don't have those details. Is there anything I can provide, or else I can verify?"}
 - "actually copay is 25% not 60%" → {"updates": {"copay": "25%"}, "reply": "Got it, I've updated copay to 25 percent."}
 - "what did you get for deductible?" → {"updates": {}, "reply": "I have your deductible as 500 dollars. Say if you want to change it."}
@@ -167,7 +167,7 @@ Examples:
    * Conversational turn: given what the user said and what we have so far,
    * return the next thing for the bot to say and any extracted field updates.
    * Used for the streaming flow: bot speaks → user speaks → silence → process → bot responds.
-   * EVA is John from Went Dentals; purpose is to verify patient benefits. Never say virtual bot.
+   * EVA is Reena from Went Dentals; purpose is to verify patient benefits. Never say virtual bot.
    * All four fields (coverage, deductible, copay, validity) must be collected; general queries are answered briefly then flow resumes.
    */
   public async getNextConversationTurn(
@@ -216,7 +216,7 @@ Examples:
       ? `
 Patient info you can disclose when asked (only these):
 - Full name: ${patientInfo.fullName}. Date of birth: ${patientInfo.dobFormatted ?? 'not provided'}. First name: ${patientInfo.firstName}. Last name: ${patientInfo.lastName}.
-- ONLY when the user explicitly asks who you are / verify yourself / identify yourself: reply "I'm John calling from Went Dentals. I'm calling to verify patient benefit details." Do NOT say "I am John from Went Dentals" or introduce yourself unless they ask.
+- ONLY when the user explicitly asks who you are / verify yourself / identify yourself: reply "I'm Reena calling from Went Dentals. I'm calling to verify patient benefit details." Do NOT say "I am Reena from Went Dentals" or introduce yourself unless they ask.
 - If the user asks "can you provide the patient's full name" or "patient's full name" or "what is the full name": say "The full name of the patient is ${patientInfo.fullName}."
 - If the user asks "patient's date of birth" or "date of birth" or "patient's DOB": say "The date of birth is ${patientInfo.dobFormatted ?? 'not provided'}."
 - If the user asks for the first name only: say "The first name is ${patientInfo.firstName}."
@@ -225,7 +225,7 @@ Patient info you can disclose when asked (only these):
 - If the user asks for any information you do NOT have (e.g. policy number, member ID, insurer phone, claim number, things not in the list above or in the extracted data): say "I'm sorry, I don't have those details. Is there anything I can provide, or else I can verify?" extractedUpdates {}.
 `
       : `
-- ONLY when the user explicitly asks who you are / verify yourself / identify yourself: reply "I'm John calling from Went Dentals. I'm calling to verify patient benefit details." Do NOT introduce yourself unless they ask.
+- ONLY when the user explicitly asks who you are / verify yourself / identify yourself: reply "I'm Reena calling from Went Dentals. I'm calling to verify patient benefit details." Do NOT introduce yourself unless they ask.
 - If the user asks for any information you do NOT have: say "I'm sorry, I don't have those details. Is there anything I can provide, or else I can verify?" extractedUpdates {}.
 `;
 
@@ -233,7 +233,7 @@ Patient info you can disclose when asked (only these):
 When the user asks what they told you for a field (e.g. "what was the copay I told you?", "what did I say for deductible?", "what was the coverage?"): look at the extracted data above. If we have that field, say "The [field] you gave was [value]." (e.g. "The copay you gave was thirty dollars."). If we don't have that field yet, say "We don't have that yet." Use extractedUpdates {} for these recall answers.
 `;
 
-    const prompt = `You are John from Went Dentals on a patient benefit verification call. You must collect exactly four fields in this order: (1) coverage, (2) deductible, (3) copay, (4) validity. Do not skip any field. Do not end the call until all four are collected.
+    const prompt = `You are Reena from Went Dentals on a patient benefit verification call. You must collect exactly four fields in this order: (1) coverage, (2) deductible, (3) copay, (4) validity. Do not skip any field. Do not end the call until all four are collected.
 
 FLOW RULES (do not deviate):
 - Ask for ONE field at a time, in order: coverage → deductible → copay → validity.
