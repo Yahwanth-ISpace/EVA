@@ -11,22 +11,22 @@ import { VerificationService } from '../verification/verification.service';
 import { TwilioService } from './twilio.service';
 import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
-/** Minimum speech bytes before we consider processing (~1 sec at 8kHz mulaw) */
-const MIN_SPEECH_BYTES = 8_000;
-/** Tail bytes to check for silence (~1 sec). Longer = give user time to answer before we process. */
-const SILENCE_TAIL_BYTES = 8_000;
+/** Minimum speech bytes before we consider processing (~0.5 sec at 8kHz mulaw) — smaller = faster trigger */
+const MIN_SPEECH_BYTES = 4_000;
+/** Tail bytes to check for silence (~0.5 sec). Smaller = process sooner after user stops. */
+const SILENCE_TAIL_BYTES = 4_000;
 /** Fraction of tail bytes that must be "silent" to trigger (0–1) */
 const SILENCE_RATIO_THRESHOLD = 0.85;
 /** Max buffer before we process anyway (~15 sec) so we don't wait forever */
 const MAX_BUFFER_BYTES = 120_000;
-/** Fallback: process at most every N ms. Longer = more time for user to finish answering. */
-const FALLBACK_PROCESS_INTERVAL_MS = 10000;
+/** Fallback: process at most every N ms. Shorter = faster response when silence isn't detected. */
+const FALLBACK_PROCESS_INTERVAL_MS = 6000;
 /** Minimum ms to wait after EVA speaks before processing (give user time to hear and answer). */
-const ANSWER_WINDOW_MS = 5000;
+const ANSWER_WINDOW_MS = 3500;
 /** Max time allowed on hold before ending the call (9 minutes) */
 const HOLD_MAX_MS = 9 * 60 * 1000;
-/** Chunk size to send back to Twilio (40ms = 320 bytes at 8kHz mulaw) */
-const OUTBOUND_CHUNK_BYTES = 320;
+/** Chunk size to send back to Twilio (20ms = 160 bytes at 8kHz mulaw). Smaller chunks = playback starts faster. */
+const OUTBOUND_CHUNK_BYTES = 160;
 
 /** Mulaw: 0xFF and 0x7F are typical silence; treat nearby as silent too */
 function isSilentByte(b: number): boolean {
@@ -59,9 +59,18 @@ const CONVERSATION_GREETING =
   'Hi, I am John from Went Dentals. May I know the patient benefit details?';
 
 const EVA_HOLD_ACK = 'Sure, I am staying on line.';
-const EVA_RESUME_ACK = 'No problem. Let\'s continue.';
-/** Played immediately when we start processing user speech so they hear feedback instead of long silence */
-const EVA_PROCESSING_HOLD = 'One moment please.';
+/** After user says "thanks for waiting", "are you there" etc. — do not ask the question again yet. */
+const EVA_RESUME_ACK = 'No problem, yes I am online.';
+
+/** First missing field in order: coverage → deductible → copay → validity */
+function getFirstMissingField(data: ExtractedData): string | null {
+  const has = (v: string | null) => v != null && String(v).trim().length > 0;
+  if (!has(data.coverage)) return 'coverage';
+  if (!has(data.deductible)) return 'deductible';
+  if (!has(data.copay)) return 'copay';
+  if (!has(data.validity)) return 'validity';
+  return null;
+}
 
 /** Detect if user is asking to put the call on hold */
 function isHoldPhrase(text: string): boolean {
@@ -78,13 +87,15 @@ function isHoldPhrase(text: string): boolean {
   );
 }
 
-/** Detect if user is saying they are back from hold */
+/** Detect if user is saying they are back from hold (e.g. thanks for waiting, are you there) */
 function isResumePhrase(text: string): boolean {
   const t = text.trim().toLowerCase();
   return (
     /i'?m\s+back/i.test(t) ||
     /(?:thank you|thanks)\s+for\s+(?:waiting|holding)/i.test(t) ||
+    /thanks?\s+for\s+waiting\s+on\s+(?:the\s+)?call/i.test(t) ||
     /(?:we'?re\s+)?back\s+on\s+(?:the\s+)?line/i.test(t) ||
+    /(?:are\s+)?you\s+there/i.test(t) ||
     /let'?s\s+continue/i.test(t) ||
     /ready\s+(?:to\s+)?continue/i.test(t) ||
     /(?:i'?m\s+)?ready/i.test(t) ||
@@ -138,8 +149,8 @@ interface StreamState {
   holdStartedAt: number | null;
   /** Timeout to end call when hold exceeds 9 min */
   holdTimeoutId: ReturnType<typeof setTimeout> | null;
-  /** When we started "processing hold" (EVA thinking); used for logging and capture */
-  processingHoldStartedAt: number | null;
+  /** Field we were asking when user put call on hold (or current field we are asking). Used so we remember and can accept e.g. "80$" or re-ask only when user says "what do you need?". */
+  lastAskedField: string | null;
 }
 
 @Injectable()
@@ -174,7 +185,7 @@ export class MediaStreamHandlerService {
       onHold: false,
       holdStartedAt: null,
       holdTimeoutId: null,
-      processingHoldStartedAt: null,
+      lastAskedField: null,
     };
 
     const send = (obj: object) => {
@@ -236,15 +247,8 @@ export class MediaStreamHandlerService {
         fs.writeFileSync(rawPath, combined);
         this.mulawRawToWav(rawPath, wavPath);
 
-        state.processingHoldStartedAt = Date.now();
-        this.logger.log('[MediaStream] Processing hold started');
-        const [, transcriptResult] = await Promise.all([
-          speak(EVA_PROCESSING_HOLD),
-          this.transcriptionService.transcribeAudio(wavPath),
-        ]);
-        state.processingHoldStartedAt = null;
-        this.logger.log('[MediaStream] Processing hold ended, transcript ready');
-        const userSaid = (transcriptResult?.transcript ?? '').trim();
+        const { transcript } = await this.transcriptionService.transcribeAudio(wavPath);
+        const userSaid = (transcript ?? '').trim();
 
         // --- Hold / resume handling ---
         if (state.onHold) {
@@ -255,32 +259,11 @@ export class MediaStreamHandlerService {
               clearTimeout(state.holdTimeoutId);
               state.holdTimeoutId = null;
             }
-            this.logger.log('[MediaStream] User resumed from hold');
+            this.logger.log('[MediaStream] User resumed from hold; lastAskedField=' + (state.lastAskedField ?? 'none'));
             await speak(EVA_RESUME_ACK);
-            const resumeTranscript = 'User said they are back from hold. Continue with the next benefit field.';
-            const { nextMessage: resumeMsg, extractedUpdates: resumeUpdates, endCall: resumeEnd } =
-              await this.aiService.getNextConversationTurn(resumeTranscript, state.extractedData, state.patientInfo);
-            const hasVal = (v: string | null) => v != null && String(v).trim().length > 0;
-            if (resumeUpdates && Object.keys(resumeUpdates).length > 0) {
-              if (hasVal(resumeUpdates.coverage ?? null)) state.extractedData.coverage = resumeUpdates.coverage ?? null;
-              if (hasVal(resumeUpdates.deductible ?? null)) state.extractedData.deductible = resumeUpdates.deductible ?? null;
-              if (hasVal(resumeUpdates.copay ?? null)) state.extractedData.copay = resumeUpdates.copay ?? null;
-              if (hasVal(resumeUpdates.validity ?? null)) state.extractedData.validity = resumeUpdates.validity ?? null;
-            }
-            const toSay = (resumeMsg ?? '').trim() || 'What is the coverage?';
-            await speak(toSay);
-            if (resumeEnd) {
-              state.callEnded = true;
-              if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
-              if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
-                this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
-                  this.logger.warn('[MediaStream] Push on endCall failed', (e as Error)?.message));
-              }
-              const sid = state.callSid;
-              setTimeout(() => { if (sid) this.twilioService.hangUp(sid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message)); }, 2500);
-            } else {
-              startFallbackTimer();
-            }
+            state.processing = false;
+            startFallbackTimer();
+            return;
           } else if (state.holdStartedAt && Date.now() - state.holdStartedAt > HOLD_MAX_MS) {
             this.logger.log('[MediaStream] Hold limit exceeded (9 min), ending call');
             state.callEnded = true;
@@ -345,6 +328,7 @@ export class MediaStreamHandlerService {
             effectiveTranscript,
             state.extractedData,
             state.patientInfo,
+            state.lastAskedField,
           );
 
         const hasValue = (v: string | null) => v != null && String(v).trim().length > 0;
@@ -354,6 +338,8 @@ export class MediaStreamHandlerService {
           if (hasValue(extractedUpdates.copay ?? null)) state.extractedData.copay = extractedUpdates.copay ?? null;
           if (hasValue(extractedUpdates.validity ?? null)) state.extractedData.validity = extractedUpdates.validity ?? null;
         }
+
+        state.lastAskedField = getFirstMissingField(state.extractedData);
 
         const allCollected =
           hasValue(state.extractedData.coverage) &&
@@ -398,7 +384,6 @@ export class MediaStreamHandlerService {
           fs.unlinkSync(wavPath);
         } catch { }
         state.processing = false;
-        state.processingHoldStartedAt = null;
       }
     };
 
@@ -437,6 +422,7 @@ export class MediaStreamHandlerService {
             }
             if (!state.patientInfo) state.patientInfo = STATIC_PATIENT_INFO;
             await speak(CONVERSATION_GREETING);
+            state.lastAskedField = 'coverage';
           } catch (e) {
             this.logger.warn('[MediaStream] Greeting failed', (e as Error)?.message);
           }

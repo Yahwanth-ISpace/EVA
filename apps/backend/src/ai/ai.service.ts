@@ -184,6 +184,8 @@ Examples:
       fullName: string;
       dobFormatted: string | null;
     } | null,
+    /** When set, the user may have just resumed from hold; we were asking for this field. Treat their reply as the value for this field, or if they ask "what do you need?" say "What is the [lastAskedField]?" only. */
+    lastAskedField?: string | null,
   ): Promise<{
     nextMessage: string;
     extractedUpdates: Partial<{
@@ -233,6 +235,16 @@ Patient info you can disclose when asked (only these):
 When the user asks what they told you for a field (e.g. "what was the copay I told you?", "what did I say for deductible?", "what was the coverage?"): look at the extracted data above. If we have that field, say "The [field] you gave was [value]." (e.g. "The copay you gave was thirty dollars."). If we don't have that field yet, say "We don't have that yet." Use extractedUpdates {} for these recall answers.
 `;
 
+    const afterResumeBlock =
+      lastAskedField && ['coverage', 'deductible', 'copay', 'validity'].includes(lastAskedField)
+        ? `
+AFTER-HOLD CONTEXT (user may have just resumed): We were asking for "${lastAskedField}" when they put the call on hold. Remember this field.
+- If the user now gave a value (number, dollar amount, percent): treat it as the answer for "${lastAskedField}" and put it in extractedUpdates (e.g. {"${lastAskedField}": "80 dollars"}), then say "Thanks." or "Got it." and ask for the NEXT field only.
+- If the user is asking what we need or what was the question (e.g. "what do you need", "what was that", "what was that you need"): say ONLY "What is the ${lastAskedField}?" and set extractedUpdates {}.
+- If the user did not give a value (e.g. inaudible or unclear): say "What is the ${lastAskedField}?" again and set extractedUpdates {}.
+`
+        : '';
+
     const prompt = `You are Reena from Went Dentals on a patient benefit verification call. You must collect exactly four fields in this order: (1) coverage, (2) deductible, (3) copay, (4) validity. Do not skip any field. Do not end the call until all four are collected.
 
 FLOW RULES (do not deviate):
@@ -243,6 +255,7 @@ FLOW RULES (do not deviate):
 
 ${patientBlock}
 ${recallBlock}
+${afterResumeBlock}
 
 Data we have extracted so far: ${current}
 We are currently asking for: ${nextFieldToAsk ?? 'nothing (all done)'}.
