@@ -9,6 +9,19 @@ const ai_server_url = process.env.AI_SERVER_URL;
 const ELEVENLABS_STT_URL = 'https://api.elevenlabs.io/v1/speech-to-text';
 const ELEVENLABS_STT_MODEL = 'scribe_v2';
 
+/** Returns true if text looks like it's primarily not English (e.g. Devanagari, other scripts). We only accept English. */
+function isNonEnglish(text: string): boolean {
+  const t = text.trim();
+  if (!t.length) return false;
+  // Devanagari (Hindi etc.), other common non-Latin scripts
+  if (/[\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F]/.test(t)) return true;
+  // If most of the string is non-ASCII letters, treat as non-English (allow digits, $, %)
+  const letters = t.replace(/\s/g, '').replace(/[\d$%.,?!\-'"]/g, '');
+  const nonLatin = letters.replace(/[a-zA-Z]/g, '');
+  if (letters.length > 0 && nonLatin.length / letters.length > 0.3) return true;
+  return false;
+}
+
 @Injectable()
 export class TranscriptionService {
   private readonly logger = new Logger(TranscriptionService.name);
@@ -103,8 +116,10 @@ export class TranscriptionService {
       filename,
       contentType: mimeType,
     });
+    // Request English-only if the AI server supports a 'language' field
+    form.append('language', 'en');
 
-    this.logger.log(`Whisper fallback: sending to ${ai_server_url}/transcription/transcribe`);
+    this.logger.log(`Whisper fallback: sending to ${ai_server_url}/transcription/transcribe (language=en)`);
 
     const response = await axios.post(
       `${ai_server_url}/transcription/transcribe`,
@@ -120,6 +135,11 @@ export class TranscriptionService {
     );
 
     this.logger.log('Transcription (Whisper) successful');
-    return { transcript: response.data.transcript ?? '' };
+    let transcript = response.data.transcript ?? '';
+    if (transcript && isNonEnglish(transcript)) {
+      this.logger.log('Transcription (Whisper) non-English detected, returning empty (English only)');
+      transcript = '';
+    }
+    return { transcript };
   }
 }

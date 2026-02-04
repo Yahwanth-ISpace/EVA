@@ -3,6 +3,14 @@
  * Handled edge cases: processing during greeting (lastSpeakTime), transcription failure (fallback TTS),
  * inaudible-like transcripts ([inaudible], ...), empty/generic AI reply (re-ask lastAskedField),
  * end-call only when all four fields collected (never end with missing fields).
+ * On any failure we ask the user to repeat only the current field; we never go back or re-ask earlier questions.
+ *
+ * PERFORMANCE / CHUNKING:
+ * - TTS streaming: first audio plays as soon as first chunks arrive from ElevenLabs (faster time-to-first-word).
+ * - STT: MIN_SPEECH_BYTES, SILENCE_TAIL_BYTES, MAX_BUFFER_BYTES, FALLBACK_PROCESS_INTERVAL_MS are tuned so we
+ *   process user speech sooner (smaller buffers = less wait before sending to transcription). Before chunking
+ *   we used ~4k min, 120k max, 6s fallback; now ~2k min, 64k max, 4s fallback for faster turnaround.
+ * - Most latency is usually from external APIs (ElevenLabs STT/TTS, Gemini). Chunking reduces wait on our side.
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { spawnSync } from 'child_process';
@@ -27,8 +35,8 @@ const SILENCE_RATIO_THRESHOLD = 0.85;
 const MAX_BUFFER_BYTES = 64_000;
 /** Fallback: process at most every N ms. Shorter = faster response when silence isn't detected. */
 const FALLBACK_PROCESS_INTERVAL_MS = 4000;
-/** Minimum ms to wait after EVA speaks before processing (give user time to hear and answer). */
-const ANSWER_WINDOW_MS = 3500;
+/** Minimum ms to wait after EVA speaks before processing (give user time to hear and answer). Slightly lower = respond sooner. */
+const ANSWER_WINDOW_MS = 3000;
 /** Max time allowed on hold before ending the call (9 minutes) */
 const HOLD_MAX_MS = 9 * 60 * 1000;
 /** Chunk size to send back to Twilio (20ms = 160 bytes at 8kHz mulaw). Smaller chunks = playback starts faster. */
@@ -62,7 +70,7 @@ function formatDobForSpeech(dob: Date): string {
 
 /** First thing EVA says: intro only. Do not ask for any field — wait for the user to respond (e.g. identify yourself, patient name, or what details you want). */
 const CONVERSATION_GREETING =
-  'Hi, this is Reena calling from Went Dentals. How are you doing today?';
+  'Hi, I am Reena from Went Dentals. How are you doing today?';
 
 const EVA_HOLD_ACK = 'Sure, I\'ll hold. Take your time.';
 /** After they say "thanks for waiting", "are you there" etc. — acknowledge only; do not re-ask the question yet. */
@@ -91,6 +99,56 @@ function getFirstMissingField(data: ExtractedData): string | null {
   if (!has(data.copay)) return 'copay';
   if (!has(data.validity)) return 'validity';
   return null;
+}
+
+/** When we couldn't hear or had an error: only ask to repeat; do not mention the field. */
+function getRepeatOnlyPrompt(): string {
+  const options = ['Can you please repeat that?', 'Can you say that once again?'];
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+/** Varied phrase for asking a benefit field (used when AI returns empty/generic). */
+function askForFieldPhrase(field: string): string {
+  const templates = [
+    `What is the ${field}?`,
+    `Can I get the ${field}?`,
+    `May I have the ${field}?`,
+    `Can you provide the ${field}?`,
+  ];
+  return templates[Math.floor(Math.random() * templates.length)];
+}
+
+/** Extract a single value for a benefit field from transcript (e.g. "28 dollars" -> "28 dollars"). Used to correct after-hold when AI puts value in wrong field. */
+function extractValueForField(transcript: string, field: string): string | null {
+  const t = transcript.trim().toLowerCase();
+  const dollarMatch = t.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
+  const percentMatch = t.match(/(\d+)\s*%|(\d+)\s*percent/i);
+  const numberMatch = t.match(/\b(\d+)\b/);
+  if (field === 'validity') {
+    const validityMatch = t.match(/year|month|dec|jan|feb|valid|till|until|through|twenty|dec/i);
+    if (validityMatch) return transcript.trim().replace(/\s+/g, ' ');
+    return null;
+  }
+  if (dollarMatch) {
+    const num = dollarMatch[1] || dollarMatch[2] || dollarMatch[3];
+    return num ? `${num} dollars` : null;
+  }
+  if (percentMatch && (field === 'copay' || field === 'coverage')) {
+    const num = percentMatch[1] || percentMatch[2];
+    return num ? `${num} percent` : null;
+  }
+  if (numberMatch) {
+    const num = numberMatch[1];
+    if (field === 'deductible' || field === 'copay') return `${num} dollars`;
+    if (field === 'coverage') return num;
+    return num;
+  }
+  return null;
+}
+
+/** True if transcript looks like it contains a number, dollar amount, or percent (user may be giving a value). */
+function transcriptHasValue(transcript: string): boolean {
+  return /\d+|dollar|percent|%\s*\$/.test(transcript);
 }
 
 /** Detect if user is asking to put the call on hold */
@@ -256,6 +314,17 @@ export class MediaStreamHandlerService {
       }
     };
 
+    const pushToVerificationService = () => {
+      if (!state.payeeId) return;
+      const hasAny = state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity;
+      if (!hasAny) return;
+      this.logger.log('[MediaStream] VerificationService.pushExtractedData called: payeeId=' + state.payeeId + ' extracted=' + JSON.stringify(state.extractedData));
+      this.verificationService.pushExtractedData(state.payeeId, state.extractedData).then(() => {
+        this.logger.log('[MediaStream] VerificationService.pushExtractedData success for payeeId=' + state.payeeId);
+      }).catch((e) =>
+        this.logger.warn('[MediaStream] Push to VerificationService failed', (e as Error)?.message));
+    };
+
     const doPostGoodbyeHangUp = () => {
       if (state.callEnded) return;
       state.callEnded = true;
@@ -269,8 +338,7 @@ export class MediaStreamHandlerService {
         state.fallbackTimer = null;
       }
       if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
-        this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
-          this.logger.warn('[MediaStream] Push on post-goodbye hang up failed', (e as Error)?.message));
+        pushToVerificationService();
       }
       const sid = state.callSid;
       if (sid) this.twilioService.hangUp(sid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));
@@ -324,11 +392,7 @@ export class MediaStreamHandlerService {
         } catch (transcribeErr: any) {
           this.logger.warn('[MediaStream] Transcription failed', transcribeErr?.message);
           state.processing = false;
-          await speak(
-            state.lastAskedField
-              ? `Sorry, I had trouble hearing that. Can you tell me the ${state.lastAskedField} again?`
-              : 'Sorry, I had trouble hearing that. Could you say that again?',
-          ).catch(() => {});
+          await speak(getRepeatOnlyPrompt()).catch(() => {});
           return;
         }
         const userSaid = (transcript ?? '').trim();
@@ -399,8 +463,7 @@ export class MediaStreamHandlerService {
               state.holdTimeoutId = null;
               if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
               if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
-                this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
-                  this.logger.warn('[MediaStream] Push on hold timeout failed', (e as Error)?.message));
+                pushToVerificationService();
               }
               if (state.callSid) this.twilioService.hangUp(state.callSid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));
             }
@@ -462,7 +525,7 @@ export class MediaStreamHandlerService {
           this.logger.log(`[MediaStream] User said: ${userSaid}`);
         }
 
-        const { nextMessage, extractedUpdates, endCall } =
+        let { nextMessage, extractedUpdates, endCall } =
           await this.aiService.getNextConversationTurn(
             effectiveTranscript,
             state.extractedData,
@@ -471,6 +534,25 @@ export class MediaStreamHandlerService {
           );
 
         const hasValue = (v: string | null) => v != null && String(v).trim().length > 0;
+        // After-hold safeguard: we were asking for lastAskedField; if user gave a value but AI put it in the wrong field, assign to lastAskedField only
+        const expectedField = state.lastAskedField;
+        if (
+          expectedField &&
+          ['coverage', 'deductible', 'copay', 'validity'].includes(expectedField) &&
+          !isIdleOrEmpty &&
+          transcriptHasValue(userSaid) &&
+          extractedUpdates &&
+          Object.keys(extractedUpdates).length > 0
+        ) {
+          const hasExpected = hasValue(extractedUpdates[expectedField as keyof typeof extractedUpdates] ?? null);
+          if (!hasExpected) {
+            const corrected = extractValueForField(userSaid, expectedField);
+            if (corrected) {
+              this.logger.log(`[MediaStream] After-hold correction: assigning value to expected field "${expectedField}" (was in wrong field)`);
+              extractedUpdates = { [expectedField]: corrected };
+            }
+          }
+        }
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
           if (hasValue(extractedUpdates.coverage ?? null)) state.extractedData.coverage = extractedUpdates.coverage ?? null;
           if (hasValue(extractedUpdates.deductible ?? null)) state.extractedData.deductible = extractedUpdates.deductible ?? null;
@@ -479,6 +561,7 @@ export class MediaStreamHandlerService {
         }
 
         state.lastAskedField = getFirstMissingField(state.extractedData);
+        this.logger.log('[MediaStream] Extracted details after turn: ' + JSON.stringify(state.extractedData));
 
         const allCollected =
           hasValue(state.extractedData.coverage) &&
@@ -486,7 +569,11 @@ export class MediaStreamHandlerService {
           hasValue(state.extractedData.copay) &&
           hasValue(state.extractedData.validity);
         // Only end when we have all four fields; never end with missing fields
-        const shouldEndCall = allCollected;
+        let shouldEndCall = allCollected;
+        if (endCall && !allCollected) {
+          this.logger.warn('[MediaStream] AI returned endCall but not all fields collected; will not end. Missing: ' + ['coverage', 'deductible', 'copay', 'validity'].filter(f => !hasValue(state.extractedData[f as keyof ExtractedData] ?? null)).join(', '));
+          shouldEndCall = false;
+        }
         const goodbye = 'Thank you for confirming the details. That\'s all I have. Have a good day.';
         let toSpeak = (nextMessage ?? '').trim();
         const isGenericFallback = /^(what else|is there anything else)/i.test(toSpeak);
@@ -495,7 +582,7 @@ export class MediaStreamHandlerService {
           // Will enter post-goodbye below: stay on line briefly in case user responds, then hang up
         } else if (!toSpeak || (isGenericFallback && state.lastAskedField)) {
           toSpeak = state.lastAskedField
-            ? `Can I get the ${state.lastAskedField}?`
+            ? askForFieldPhrase(state.lastAskedField)
             : (toSpeak || 'Is there anything else you can share?');
           if (!(nextMessage ?? '').trim() || isGenericFallback) {
             this.logger.warn('[MediaStream] AI returned empty or generic nextMessage, using fallback');
@@ -511,6 +598,8 @@ export class MediaStreamHandlerService {
         }
       } catch (err: any) {
         this.logger.warn('[MediaStream] Process buffer failed', err?.message);
+        // Only ask to repeat; do not ask for the field again (same as transcription failure).
+        await speak(getRepeatOnlyPrompt()).catch(() => {});
       } finally {
         try {
           fs.unlinkSync(rawPath);
@@ -589,9 +678,7 @@ export class MediaStreamHandlerService {
         }
         this.logger.log('[MediaStream] Stop');
         if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
-          this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
-            this.logger.warn('[MediaStream] Final push on stop failed', (e as Error)?.message),
-          );
+          pushToVerificationService();
         }
       }
     });
