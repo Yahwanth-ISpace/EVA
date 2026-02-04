@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import * as fs from 'fs';
@@ -10,6 +11,8 @@ import { TranscriptionService } from 'src/transcription/transcription.service';
 
 @Injectable()
 export class VerificationService {
+  private readonly logger = new Logger(VerificationService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly aiService: AiService,
@@ -331,6 +334,7 @@ export class VerificationService {
     },
     transcriptToAppend?: string,
   ) {
+    this.logger.log('pushExtractedData: payeeId=' + payeeId + ' data=' + JSON.stringify(extracted));
     return this.mergeExtractedData(payeeId, extracted, transcriptToAppend);
   }
 }
