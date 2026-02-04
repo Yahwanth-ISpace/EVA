@@ -495,7 +495,7 @@ export class MediaStreamHandlerService {
           // Will enter post-goodbye below: stay on line briefly in case user responds, then hang up
         } else if (!toSpeak || (isGenericFallback && state.lastAskedField)) {
           toSpeak = state.lastAskedField
-            ? `So then I need the ${state.lastAskedField}.`
+            ? `Can I get the ${state.lastAskedField}?`
             : (toSpeak || 'Is there anything else you can share?');
           if (!(nextMessage ?? '').trim() || isGenericFallback) {
             this.logger.warn('[MediaStream] AI returned empty or generic nextMessage, using fallback');
