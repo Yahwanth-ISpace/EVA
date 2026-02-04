@@ -9,15 +9,20 @@ export class ElevenLabsService {
   private readonly logger = new Logger(ElevenLabsService.name);
   private readonly apiKey = process.env.ELEVENLABS_API_KEY?.trim();
   private readonly voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
-  // Eleven Flash v2.5 — overridable via ELEVENLABS_MODEL_ID
-  private readonly modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5';
+  // English-only for clearer speech; use ELEVENLABS_MODEL_ID=eleven_flash_v2_5 for multilingual
+  private readonly modelId =
+    process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2';
 
   constructor() {
     if (!this.apiKey) {
-      this.logger.warn('ELEVENLABS_API_KEY is not set. Voice synthesis will fail.');
+      this.logger.warn(
+        'ELEVENLABS_API_KEY is not set. Voice synthesis will fail.',
+      );
     }
     if (!this.voiceId) {
-      this.logger.warn('ELEVENLABS_VOICE_ID is not set. Voice synthesis will fail.');
+      this.logger.warn(
+        'ELEVENLABS_VOICE_ID is not set. Voice synthesis will fail.',
+      );
     }
   }
 
@@ -41,10 +46,11 @@ export class ElevenLabsService {
         model_id: this.modelId,
         voice_settings: {
           stability: 0.6,
-          similarity_boost: 0.75,
-          style: 0.3,
+          similarity_boost: 0.5,
+          style: 0.0,
           use_speaker_boost: true,
         },
+        optimize_streaming_latency: 4,
       },
       {
         headers: {
@@ -82,7 +88,7 @@ export class ElevenLabsService {
       }
       const audioUrl = `${baseUrl}/audio/${fileName}`;
       this.logger.debug(`Generated audio: ${audioUrl}`);
-      
+
       return audioUrl;
     } catch (err) {
       if (err instanceof HttpException) throw err;
@@ -96,19 +102,21 @@ export class ElevenLabsService {
           try {
             const errorText = err.response.data.toString('utf-8');
             errorDetails = JSON.parse(errorText);
-            errorMessage = errorDetails?.detail?.message || 
-                          errorDetails?.detail?.status || 
-                          errorDetails?.message || 
-                          errorText;
+            errorMessage =
+              errorDetails?.detail?.message ||
+              errorDetails?.detail?.status ||
+              errorDetails?.message ||
+              errorText;
           } catch (parseErr) {
             errorMessage = err.response.data.toString('utf-8');
           }
         } else if (typeof err.response.data === 'object') {
           errorDetails = err.response.data;
-          errorMessage = errorDetails?.detail?.message || 
-                        errorDetails?.detail?.status || 
-                        errorDetails?.message || 
-                        JSON.stringify(errorDetails);
+          errorMessage =
+            errorDetails?.detail?.message ||
+            errorDetails?.detail?.status ||
+            errorDetails?.message ||
+            JSON.stringify(errorDetails);
         } else {
           errorMessage = err.response.data;
         }

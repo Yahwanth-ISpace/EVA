@@ -54,13 +54,13 @@ function formatDobForSpeech(dob: Date): string {
   return `${month} ${day}, ${year}`;
 }
 
-/** First thing EVA says: intro + ask for patient benefit details. */
+/** First thing EVA says: professional intro as customer care calling to get benefit details. */
 const CONVERSATION_GREETING =
-  'Hi, I am John from Went Dentals. May I know the patient benefit details?';
+  'Hi, this is Reena calling from Went Dentals. I\'m on the line to verify benefit details for one of our patients — coverage, deductible, copay, and validity. I\'ll ask for each one. Could you tell me the coverage?';
 
-const EVA_HOLD_ACK = 'Sure, I am staying on line.';
-/** After user says "thanks for waiting", "are you there" etc. — do not ask the question again yet. */
-const EVA_RESUME_ACK = 'No problem, yes I am online.';
+const EVA_HOLD_ACK = 'Sure, I\'ll hold. Take your time.';
+/** After they say "thanks for waiting", "are you there" etc. — acknowledge only; do not re-ask the question yet. */
+const EVA_RESUME_ACK = 'No problem, thank you for getting back. I\'m still here.';
 
 /** First missing field in order: coverage → deductible → copay → validity */
 function getFirstMissingField(data: ExtractedData): string | null {
@@ -87,15 +87,19 @@ function isHoldPhrase(text: string): boolean {
   );
 }
 
-/** Detect if user is saying they are back from hold (e.g. thanks for waiting, are you there) */
+/** Detect if user is saying they are back from hold (e.g. thanks for waiting, are you there/online) */
 function isResumePhrase(text: string): boolean {
   const t = text.trim().toLowerCase();
+  if (!t) return false;
   return (
     /i'?m\s+back/i.test(t) ||
     /(?:thank you|thanks)\s+for\s+(?:waiting|holding)/i.test(t) ||
     /thanks?\s+for\s+waiting\s+on\s+(?:the\s+)?call/i.test(t) ||
+    /thanks?\s+for\s+waiting\s+on\s+hold/i.test(t) ||
     /(?:we'?re\s+)?back\s+on\s+(?:the\s+)?line/i.test(t) ||
+    /(?:are\s+)?you\s+(?:still\s+)?(?:there|online)/i.test(t) ||
     /(?:are\s+)?you\s+there/i.test(t) ||
+    /(?:are\s+)?you\s+online/i.test(t) ||
     /let'?s\s+continue/i.test(t) ||
     /ready\s+(?:to\s+)?continue/i.test(t) ||
     /(?:i'?m\s+)?ready/i.test(t) ||
@@ -252,15 +256,20 @@ export class MediaStreamHandlerService {
 
         // --- Hold / resume handling ---
         if (state.onHold) {
-          if (isResumePhrase(userSaid)) {
+          const matchedResume = userSaid.length > 0 && isResumePhrase(userSaid);
+          if (matchedResume) {
             state.onHold = false;
             state.holdStartedAt = null;
             if (state.holdTimeoutId) {
               clearTimeout(state.holdTimeoutId);
               state.holdTimeoutId = null;
             }
-            this.logger.log('[MediaStream] User resumed from hold; lastAskedField=' + (state.lastAskedField ?? 'none'));
-            await speak(EVA_RESUME_ACK);
+            this.logger.log('[MediaStream] User resumed from hold; transcript="' + userSaid + '" lastAskedField=' + (state.lastAskedField ?? 'none'));
+            try {
+              await speak(EVA_RESUME_ACK);
+            } catch (e) {
+              this.logger.warn('[MediaStream] Resume ack TTS failed', (e as Error)?.message);
+            }
             state.processing = false;
             startFallbackTimer();
             return;
@@ -277,6 +286,8 @@ export class MediaStreamHandlerService {
             }
             const sid = state.callSid;
             if (sid) this.twilioService.hangUp(sid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));
+          } else if (userSaid.length > 0) {
+            this.logger.log('[MediaStream] On hold: transcript not a resume phrase, ignoring. transcript="' + userSaid + '"');
           }
           state.processing = false;
           return;
@@ -347,8 +358,8 @@ export class MediaStreamHandlerService {
           hasValue(state.extractedData.copay) &&
           hasValue(state.extractedData.validity);
         const shouldEndCall = endCall || allCollected;
-        const goodbye = 'We have noted all the details we need. Thank you.';
-        const toSpeak = shouldEndCall ? goodbye : ((nextMessage ?? '').trim() || 'What else can you tell me?');
+        const goodbye = 'That\'s everything I need. Thank you so much for your help.';
+        const toSpeak = shouldEndCall ? goodbye : ((nextMessage ?? '').trim() || 'Is there anything else you can share?');
         if (!shouldEndCall && !(nextMessage ?? '').trim()) {
           this.logger.warn('[MediaStream] AI returned empty nextMessage, using fallback');
         }
