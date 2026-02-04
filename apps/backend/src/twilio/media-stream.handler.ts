@@ -318,11 +318,11 @@ export class MediaStreamHandlerService {
       if (!state.payeeId) return;
       const hasAny = state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity;
       if (!hasAny) return;
-      this.logger.log('[MediaStream] VerificationService.pushExtractedData called: payeeId=' + state.payeeId + ' extracted=' + JSON.stringify(state.extractedData));
-      this.verificationService.pushExtractedData(state.payeeId, state.extractedData).then(() => {
-        this.logger.log('[MediaStream] VerificationService.pushExtractedData success for payeeId=' + state.payeeId);
+      this.logger.log('[MediaStream] Saving verification (call ended): payeeId=' + state.payeeId + ' extracted=' + JSON.stringify(state.extractedData));
+      this.aiService.saveCallVerification(state.payeeId, state.extractedData).then(() => {
+        this.logger.log('[MediaStream] Verification saved for payeeId=' + state.payeeId);
       }).catch((e) =>
-        this.logger.warn('[MediaStream] Push to VerificationService failed', (e as Error)?.message));
+        this.logger.warn('[MediaStream] Save verification failed', (e as Error)?.message));
     };
 
     const doPostGoodbyeHangUp = () => {
@@ -428,8 +428,7 @@ export class MediaStreamHandlerService {
             if (state.holdTimeoutId) { clearTimeout(state.holdTimeoutId); state.holdTimeoutId = null; }
             if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
             if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
-              this.verificationService.pushExtractedData(state.payeeId, state.extractedData).catch((e) =>
-                this.logger.warn('[MediaStream] Push on hold timeout failed', (e as Error)?.message));
+              pushToVerificationService();
             }
             const sid = state.callSid;
             if (sid) this.twilioService.hangUp(sid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));

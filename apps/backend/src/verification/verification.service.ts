@@ -174,6 +174,106 @@ export class VerificationService {
     }
   }
 
+  /**
+   * Same as verifyFromAudio (find-or-create verification, merge fields) but takes extracted call
+   * fields directly instead of an audio file. No transcription or AI extraction — inserts the
+   * provided extracted fields into the verification record.
+   */
+  async verifyFromExtractedCall(
+    payeeId: string,
+    extracted: {
+      coverage?: string | null;
+      deductible?: string | null;
+      copay?: string | null;
+      validity?: string | null;
+    },
+    transcriptToAppend?: string,
+  ) {
+    if (!payeeId) {
+      throw new BadRequestException('payeeId is required');
+    }
+
+    const payee = await this.prisma.payee.findUnique({
+      where: { id: payeeId },
+    });
+    if (!payee) throw new NotFoundException('Payee not found');
+
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const existingVerification = await this.prisma.verification.findFirst({
+      where: {
+        payeeId,
+        createdAt: { gte: oneHourAgo },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: { payee: true },
+    });
+
+    const hasValue = (value: string | null | undefined): boolean => {
+      return value !== null && value !== undefined && String(value).trim().length > 0;
+    };
+
+    const updateData: {
+      transcript?: string;
+      coverage?: string | null;
+      deductible?: string | null;
+      copay?: string | null;
+      validity?: string | null;
+    } = {
+      transcript: existingVerification && transcriptToAppend?.trim()
+        ? `${existingVerification.transcript}\n\n---\n\n${transcriptToAppend}`
+        : (transcriptToAppend?.trim() ?? existingVerification?.transcript ?? ''),
+    };
+
+    if (hasValue(extracted.coverage)) {
+      updateData.coverage = extracted.coverage;
+    } else if (existingVerification?.coverage) {
+      updateData.coverage = existingVerification.coverage;
+    }
+    if (hasValue(extracted.deductible)) {
+      updateData.deductible = extracted.deductible;
+    } else if (existingVerification?.deductible) {
+      updateData.deductible = existingVerification.deductible;
+    }
+    if (hasValue(extracted.copay)) {
+      updateData.copay = extracted.copay;
+    } else if (existingVerification?.copay) {
+      updateData.copay = existingVerification.copay;
+    }
+    if (hasValue(extracted.validity)) {
+      updateData.validity = extracted.validity;
+    } else if (existingVerification?.validity) {
+      updateData.validity = existingVerification.validity;
+    }
+
+    this.logger.log('verifyFromExtractedCall: payeeId=' + payeeId + ' merged=' + JSON.stringify({
+      coverage: updateData.coverage,
+      deductible: updateData.deductible,
+      copay: updateData.copay,
+      validity: updateData.validity,
+      isUpdate: !!existingVerification,
+    }));
+
+    if (existingVerification) {
+      return this.prisma.verification.update({
+        where: { id: existingVerification.id },
+        data: updateData,
+        include: { payee: true },
+      });
+    }
+
+    return this.prisma.verification.create({
+      data: {
+        payeeId,
+        coverage: extracted.coverage ?? null,
+        deductible: extracted.deductible ?? null,
+        copay: extracted.copay ?? null,
+        validity: extracted.validity ?? null,
+        transcript: updateData.transcript ?? '',
+      },
+      include: { payee: true },
+    });
+  }
+
   async findAll(user: { userId: string; role: string }) {
     if (user.role === 'PAYEE') {
       if (!user.userId) {
