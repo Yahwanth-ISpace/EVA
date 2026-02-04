@@ -37,8 +37,8 @@ const SILENCE_RATIO_THRESHOLD = 0.85;
 const MAX_BUFFER_BYTES = 64_000;
 /** Fallback: process at most every N ms. Shorter = faster response when silence isn't detected. */
 const FALLBACK_PROCESS_INTERVAL_MS = 4000;
-/** Minimum ms to wait after EVA speaks before processing (give user time to hear and answer). Slightly lower = respond sooner. */
-const ANSWER_WINDOW_MS = 3000;
+/** Minimum ms to wait after EVA speaks before processing (give user time to hear and answer). Lower = less lag, respond sooner. */
+const ANSWER_WINDOW_MS = 2000;
 /** Max time allowed on hold before ending the call (9 minutes) */
 const HOLD_MAX_MS = 9 * 60 * 1000;
 /** Chunk size to send back to Twilio (20ms = 160 bytes at 8kHz mulaw). Smaller chunks = playback starts faster. */
@@ -70,9 +70,9 @@ function formatDobForSpeech(dob: Date): string {
   return `${month} ${day}, ${year}`;
 }
 
-/** First thing EVA says: intro only. Do not ask for any field — wait for the user to respond (e.g. identify yourself, patient name, or what details you want). */
+/** First thing EVA says: natural, human intro. Do not ask for any field — wait for the user to respond. */
 const CONVERSATION_GREETING =
-  'Hi, I am Reena from Went Dentals. How are you doing today?';
+  "Hi, I'm Reena from Went Dentals. How are you doing?";
 
 const EVA_HOLD_ACK = 'Sure, I\'ll hold. Take your time.';
 /** After they say "thanks for waiting", "are you there" etc. — acknowledge only; do not re-ask the question yet. */
@@ -81,7 +81,7 @@ const EVA_RESUME_ACK = 'No problem, thank you for getting back. I\'m on the call
 /** Duration (ms) to stay on the line after saying goodbye (in case user responds); then hang up if no input */
 const POST_GOODBYE_LISTEN_MS = 10_000;
 
-/** Detect if user is saying thank you / no more questions / goodbye (used in post-goodbye phase) */
+/** Detect if user is saying thank you / no more questions / goodbye / confirmation (used in post-goodbye phase) */
 function isThankYouOrGoodbye(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (!t || t.length < 2) return false;
@@ -89,7 +89,8 @@ function isThankYouOrGoodbye(text: string): boolean {
     /^(thank you|thanks|thank you so much|thanks a lot)/i.test(t) ||
     /^(no,?\s*)?(that'?s\s+all|nothing else|we'?re\s+done|goodbye|bye)$/i.test(t) ||
     /^(that'?s\s+all|nothing else|we'?re\s+done|goodbye|bye)(\s|$)/i.test(t) ||
-    /goodbye|that'?s\s+all\s*\.?\s*$/i.test(t)
+    /goodbye|that'?s\s+all\s*\.?\s*$/i.test(t) ||
+    /^(yes|yeah|yep|i'?m\s+all\s+set|we'?re\s+good|that'?s\s+it|all\s+good)$/i.test(t)
   );
 }
 
@@ -420,6 +421,7 @@ export class MediaStreamHandlerService {
               state.resumeCheckInterval = null;
             }
             this.logger.log('[MediaStream] User resumed from hold; transcript="' + userSaid + '" lastAskedField=' + (state.lastAskedField ?? 'none'));
+            state.buffer = []; // clear so next processing uses only fresh audio after ack (avoids "couldn't catch" from hold-music/stale audio)
             try {
               await speak(EVA_RESUME_ACK);
             } catch (e) {
@@ -503,28 +505,44 @@ export class MediaStreamHandlerService {
             state.processing = false;
             return;
           }
-          this.logger.log('[MediaStream] Post-goodbye: user said something, answering then ending');
+          this.logger.log('[MediaStream] Post-goodbye: user asked something, answering then waiting for confirmation before ending');
           try {
             const reply = await this.aiService.replyToUser(userSaid);
             await speak(reply);
+            await speak('Did that help? Let me know when you\'re all set.');
           } catch (e) {
             await speak('Sorry, I didn\'t catch that.');
+            await speak('Let me know when you\'re all set.');
           }
-          doPostGoodbyeHangUp();
+          state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
+          state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
           state.processing = false;
           return;
         }
 
+        // Don't treat greetings or substantive replies as noise ("hi", "good", "how can I help", numbers, etc.)
+        const looksLikeRealResponse = (s: string) => {
+          const t = s.trim().toLowerCase();
+          return (
+            /how can I help|how are you|doing good|doing great|how can i help|how can you help/i.test(t) ||
+            /^(hi|hey|hello|yes|no|yeah|ok|okay|good|great|fine|good morning|good afternoon)$/i.test(t) ||
+            t.length > 4 ||
+            transcriptHasValue(t)
+          );
+        };
+        const fillerOnly = /^(you|uh|um|oh|ah|eh|hmm|mmm)$/i.test(userSaid.trim());
         const noiseOrTooShort =
-          userSaid.length <= 2 ||
-          /^(you|uh|um|oh|ah|eh|hmm|mmm)$/i.test(userSaid);
+          (userSaid.length <= 2 && !/^(hi|hey|yes|no|yeah|ok)$/i.test(userSaid.trim())) ||
+          (fillerOnly && userSaid.length <= 4);
         const inaudibleLike = /^\[?inaudible\]?\.?$/i.test(userSaid) || /^\.{2,}$/.test(userSaid) || /^[\s\.\-]+$/.test(userSaid);
-        const isIdleOrEmpty = userSaid.length === 0 || noiseOrTooShort || inaudibleLike;
-        // When transcript is empty but we had very little audio, skip saying "repeat" so we don't cut off the user (next chunk may have speech).
+        const isIdleOrEmpty = userSaid.length === 0 || (noiseOrTooShort && !looksLikeRealResponse(userSaid)) || inaudibleLike;
+        // When transcript is empty but we had very little audio, skip saying "repeat" to avoid cutting off the user (next chunk may have speech).
         const skipRepeatForShortAudio = userSaid.length === 0 && combined.length < MIN_BYTES_BEFORE_REPEAT;
-        const effectiveTranscript = isIdleOrEmpty
-          ? 'User did not respond or was inaudible.'
-          : userSaid;
+        // Never send "inaudible" when user clearly said something (greeting, "how can I help", or a value).
+        const effectiveTranscript =
+          isIdleOrEmpty && !looksLikeRealResponse(userSaid)
+            ? 'User did not respond or was inaudible.'
+            : userSaid;
 
         if (skipRepeatForShortAudio) {
           this.logger.log('[MediaStream] Empty transcript but short audio (' + combined.length + ' bytes), skipping repeat to avoid cutting off user');
@@ -567,6 +585,19 @@ export class MediaStreamHandlerService {
             }
           }
         }
+
+        // Data validation: coverage = %, deductible/copay = $, validity = date (month and year). Polite correction if wrong type.
+        if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+          const validation = this.aiService.validateAndNormalizeBenefitExtracted(extractedUpdates, userSaid);
+          if (!validation.ok) {
+            this.logger.log('[MediaStream] Benefit value validation failed for ' + validation.invalidField + ': ' + validation.correctionMessage);
+            await speak(validation.correctionMessage);
+            state.processing = false;
+            return;
+          }
+          extractedUpdates = validation.normalized;
+        }
+
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
           if (hasValue(extractedUpdates.coverage ?? null)) state.extractedData.coverage = extractedUpdates.coverage ?? null;
           if (hasValue(extractedUpdates.deductible ?? null)) state.extractedData.deductible = extractedUpdates.deductible ?? null;
@@ -591,6 +622,42 @@ export class MediaStreamHandlerService {
         const goodbye = 'Thank you for confirming the details. That\'s all I have. Have a good day.';
         let toSpeak = (nextMessage ?? '').trim();
         const isGenericFallback = /^(what else|is there anything else)/i.test(toSpeak);
+        const soundsLikeRepeat = /didn'?t\s+(get|catch|understand)|couldn'?t\s+catch|sorry,?\s+I\s+didn'?t|can you (please\s+)?repeat|say that once again/i.test(toSpeak);
+        // Never say "I didn't catch you" when user clearly said something (e.g. "how can I help", "it is 80$") — keep conversation in sync.
+        if (looksLikeRealResponse(userSaid) && soundsLikeRepeat) {
+          if (/how can I help|how are you|doing good|doing great|how can i help/i.test(userSaid.trim())) {
+            toSpeak = 'I want to verify the patient details.';
+          } else if (transcriptHasValue(userSaid) && state.lastAskedField) {
+            const corrected = extractValueForField(userSaid, state.lastAskedField);
+            if (corrected) {
+              const oneUpdate: Record<string, string> = { [state.lastAskedField]: corrected };
+              const validation = this.aiService.validateAndNormalizeBenefitExtracted(oneUpdate, userSaid);
+              if (!validation.ok) {
+                toSpeak = validation.correctionMessage;
+              } else {
+                const norm = validation.normalized[state.lastAskedField];
+                if (norm) {
+                  if (state.lastAskedField === 'coverage') state.extractedData.coverage = norm;
+                  else if (state.lastAskedField === 'deductible') state.extractedData.deductible = norm;
+                  else if (state.lastAskedField === 'copay') state.extractedData.copay = norm;
+                  else if (state.lastAskedField === 'validity') state.extractedData.validity = norm;
+                }
+                state.lastAskedField = getFirstMissingField(state.extractedData);
+                if (!state.lastAskedField) {
+                  toSpeak = goodbye;
+                  shouldEndCall = true;
+                } else {
+                  toSpeak = 'Got it, thanks. ' + askForFieldPhrase(state.lastAskedField);
+                }
+              }
+            } else {
+              toSpeak = askForFieldPhrase(state.lastAskedField);
+            }
+          } else {
+            toSpeak = state.lastAskedField ? askForFieldPhrase(state.lastAskedField) : 'What is the coverage?';
+          }
+          this.logger.log('[MediaStream] Overriding AI repeat with proper reply (user said something substantive)');
+        }
         if (shouldEndCall) {
           toSpeak = goodbye;
           // Will enter post-goodbye below: stay on line briefly in case user responds, then hang up
@@ -656,9 +723,17 @@ export class MediaStreamHandlerService {
                   fullName: `${info.firstName} ${info.lastName}`.trim(),
                   dobFormatted: info.dob ? formatDobForSpeech(info.dob) : null,
                 };
+                this.logger.log('[MediaStream] Patient info loaded from DB for payeeId=' + state.payeeId);
+              } else {
+                this.logger.warn('[MediaStream] Payee not found in DB for payeeId=' + state.payeeId + ' — patient details will be unavailable on this call.');
               }
             }
-            if (!state.patientInfo) state.patientInfo = STATIC_PATIENT_INFO;
+            if (!state.patientInfo) {
+              if (!state.payeeId) {
+                state.patientInfo = STATIC_PATIENT_INFO;
+                this.logger.warn('[MediaStream] Using static patient info (no payeeId on stream). Pass payeeId in the stream URL to use real patient details from the database.');
+              }
+            }
             state.lastSpeakTime = Date.now();
             await speak(CONVERSATION_GREETING);
           } catch (e) {
