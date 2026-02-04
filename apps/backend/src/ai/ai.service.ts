@@ -346,8 +346,9 @@ WHAT TO SAY (check in this order). Use natural, human language. Confirm with "Ar
 - If they say they need a moment ("let me check", "one sec"): "Sure, take your time." extractedUpdates {}.
 - If they ask for info you don't have: "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?" Then if a field still missing: "So can I get the [first missing field]?" extractedUpdates {}.
 - If they ask "what are the details you want to know" / "what do you need to know": Ask for first missing field with a VARIED phrase: "Can I get the [field]?" / "May I have the [field]?" / "Can you provide the [field]?" / "What is the [field]?" Pick one. Do NOT add "Are we good?" here. Do NOT list all fields. extractedUpdates {}.
-- If they say "how can I help" / "how can I help you" / "how can I help you today": "I want to verify the patient details." or "I want to verify the benefits of a patient." Only. Do NOT say "sorry I didn't get you". extractedUpdates {}.
-- If transcript is "User did not respond or was inaudible" or silence: Say ONLY one short repeat request. Pick one: "Can you please repeat that?" / "Can you say that once again?" / "Sorry, I didn't catch that. Can you repeat?" Do NOT add "Can I get the [field]?" or "What is the [field]?" or any field question in this turn. Wait for the user to respond; do not ask for the next field after saying repeat. extractedUpdates {}.
+- CRITICAL: NEVER say "I didn't get you", "I didn't catch that", "Sorry I didn't catch that", or "couldn't catch" when the user said something substantive (e.g. "how can I help", "I'm doing good", "80 dollars", any number or amount). Only use a repeat phrase when transcript is EXACTLY "User did not respond or was inaudible." For greetings, "how can I help", or values, always respond with the appropriate line below. extractedUpdates as needed.
+- If they say "how can I help" / "how can I help you" / "how can I help you today" / "I'm doing good how can I help" / "hi how can I help": "I want to verify the patient details." or "I want to verify the benefits of a patient." Only. Do NOT say "sorry I didn't get you". extractedUpdates {}.
+- If transcript is EXACTLY "User did not respond or was inaudible" or silence: Say ONLY one short repeat request. Pick one: "Can you please repeat that?" / "Can you say that once again?" Do NOT add "Can I get the [field]?" in this turn. extractedUpdates {}.
 - If they gave a value for the current field (number/amount): extract it, say "Got it, thanks." or "Thanks." or "Okay, thanks.", then ask for next field with a VARIED phrase: "Can I get the [next field]?" / "May I have the [next field]?" / "Can you provide the [next field]?" / "What is the [next field]?" One field only.
 - If they ask to update or correct a value: put new value in extractedUpdates, say "Updated. I've got that. Thanks." Then "So can I get the next field?" if more needed.
 - If they asked a general question (how are you): answer briefly. Do NOT add "Are we good?" Do not ask for a field in same turn. extractedUpdates {}.
@@ -466,6 +467,174 @@ Respond with ONLY a JSON object. No markdown. Format:
     if (!has(updated.copay)) return 'copay';
     if (!has(updated.validity)) return 'validity';
     return null;
+  }
+
+  /** Benefit field validation: coverage = percentage, deductible/copay = dollars, validity = date (month and year). */
+  private isPercentage(s: string): boolean {
+    const t = String(s).trim().toLowerCase();
+    return /\d+\s*%|\d+\s*percent|%\s*\d+/.test(t);
+  }
+
+  private isDollars(s: string): boolean {
+    const t = String(s).trim().toLowerCase();
+    return /\d+\s*dollars?|\$\s*\d+|\d+\s*\$|dollar\s*\d+/.test(t);
+  }
+
+  /** Normalize validity to "21st Dec 2028" format. Returns null if not parseable. */
+  private normalizeValidity(value: string): string | null {
+    const t = value.trim();
+    if (!t) return null;
+    const months: Record<string, number> = {
+      jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
+      may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8,
+      oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
+    };
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const ord = (n: number) => {
+      if (n >= 11 && n <= 13) return n + 'th';
+      const d = n % 10;
+      if (d === 1) return n + 'st';
+      if (d === 2) return n + 'nd';
+      if (d === 3) return n + 'rd';
+      return n + 'th';
+    };
+
+    // Try "21st december 2028" / "21 december 2028" / "dec 21 2028"
+    const dmy = t.match(/(\d{1,2})(?:st|nd|rd|th)?\s+(\w+)\s+(\d{2,4})/i);
+    if (dmy) {
+      const day = parseInt(dmy[1], 10);
+      const monthKey = dmy[2].toLowerCase().replace(/ember$/, '').replace(/uary$/, '').slice(0, 3);
+      const monthNum = months[monthKey] ?? months[dmy[2].toLowerCase().slice(0, 3)];
+      const year = dmy[3].length === 2 ? '20' + dmy[3] : dmy[3];
+      if (monthNum !== undefined && day >= 1 && day <= 31) {
+        return `${ord(day)} ${monthNames[monthNum]} ${year}`;
+      }
+    }
+
+    // Try "21/12/2028" or "21/12/28" or "12/21/2028" (month/day/year)
+    const slash = t.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+    if (slash) {
+      const a = parseInt(slash[1], 10);
+      const b = parseInt(slash[2], 10);
+      const y = slash[3].length === 2 ? '20' + slash[3] : slash[3];
+      let day: number, month: number;
+      if (b <= 12 && a <= 31) {
+        month = b - 1;
+        day = a;
+      } else if (a <= 12 && b <= 31) {
+        month = a - 1;
+        day = b;
+      } else {
+        return null;
+      }
+      if (month >= 0 && month <= 11 && day >= 1 && day <= 31) {
+        return `${ord(day)} ${monthNames[month]} ${y}`;
+      }
+    }
+
+    // Try "december 21 2028" / "Dec 21, 2028"
+    const mdy = t.match(/(\w+)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{2,4})/i);
+    if (mdy) {
+      const monthNum = months[mdy[1].toLowerCase().slice(0, 3)] ?? months[mdy[1].toLowerCase()];
+      const day = parseInt(mdy[2], 10);
+      const year = mdy[3].length === 2 ? '20' + mdy[3] : mdy[3];
+      if (monthNum !== undefined && day >= 1 && day <= 31) {
+        return `${ord(day)} ${monthNames[monthNum]} ${year}`;
+      }
+    }
+
+    // Try "December 2028" / "Dec 2028" (month and year only) → treat as 1st of that month
+    const my = t.match(/(\w+)\s+(\d{2,4})/i);
+    if (my) {
+      const monthNum = months[my[1].toLowerCase().slice(0, 3)] ?? months[my[1].toLowerCase()];
+      const year = my[2].length === 2 ? '20' + my[2] : my[2];
+      if (monthNum !== undefined && /^\d{4}$/.test(year)) {
+        return `1st ${monthNames[monthNum]} ${year}`;
+      }
+    }
+
+    return null;
+  }
+
+  private looksLikeDate(s: string): boolean {
+    const t = s.trim().toLowerCase();
+    return (
+      /\d{1,2}(\/|-)\d{1,2}(\/|-)\d{2,4}/.test(t) ||
+      /\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(t) ||
+      /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}/i.test(t) ||
+      /\d{4}|20\d{2}/.test(t)
+    );
+  }
+
+  /**
+   * Validates and normalizes extracted benefit values.
+   * - coverage: must be percentage
+   * - deductible, copay: must be dollars
+   * - validity: must be date (month and year); normalized to "21st Dec 2028"
+   * Returns either normalized updates to merge, or a polite correction message for the user.
+   */
+  public validateAndNormalizeBenefitExtracted(
+    extracted: {
+      coverage?: string | null;
+      deductible?: string | null;
+      copay?: string | null;
+      validity?: string | null;
+    },
+    userSaid: string,
+  ): { ok: true; normalized: Record<string, string> } | { ok: false; correctionMessage: string; invalidField: string } {
+    const quote = (v: string) => (v && v.length > 25 ? v.slice(0, 22) + '...' : v) || 'that';
+    const out: Record<string, string> = {};
+
+    if (extracted.coverage != null && String(extracted.coverage).trim()) {
+      const v = String(extracted.coverage).trim();
+      if (!this.isPercentage(v)) {
+        return {
+          ok: false,
+          invalidField: 'coverage',
+          correctionMessage: `I noticed you said "${quote(v)}". For coverage, I need that as a percentage. Could you share it again?`,
+        };
+      }
+      const pct = v.match(/(\d+)\s*%|(\d+)\s*percent/i);
+      out.coverage = pct ? `${pct[1] || pct[2]} percent` : v;
+    }
+    if (extracted.deductible != null && String(extracted.deductible).trim()) {
+      const v = String(extracted.deductible).trim();
+      if (!this.isDollars(v)) {
+        return {
+          ok: false,
+          invalidField: 'deductible',
+          correctionMessage: `I noticed you said "${quote(v)}". For the deductible, I need that in dollars. Could you share it again?`,
+        };
+      }
+      const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
+      out.deductible = dol ? `${dol[1] || dol[2] || dol[3]} dollars` : v;
+    }
+    if (extracted.copay != null && String(extracted.copay).trim()) {
+      const v = String(extracted.copay).trim();
+      if (!this.isDollars(v)) {
+        return {
+          ok: false,
+          invalidField: 'copay',
+          correctionMessage: `I noticed you said "${quote(v)}". For the copay, I need that in dollars. Could you share it again?`,
+        };
+      }
+      const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
+      out.copay = dol ? `${dol[1] || dol[2] || dol[3]} dollars` : v;
+    }
+    if (extracted.validity != null && String(extracted.validity).trim()) {
+      const v = String(extracted.validity).trim();
+      const normalized = this.normalizeValidity(v);
+      if (!normalized || !this.looksLikeDate(v)) {
+        return {
+          ok: false,
+          invalidField: 'validity',
+          correctionMessage: `I noticed you said "${quote(v)}". For validity, I need a date with month and year. Could you share it again?`,
+        };
+      }
+      out.validity = normalized;
+    }
+
+    return { ok: true, normalized: out };
   }
 
   private tryExtractFieldFromTranscript(
