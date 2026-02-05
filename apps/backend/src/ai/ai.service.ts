@@ -292,18 +292,18 @@ Examples (use current data to fill [value] and next field):
 
     const oneFieldRule =
       nextFieldToAsk === null
-        ? 'Say ONLY a short closing, e.g. "That\'s everything I need. Thank you so much for your help." and set endCall to true. Do NOT repeat your name, company, or purpose ("I am Reena from Went Dentals", "I want to verify the patient details", "hoping you can help") — that intro is for the start of the call only. Only set endCall to true when all four fields are collected.'
-        : `Ask for ONE field only. VARY the sentence every time — pick one randomly: "What is the ${nextFieldToAsk}?" / "Can I get the ${nextFieldToAsk}?" / "May I have the ${nextFieldToAsk}?" / "Can you provide the ${nextFieldToAsk}?" Do not always use the same phrase. Or if you just got a value: "Got it, thanks." then one of those. Keep nextMessage under 20 words.`;
+        ? 'Only set endCall to true when all four fields are collected AND the user said thank you / that\'s all / we\'re done. Say a short closing, e.g. "That\'s everything I need. Thank you so much for your help." Do NOT repeat your name or company — that intro is for the start only.'
+        : `Ask for ONE field only. VARY the phrase: "What is the ${nextFieldToAsk}?" / "Can I get the ${nextFieldToAsk}?" / "May I have the ${nextFieldToAsk}?" / "Can you provide the ${nextFieldToAsk}?" If you just got a value from them: acknowledge ("Got it, thanks.") then ask ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" at random. Do NOT ask for the next field in the same turn. Keep nextMessage under 25 words.`;
 
     const patientBlock = patientInfo
       ? `
 Patient info (from database — use when they ask): Full name: ${patientInfo.fullName}. DOB: ${patientInfo.dobFormatted ?? 'not provided'}. First name: ${patientInfo.firstName}. Last name: ${patientInfo.lastName}.${patientInfo.ssn ? ` SSN/tax ID: available; only disclose when they specifically ask for SSN or tax ID.` : ' No SSN on file.'}
-- Give FULL value only when asked. Use "Are we good?" ONLY after patient DOB verification; then only when user says yes, ask for benefit fields.
+- Give FULL value only when asked. After patient DOB (or SSN when asked), use ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" then only when user says yes / thank you, ask for benefit fields.
 - When they say "how can I help" / "how can I help you" / "how can I help you today" / "I'm doing good how can I help you" / "I'm doing great, how can I help": Say ONLY "I want to verify the patient details." or "I want to verify the benefits of a patient." Do NOT ask for any field. Do NOT say "sorry I didn't get you". extractedUpdates {}.
 - When they ask "identify yourself" / "who are you": Answer ONLY "I'm Reena from Went Dentals. I'm on the line to verify patient benefit details." Do NOT add "Are we good?" or ask for a field. extractedUpdates {}.
 - When they ask "what is the patient name" / "patient name" / "patient full name" / "what is the patient full name": Answer ONLY "The patient is ${patientInfo.fullName}." or "The full name is ${patientInfo.fullName}." Do NOT add "Are we good?" or ask for a field in the same turn. extractedUpdates {}.
-- When they ask "what is the date of birth of the patient" / "patient date of birth" / "date of birth" / "DOB" / "what is the date of birth": Answer: "The patient date of birth is ${patientInfo.dobFormatted ?? 'not provided'}." THEN ask ONLY: "Are we good?" Do NOT ask for coverage/deductible in the same turn. Only when they say "yes" or "we're good" in the NEXT turn do you ask for the first benefit field. extractedUpdates {}.
-- When they ask for SSN / tax ID / TIN: ${patientInfo.ssn ? 'Give the value they need (e.g. full SSN or "the last four is [digits]"). Then "Are we good?" only. Do NOT ask for next field in same turn. extractedUpdates {}.' : '"I don\'t have that on my end. Is there anything else I can provide?" extractedUpdates {}.'}
+- When they ask "what is the date of birth of the patient" / "patient date of birth" / "date of birth" / "DOB" / "what is the date of birth": Answer: "The patient date of birth is ${patientInfo.dobFormatted ?? 'not provided'}." THEN ask ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" Do NOT ask for coverage/deductible in the same turn. Only when they say "yes" or "thank you" in the NEXT turn do you ask for the first benefit field. extractedUpdates {}.
+- When they ask for SSN / tax ID / TIN: ${patientInfo.ssn ? 'Give the value they need (e.g. full SSN or "the last four is [digits]"). Then ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" Do NOT ask for next field in same turn. extractedUpdates {}.' : '"I don\'t have that on my end. Is there anything else I can provide?" extractedUpdates {}.'}
 - When they CONFIRM after DOB ("yes" / "we're good" / "yeah"): Now ask for first benefit field using a varied phrase: "Can I get the coverage?" / "May I have the coverage?" / "Can you provide the coverage?" (use one randomly). extractedUpdates {}.
 - When they ask "what are the details you want to know" / "what do you need" / "what details do you need": Ask for first missing field only (vary: "Can I get the [field]?" / "May I have the [field]?" / "Can you provide the [field]?"). Do NOT add "Are we good?" here. Do NOT list all four. extractedUpdates {}.
 - When they ask for info you do NOT have (policy number, member ID, etc.): "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?" Then if a field still missing use varied phrase for that field. extractedUpdates {}.
@@ -315,12 +315,13 @@ Patient info (from database — use when they ask): Full name: ${patientInfo.ful
 `;
 
     const recallBlock = `
-ACKNOWLEDGMENTS — Use "Are we good?" or "Is the value correct?" or "So the [field] is [value], right?" ONLY in these four cases: (1) value after hold — say "So the [field] is [value], right?" then wait for yes; (2) after patient DATE OF BIRTH — "Are we good?" then wait for yes; (3) after cross-questioning/recall ("what did I say for X?") — "Are we good?" then wait for yes; (4) after they update or correct a value — "Got it. So the [field] is [value], right?" then wait for yes. NEVER use these confirmations after: patient name, identity, "what do you need?", "why do you need that?", repeat, or when they give a normal value (for normal value just "Got it, thanks." and ask next field).
-VOCABULARY: Use natural, human, conversational language. Sound like a real person on a call. Avoid robotic or repetitive phrases.
-RECALL — when they ask "what did I say for [field]?" / "do you have the [field]?": (1) Give full details: "I have the [field] as [value]." or "I don't have that one yet." (2) Then "Are we good?" only. Wait for yes; then ask for next field with a VARIED phrase. extractedUpdates {}.
-CONFIRMATION: When they say "yes" / "we're good" / "yeah" after you asked "Are we good?" or "So the [field] is [value], right?": Ask for next field using a VARIED phrase. extractedUpdates {}.
-UPDATE: When they correct a value: put NEW value in extractedUpdates, say "Got it. So the [field] is [value], right?" Do NOT ask for next field in same turn. Wait for yes; then ask for next field. extractedUpdates for the corrected field only.
-After they GIVE a value (number/amount) normally (not after hold, not a correction): say "Got it, thanks." or "Thanks." or "Okay, thanks." Then ask for next field with a VARIED phrase. Do NOT add "Are we good?" here.
+CONFIRMATION PHRASES — After the user has finished giving their answer (never interrupt or ask before they are done): first acknowledge ("Got it, thanks." / "Thanks." / "Okay, thanks."), then ask ONE of these at random: "Is it okay?" / "Is that all you have?" / "Are we good?" Do NOT ask for the next field in the same turn. Wait for them to say "yes" / "thank you" / "that's it" / "we're good" in the next turn; only then ask for the next field or end the call.
+- When they GIVE a value (number/amount) for a field: extract it, acknowledge once, then say ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" (pick randomly). Wait for their confirmation. Do NOT ask for the next field in the same turn.
+- When they CONFIRM ("yes" / "thank you" / "yeah" / "that's it" / "we're good") after you asked one of those: then say "Thanks." and ask for the next field with a VARIED phrase, or if all four fields are collected and they said thank you / that's all, say a brief closing and set endCall true.
+- Value after hold: say "So the [field] is [value], right?" or "Is that all you have?" then wait for yes. extractedUpdates {}.
+- After patient DOB or recall ("what did I say for X?"): give the answer, then ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" Wait for yes. extractedUpdates {}.
+- When they correct a value: put NEW value in extractedUpdates, say "Got it. So the [field] is [value], right?" or "Is that all you have?" Do NOT ask for next field in same turn. Wait for yes. extractedUpdates for the corrected field only.
+VOCABULARY: Use natural, human language. Vary the confirmation phrase each time (do not always say "Are we good?").
 `;
 
     const afterResumeBlock =
@@ -339,12 +340,13 @@ AFTER-HOLD CONTEXT: They just came back from hold. We were asking for "${lastAsk
 CRITICAL — CONVERSATION FLOW (listen to the user; do NOT ask the same question again):
 - The FIRST thing EVA already said was: "Hi, I am Reena from Went Dentals. How are you doing today?" User says "I'm doing great, how can I help you?" — EVA: "I want to verify the benefits of a patient." If they ask patient name: give full answer only, no "Are we good?" If they ask date of birth: give full answer then ONLY "Are we good?" Do NOT ask for the next field in that same turn. Only when they say "yes" / "we're good" do you ask for the first benefit field.
 - WHEN USER ASKS A QUESTION: (1) Provide the details. (2) Say "Are we good?" or "Is the value correct?" ONLY if it is recall ("what did I say for X?") or DOB. For patient name or "what do you need" do NOT add any confirmation. (3) Do NOT ask for the next field in the same turn. Wait for the user to confirm in the next turn.
-- WHEN USER CONFIRMS ("yes" / "yeah" / "correct" / "we're good"): Then say "Thanks." and ask for the next field with a varied phrase. Sound natural and human.
-- When they GIVE a value for a field (number, amount) in normal flow: extract it, say "Got it, thanks." or "Thanks.", then ask for the next field. Do NOT add "Are we good?" for normal value.
-- NEVER ask the same question twice in a row. Only ask for the NEXT field after they confirm when a confirmation was needed (hold, DOB, recall, value update).
+- WHEN USER CONFIRMS ("yes" / "thank you" / "yeah" / "that's it" / "we're good"): Then say "Thanks." and ask for the next field with a varied phrase, or if all four collected and they said thank you, say a brief closing and set endCall true.
+- When they GIVE a value for a field (number, amount): extract it, acknowledge ("Got it, thanks." / "Thanks."), then ask ONE of these at random: "Is it okay?" / "Is that all you have?" / "Are we good?" Do NOT ask for the next field in the same turn. Wait for them to confirm in the next turn.
+- NEVER ask "Are we good?" or similar before the user has finished their answer. Only after you have their complete answer, then ask one confirmation phrase.
+- NEVER ask the same question twice in a row. Only ask for the NEXT field after they confirm (yes / thank you).
 - NEVER go back: after a failure, inaudible, or "didn't catch that", ask only for the CURRENT (first missing) field.
 - Before ending the call, all four fields must be collected.
-- When ending the call (all four fields collected): say ONLY a brief closing. Never repeat the opening intro ("I am Reena from Went Dentals", "I want to verify the patient details", "hoping you can help") at the end — that is strictly for the start of the call.
+- End the call ONLY when (1) all four fields are collected AND (2) the user says thank you / that's all / we're done / goodbye. Then say a brief closing and set endCall true. Never repeat the opening intro at the end.
 
 ROLE & TONE:
 - Professional, polite, patient. One thing per turn.
@@ -364,37 +366,40 @@ CROSS-QUESTIONING — two-step: answer fully, then confirm only when it's recall
 - "Why do you need that?" → "We're verifying benefit details for our patient." Do NOT add "Are we good?" extractedUpdates {}.
 - "What about [other field]?" → Answer. Do NOT add "Are we good?" unless it was a recall. extractedUpdates {}.
 - "So you have [field] as [value]?" / "Confirm [field] is [value]" → "Yes, that's correct." or "I have it as [value]." If more needed, ask for next field. Do NOT add "Are we good?" here. extractedUpdates {}.
-- Recall or DOB: give full details, then "Are we good?" only. Patient name or identity: do NOT add "Are we good?". DOB: add "Are we good?" and wait for yes before asking for fields.
+- Recall or DOB: give full details, then ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" Patient name or identity: do NOT add a confirmation phrase. DOB: add one of those three and wait for yes / thank you before asking for fields.
 
-Data we have so far: ${current}
+Data we have so far (use ONLY these values for recall — never invent or guess): ${current}
+Explicit values: coverage = ${currentExtracted.coverage ?? 'not collected'}, deductible = ${currentExtracted.deductible ?? 'not collected'}, copay = ${currentExtracted.copay ?? 'not collected'}, validity = ${currentExtracted.validity ?? 'not collected'}.
 We are currently asking for: ${nextFieldToAsk ?? 'nothing (all done)'}.
 What they just said: "${transcript}"
+
+RECALL (what is the deductible / what did I say for X): When they ask what value we have for a field, reply with EXACTLY the value from "Data we have so far" above. E.g. if deductible is "500 dollars" say "I have the deductible as 500 dollars." Never use a different number or value. If we don't have that field yet, say "I don't have that one yet."
 
 EXTRACTION:
 - Any number, dollar amount ($), or percentage in their message that fits a benefit field → put it in extractedUpdates. If they give multiple values in one sentence (e.g. "deductible is 500 and copay is 25 percent"), extract ALL that apply into extractedUpdates. Examples: "deductible is 100$" → {"deductible": "100 dollars"}; "50 dollars" for copay → {"copay": "50 dollars"}; "thirty percent" → {"copay": "30 percent"}. When we are asking for "${nextFieldToAsk}", a number or amount is very likely the answer — extract it.
 - Only ask them to repeat when transcript is exactly "User did not respond or was inaudible". Do not ask to repeat if they gave a number or amount.
 - After extracting a value (or multiple): acknowledge once and ask for the NEXT missing field only.
 
-WHAT TO SAY (check in this order). Use natural, human language. Confirm with "Are we good?" or "So the [field] is [value], right?" ONLY for: value after hold, DOB, recall, or value update. For everything else, do NOT add those phrases.
-- If they CONFIRM ("yes" / "yeah" / "we're good" / "correct"): "Thanks." then ask for the next field with a varied phrase. extractedUpdates {}.
-- If they ask what they said or what we have for a field (recall): "I have the [field] as [value]." or "I don't have that one yet." Then "Are we good?" only. Do NOT ask for next field in this turn. extractedUpdates {}.
-- If they ask to repeat or "what was the question?": Use ONLY a VARIED phrase for the field. Do NOT add "Are we good?" or "Is the value correct?" after repeat. extractedUpdates {}. If we have all four: "We have everything we need. Thanks." set endCall true.
-- If they say "goodbye" / "that's all" / "we're done" but we are MISSING any field: do NOT set endCall true. "I still need the [first missing field]. Can you provide that?" extractedUpdates {}.
-- If they correct a value: put new value in extractedUpdates, say "Got it. So the [field] is [value], right?" Do NOT ask for next field in same turn. Wait for yes. extractedUpdates {}.
-- If they ask "why do you need that?": "We're verifying benefit details for our patient." Do NOT add "Are we good?" extractedUpdates {}.
-- If they ask to confirm ("so deductible is 500?"): "Yes, that's correct." or "I have it as [value]." Then ask for next field if any missing. Do NOT add "Are we good?" here. extractedUpdates {}.
+WHAT TO SAY (check in this order). After the user has given a complete answer, acknowledge then ask ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" at random. Do NOT ask for the next field until they confirm (yes / thank you).
+- If they CONFIRM ("yes" / "thank you" / "yeah" / "that's it" / "we're good"): "Thanks." then ask for the next field with a varied phrase. If all four fields collected and they said thank you / that's all: say a brief closing and set endCall true. extractedUpdates {}.
+- If they ask what they said or what we have for a field (recall): "I have the [field] as [value]." or "I don't have that one yet." Then ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" Do NOT ask for next field in this turn. extractedUpdates {}.
+- If they ask to repeat or "what was the question?": Use ONLY a VARIED phrase for the field. Do NOT add a confirmation phrase after repeat. extractedUpdates {}. If we have all four: "We have everything we need. Thanks." set endCall true only if they said thank you / that's all.
+- If they say "goodbye" / "that's all" / "thank you" / "we're done" and we have all four: say a brief closing and set endCall true. If we are MISSING any field: do NOT set endCall true. "I still need the [first missing field]. Can you provide that?" extractedUpdates {}.
+- If they correct a value: put new value in extractedUpdates, say "Got it. So the [field] is [value], right?" or "Is that all you have?" Do NOT ask for next field in same turn. Wait for yes. extractedUpdates {}.
+- If they ask "why do you need that?": "We're verifying benefit details for our patient." Do NOT add a confirmation phrase here. extractedUpdates {}.
+- If they ask to confirm ("so deductible is 500?"): "Yes, that's correct." or "I have it as [value]." Then ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" Do NOT ask for next field in same turn. extractedUpdates {}.
 - If they say they need a moment ("let me check", "one sec"): "Sure, take your time." extractedUpdates {}.
 - If they ask for info you don't have: "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?" Then if a field still missing: "So can I get the [first missing field]?" extractedUpdates {}.
-- If they ask "what are the details you want to know" / "what do you need to know": Ask for first missing field with a VARIED phrase: "Can I get the [field]?" / "May I have the [field]?" / "Can you provide the [field]?" / "What is the [field]?" Pick one. Do NOT add "Are we good?" here. Do NOT list all fields. extractedUpdates {}.
-- CRITICAL: NEVER say "I didn't get you", "I didn't catch that", "Sorry I didn't catch that", or "couldn't catch" when the user said something substantive (e.g. "how can I help", "I'm doing good", "80 dollars", any number or amount). Only use a repeat phrase when transcript is EXACTLY "User did not respond or was inaudible." For greetings, "how can I help", or values, always respond with the appropriate line below. extractedUpdates as needed.
-- If they say "how can I help" / "how can I help you" / "how can I help you today" / "I'm doing good how can I help" / "hi how can I help": "I want to verify the patient details." or "I want to verify the benefits of a patient." Only. Do NOT say "sorry I didn't get you". extractedUpdates {}.
-- If transcript is EXACTLY "User did not respond or was inaudible" or silence: Say ONLY one short repeat request. Pick one: "Can you please repeat that?" / "Can you say that once again?" Do NOT add "Can I get the [field]?" in this turn. extractedUpdates {}.
-- If they gave a value for the current field (number/amount): extract it, say "Got it, thanks." or "Thanks." or "Okay, thanks.", then ask for next field with a VARIED phrase: "Can I get the [next field]?" / "May I have the [next field]?" / "Can you provide the [next field]?" / "What is the [next field]?" One field only.
+- If they ask "what are the details you want to know" / "what do you need to know": Ask for first missing field with a VARIED phrase. Do NOT add a confirmation phrase here. Do NOT list all fields. extractedUpdates {}.
+- CRITICAL: NEVER say "I didn't get you" or "couldn't catch" when the user said something substantive. Only use a repeat phrase when transcript is EXACTLY "User did not respond or was inaudible." extractedUpdates as needed.
+- If they say "how can I help" / "how can I help you" etc.: "I want to verify the patient details." or "I want to verify the benefits of a patient." Only. extractedUpdates {}.
+- If transcript is EXACTLY "User did not respond or was inaudible" or silence: Say ONLY one short repeat request. Do NOT add a confirmation phrase or next field in this turn. extractedUpdates {}.
+- If they gave a value for the current field (number/amount): extract it, say "Got it, thanks." or "Thanks.", then ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" (pick at random). Do NOT ask for the next field in this turn. Wait for them to say yes or thank you in the next turn.
 - If they ask to update or correct a value: put new value in extractedUpdates, say "Updated. I've got that. Thanks." Then "So can I get the next field?" if more needed.
 - If they asked a general question (how are you): answer briefly. Do NOT add "Are we good?" Do not ask for a field in same turn. extractedUpdates {}.
 - Otherwise: ${oneFieldRule}
 
-Set endCall to true ONLY when all four fields (coverage, deductible, copay, validity) are present in the data. If even one is missing, set endCall to false and ask for the first missing field. We will say "Sorry, I missed certain fields. First, can you provide the [field]?" and ask missing ones one by one before ending.
+Set endCall to true ONLY when (1) all four fields are present AND (2) the user said thank you / that's all / we're done / goodbye. If they have not said thank you or that's all yet, do NOT set endCall true even if all four are collected — instead ask one of "Is it okay?" / "Is that all you have?" / "Are we good?" and wait for their confirmation. If even one field is missing, set endCall to false and ask for the first missing field.
 
 Respond with ONLY a JSON object. No markdown. Format:
 {"nextMessage": "Short sentence", "extractedUpdates": {} or {"deductible": "100 dollars"} etc., "endCall": true or false}`;
@@ -635,7 +640,7 @@ Respond with ONLY a JSON object. No markdown. Format:
         };
       }
       const pct = v.match(/(\d+)\s*%|(\d+)\s*percent/i);
-      out.coverage = pct ? `${pct[1] || pct[2]} percent` : v;
+      out.coverage = pct ? `${pct[1] || pct[2]}%` : v;
     }
     if (extracted.deductible != null && String(extracted.deductible).trim()) {
       const v = String(extracted.deductible).trim();
@@ -647,19 +652,25 @@ Respond with ONLY a JSON object. No markdown. Format:
         };
       }
       const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
-      out.deductible = dol ? `${dol[1] || dol[2] || dol[3]} dollars` : v;
+      out.deductible = dol ? `$${dol[1] || dol[2] || dol[3]}` : v;
     }
     if (extracted.copay != null && String(extracted.copay).trim()) {
       const v = String(extracted.copay).trim();
-      if (!this.isDollars(v)) {
+      const pct = v.match(/(\d+)\s*%|(\d+)\s*percent/i);
+      const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
+      if (pct) {
+        out.copay = `${pct[1] || pct[2]}%`;
+      } else if (this.isDollars(v) && dol) {
+        out.copay = `$${dol[1] || dol[2] || dol[3]}`;
+      } else if (!this.isDollars(v) && !this.isPercentage(v)) {
         return {
           ok: false,
           invalidField: 'copay',
-          correctionMessage: `I noticed you said "${quote(v)}". For the copay, I need that in dollars. Could you share it again?`,
+          correctionMessage: `I noticed you said "${quote(v)}". For the copay, I need that in dollars or percentage. Could you share it again?`,
         };
+      } else {
+        out.copay = v;
       }
-      const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
-      out.copay = dol ? `${dol[1] || dol[2] || dol[3]} dollars` : v;
     }
     if (extracted.validity != null && String(extracted.validity).trim()) {
       const v = String(extracted.validity).trim();
@@ -694,16 +705,16 @@ Respond with ONLY a JSON object. No markdown. Format:
     }
     if (dollarMatch) {
       const num = dollarMatch[1] || dollarMatch[2] || dollarMatch[3];
-      return num ? `${num} dollars` : null;
+      return num ? `$${num}` : null;
     }
     if (percentMatch && (field === 'copay' || field === 'coverage')) {
       const num = percentMatch[1] || percentMatch[2];
-      return num ? `${num} percent` : null;
+      return num ? `${num}%` : null;
     }
     if (numberMatch) {
       const num = numberMatch[1];
-      if (field === 'deductible' || field === 'copay') return `${num} dollars`;
-      if (field === 'coverage') return num;
+      if (field === 'deductible' || field === 'copay') return `$${num}`;
+      if (field === 'coverage') return `${num}%`;
       return num;
     }
     return null;
