@@ -11,11 +11,11 @@ import { Response } from 'express';
 import { TwilioService } from './twilio.service';
 import { ElevenLabsService } from '../voice/elevenlabs.service';
 
-const backendBaseUrl = process.env.BACKEND_URL;
+const backendBaseUrl = (process.env.BACKEND_URL || '').trim() || `http://localhost:${process.env.PORT ?? 3000}`;
 
 /**
- * TwilioController handles phone call infrastructure via Twilio
- * All voice generation is handled by ElevenLabsService (not Twilio's voice)
+ * TwilioController handles phone call infrastructure via Twilio.
+ * IVR: Press 1 complaints, 2 register insurance, 3 latest offers, 4 talk to agent (hold 10s then dial).
  */
 @Controller('twilio')
 export class TwilioController {
@@ -25,35 +25,89 @@ export class TwilioController {
   ) {}
 
   /**
-   * Inbound call webhook — "A call comes in" (Twilio POST to /twilio/inbound).
-   * Returns TwiML to start the IVR flow. Uses INBOUND_PAYEE_ID or "inbound".
+   * IVR inbound — when a call comes in, play menu and gather 1–4.
+   * Configure Twilio phone number webhook: POST {{BACKEND_URL}}/twilio/inbound
    */
   @Post('inbound')
   async handleInbound(@Body() body: Record<string, string>, @Res() res: Response) {
-    const payeeId =
-      process.env.INBOUND_PAYEE_ID?.trim() || body?.payeeId || 'inbound';
+    res.type('text/xml').send(`
+      <Response>
+        <Gather numDigits="1" action="${backendBaseUrl}/twilio/ivr-menu" method="POST" timeout="5">
+          <Say voice="alice">Thank you for calling. Press 1 for complaints. Press 2 to register for insurance. Press 3 for latest insurance offers. Press 4 to speak with a customer agent.</Say>
+        </Gather>
+        <Say voice="alice">We didn't receive any input. Goodbye.</Say>
+        <Hangup/>
+      </Response>
+    `);
+  }
 
-    try {
-      const welcomeAudio = await this.elevenLabsService.synthesize(
-        'Thank you for calling. Please hold while we connect you.',
-      );
+  /**
+   * IVR menu handler — branch on digit (1–4). Option 4: hold 10 seconds then dial agent number.
+   */
+  @Post('ivr-menu')
+  async handleIvrMenu(@Body() body: Record<string, string>, @Res() res: Response) {
+    const digits = (body?.Digits || body?.digits || '').trim();
+    const base = backendBaseUrl;
 
-      res.type('text/xml').send(`
-        <Response>
-          <Play>${welcomeAudio}</Play>
-          <Redirect method="POST">${backendBaseUrl}/twilio/step?step=0&amp;payeeId=${encodeURIComponent(payeeId)}</Redirect>
-        </Response>
-      `);
-    } catch (error) {
-      const errorAudio = await this.elevenLabsService.synthesize(
-        'Sorry, we are unable to take your call right now. Please try again later.',
-      );
-      res.type('text/xml').send(`
-        <Response>
-          <Play>${errorAudio}</Play>
-          <Hangup/>
-        </Response>
-      `);
+    switch (digits) {
+      case '1': {
+        res.type('text/xml').send(`
+          <Response>
+            <Say voice="alice">You selected complaints. Our team will note your concern. You can also email us at support at went dentals dot com. Thank you for calling.</Say>
+            <Hangup/>
+          </Response>
+        `);
+        return;
+      }
+      case '2': {
+        res.type('text/xml').send(`
+          <Response>
+            <Say voice="alice">You selected insurance registration. Please visit our website or call back during business hours to complete registration. Thank you for calling.</Say>
+            <Hangup/>
+          </Response>
+        `);
+        return;
+      }
+      case '3': {
+        res.type('text/xml').send(`
+          <Response>
+            <Say voice="alice">You selected latest insurance offers. Current offers are available on our website. Thank you for calling.</Say>
+            <Hangup/>
+          </Response>
+        `);
+        return;
+      }
+      case '4': {
+        const agentNumber = (process.env.IVR_AGENT_PHONE_NUMBER || process.env.TWILIO_AGENT_PHONE_NUMBER || '').trim();
+        if (!agentNumber) {
+          res.type('text/xml').send(`
+            <Response>
+              <Say voice="alice">We are unable to transfer you to an agent at this time. Please try again later or call back. Goodbye.</Say>
+              <Hangup/>
+            </Response>
+          `);
+          return;
+        }
+        res.type('text/xml').send(`
+          <Response>
+            <Say voice="alice">Please hold while we connect you to our customer agent. This may take a few seconds.</Say>
+            <Pause length="10"/>
+            <Dial timeout="30" callerId="${process.env.TWILIO_PHONE_NUMBER || ''}">${agentNumber}</Dial>
+            <Say voice="alice">The agent could not be reached. Please try again later. Goodbye.</Say>
+            <Hangup/>
+          </Response>
+        `);
+        return;
+      }
+      default: {
+        res.type('text/xml').send(`
+          <Response>
+            <Say voice="alice">Invalid option. Please call back and press 1 for complaints, 2 for insurance registration, 3 for latest offers, or 4 to speak with an agent. Goodbye.</Say>
+            <Hangup/>
+          </Response>
+        `);
+        return;
+      }
     }
   }
 

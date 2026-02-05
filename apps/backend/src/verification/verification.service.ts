@@ -383,23 +383,38 @@ export class VerificationService {
   }
 
   /**
-   * Get patient (payee) info for the call so EVA can disclose full name and DOB when asked.
+   * Get patient (payee) info from the database for EVA to use in prompts.
+   * Includes all patient-related fields: name, DOB, SSN (for tax ID / SSN when asked).
    */
   async getPayeePatientInfo(payeeId: string): Promise<{
     firstName: string;
     lastName: string;
+    fullName: string;
     dob: Date | null;
+    dobFormatted: string | null;
+    ssn: string | null;
   } | null> {
     const payee = await this.prisma.payee.findUnique({
       where: { id: payeeId },
-      select: { firstName: true, lastName: true, dob: true },
+      select: { firstName: true, lastName: true, dob: true, ssn: true },
     });
     if (!payee) return null;
+    const fullName = `${payee.firstName} ${payee.lastName}`.trim();
+    const dobFormatted = payee.dob ? this.formatDobForSpeech(payee.dob) : null;
     return {
       firstName: payee.firstName,
       lastName: payee.lastName,
+      fullName,
       dob: payee.dob,
+      dobFormatted,
+      ssn: payee.ssn ?? null,
     };
+  }
+
+  private formatDobForSpeech(d: Date): string {
+    const date = new Date(d);
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
   }
 
   /**

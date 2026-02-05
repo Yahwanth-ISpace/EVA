@@ -2,6 +2,9 @@ import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { VerificationService } from '../verification/verification.service';
 
+/** Stable Pro model for conversation, extraction, and classification. */
+const GEMINI_MODEL = 'gemini-2.5-pro';
+
 @Injectable()
 export class AiService {
   private gemini: GoogleGenerativeAI;
@@ -24,16 +27,35 @@ export class AiService {
    * Generate a short conversational reply to the user (e.g. for voice/streaming).
    * EVA is a customer care agent from the dental practice calling to get patient benefit details from the insurance company.
    */
-  public async replyToUser(userMessage: string): Promise<string> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  /**
+   * @param patientInfo Optional patient (payee) details from the DB; when provided, EVA can answer questions about patient name, DOB, SSN/tax ID.
+   */
+  public async replyToUser(
+    userMessage: string,
+    patientInfo?: {
+      firstName: string;
+      lastName: string;
+      fullName: string;
+      dobFormatted: string | null;
+      ssn: string | null;
+    } | null,
+  ): Promise<string> {
+    const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
+    const patientBlock = patientInfo
+      ? `
+  PATIENT DETAILS (from database — use only when they ask): Full name: ${patientInfo.fullName}. Date of birth: ${patientInfo.dobFormatted ?? 'not provided'}. ${patientInfo.ssn ? `SSN/tax ID available; disclose only when they specifically ask for SSN or tax ID (e.g. "last four is ..." or full if required).` : 'No SSN on file.'}
+`
+      : '';
     const prompt = `You are EVA (Reena), a customer care representative from Went Dentals. You are on a call with the insurance company (or their representative) to obtain patient benefit details — coverage, deductible, copay, and validity.
-
+${patientBlock}
   CORE PERSONALITY:
   - Professional, polite, patient, and empathetic. You represent the dental practice and need the other party's help to get benefit information.
   - If they ask how you are, respond naturally and briefly (e.g., "I'm doing well, thank you! How about you?").
   - If they say you sound harsh or robotic, apologize warmly (e.g., "I'm so sorry — I just want to make sure we get the details right for our patient. I appreciate your help.").
   - Never admit to being an AI or a bot.
   - Keep replies to 1–2 short sentences. No markdown.
+
+  END-OF-CALL CONTEXT (when this is used after we've already said goodbye): Answer their question briefly in one short sentence. Do NOT repeat the full intro ("I'm Reena from Went Dentals", "I want to verify the patient details", "hoping you can help"). That intro is only for the very start of the call.
 
   User (person on the insurance side) said: ${userMessage}
   Reply:`;
@@ -121,7 +143,7 @@ export class AiService {
     transcript: string,
     currentQuestion: string,
   ): Promise<'answer' | 'interruption'> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
     const prompt = `You are classifying a short voice transcript from a patient benefit verification call. The caller (EVA) is from the dental practice; the other party is from the insurance company and is providing benefit details (coverage, deductible, copay, validity).
 
 Current question EVA asked: "${currentQuestion}"
@@ -142,6 +164,9 @@ Reply with ONLY one word: answer OR interruption`;
   /**
    * Handle user interruption: parse corrections (e.g. "copay is 25% not 60%") or identity/off-topic questions; return updates + reply to speak.
    */
+  /**
+   * @param patientInfo Optional patient (payee) details from the DB; when provided, EVA can answer questions about patient name, DOB, SSN/tax ID.
+   */
   public async handleInterruption(
     userMessage: string,
     currentExtracted: {
@@ -150,6 +175,13 @@ Reply with ONLY one word: answer OR interruption`;
       copay: string | null;
       validity: string | null;
     },
+    patientInfo?: {
+      firstName: string;
+      lastName: string;
+      fullName: string;
+      dobFormatted: string | null;
+      ssn: string | null;
+    } | null,
   ): Promise<{
     updates: Partial<{
       coverage: string | null;
@@ -159,10 +191,15 @@ Reply with ONLY one word: answer OR interruption`;
     }>;
     reply: string;
   }> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
     const current = JSON.stringify(currentExtracted, null, 0);
+    const patientBlock = patientInfo
+      ? `
+Patient details (from database — use when they ask): Full name: ${patientInfo.fullName}. DOB: ${patientInfo.dobFormatted ?? 'not provided'}. ${patientInfo.ssn ? 'SSN/tax ID available; disclose when they ask for SSN or tax ID.' : 'No SSN on file.'}
+`
+      : '';
     const prompt = `You are handling an interruption during a patient benefit verification call. You are EVA (Reena), a customer care representative from Went Dentals, speaking with the insurance company to obtain benefit details for a patient. Be professional, polite, and patient. Never say you are a bot or AI.
-
+${patientBlock}
 Current benefit data we have: ${current}
 
 What the person on the insurance side just said: "${userMessage}"
@@ -226,6 +263,7 @@ Examples (use current data to fill [value] and next field):
       lastName: string;
       fullName: string;
       dobFormatted: string | null;
+      ssn: string | null;
     } | null,
     /** When set, the user may have just resumed from hold; we were asking for this field. Treat their reply as the value for this field, or if they ask "what do you need?" say "What is the [lastAskedField]?" only. */
     lastAskedField?: string | null,
@@ -239,7 +277,7 @@ Examples (use current data to fill [value] and next field):
     }>;
     endCall?: boolean;
   }> {
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
     const current = JSON.stringify(currentExtracted);
 
     const nextFieldToAsk = !this.hasValue(currentExtracted.coverage)
@@ -254,17 +292,18 @@ Examples (use current data to fill [value] and next field):
 
     const oneFieldRule =
       nextFieldToAsk === null
-        ? 'Say a polite closing: "That\'s everything I need. Thank you so much for your help." and set endCall to true. Only set endCall to true when all four fields are collected.'
+        ? 'Say ONLY a short closing, e.g. "That\'s everything I need. Thank you so much for your help." and set endCall to true. Do NOT repeat your name, company, or purpose ("I am Reena from Went Dentals", "I want to verify the patient details", "hoping you can help") — that intro is for the start of the call only. Only set endCall to true when all four fields are collected.'
         : `Ask for ONE field only. VARY the sentence every time — pick one randomly: "What is the ${nextFieldToAsk}?" / "Can I get the ${nextFieldToAsk}?" / "May I have the ${nextFieldToAsk}?" / "Can you provide the ${nextFieldToAsk}?" Do not always use the same phrase. Or if you just got a value: "Got it, thanks." then one of those. Keep nextMessage under 20 words.`;
 
     const patientBlock = patientInfo
       ? `
-Patient info — give FULL value only. Use "Are we good?" ONLY after patient DOB verification; then only when user says yes, ask for benefit fields.
-- Full name: ${patientInfo.fullName}. DOB: ${patientInfo.dobFormatted ?? 'not provided'}. First name: ${patientInfo.firstName}. Last name: ${patientInfo.lastName}.
+Patient info (from database — use when they ask): Full name: ${patientInfo.fullName}. DOB: ${patientInfo.dobFormatted ?? 'not provided'}. First name: ${patientInfo.firstName}. Last name: ${patientInfo.lastName}.${patientInfo.ssn ? ` SSN/tax ID: available; only disclose when they specifically ask for SSN or tax ID.` : ' No SSN on file.'}
+- Give FULL value only when asked. Use "Are we good?" ONLY after patient DOB verification; then only when user says yes, ask for benefit fields.
 - When they say "how can I help" / "how can I help you" / "how can I help you today" / "I'm doing good how can I help you" / "I'm doing great, how can I help": Say ONLY "I want to verify the patient details." or "I want to verify the benefits of a patient." Do NOT ask for any field. Do NOT say "sorry I didn't get you". extractedUpdates {}.
 - When they ask "identify yourself" / "who are you": Answer ONLY "I'm Reena from Went Dentals. I'm on the line to verify patient benefit details." Do NOT add "Are we good?" or ask for a field. extractedUpdates {}.
 - When they ask "what is the patient name" / "patient name" / "patient full name" / "what is the patient full name": Answer ONLY "The patient is ${patientInfo.fullName}." or "The full name is ${patientInfo.fullName}." Do NOT add "Are we good?" or ask for a field in the same turn. extractedUpdates {}.
 - When they ask "what is the date of birth of the patient" / "patient date of birth" / "date of birth" / "DOB" / "what is the date of birth": Answer: "The patient date of birth is ${patientInfo.dobFormatted ?? 'not provided'}." THEN ask ONLY: "Are we good?" Do NOT ask for coverage/deductible in the same turn. Only when they say "yes" or "we're good" in the NEXT turn do you ask for the first benefit field. extractedUpdates {}.
+- When they ask for SSN / tax ID / TIN: ${patientInfo.ssn ? 'Give the value they need (e.g. full SSN or "the last four is [digits]"). Then "Are we good?" only. Do NOT ask for next field in same turn. extractedUpdates {}.' : '"I don\'t have that on my end. Is there anything else I can provide?" extractedUpdates {}.'}
 - When they CONFIRM after DOB ("yes" / "we're good" / "yeah"): Now ask for first benefit field using a varied phrase: "Can I get the coverage?" / "May I have the coverage?" / "Can you provide the coverage?" (use one randomly). extractedUpdates {}.
 - When they ask "what are the details you want to know" / "what do you need" / "what details do you need": Ask for first missing field only (vary: "Can I get the [field]?" / "May I have the [field]?" / "Can you provide the [field]?"). Do NOT add "Are we good?" here. Do NOT list all four. extractedUpdates {}.
 - When they ask for info you do NOT have (policy number, member ID, etc.): "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?" Then if a field still missing use varied phrase for that field. extractedUpdates {}.
@@ -305,6 +344,7 @@ CRITICAL — CONVERSATION FLOW (listen to the user; do NOT ask the same question
 - NEVER ask the same question twice in a row. Only ask for the NEXT field after they confirm when a confirmation was needed (hold, DOB, recall, value update).
 - NEVER go back: after a failure, inaudible, or "didn't catch that", ask only for the CURRENT (first missing) field.
 - Before ending the call, all four fields must be collected.
+- When ending the call (all four fields collected): say ONLY a brief closing. Never repeat the opening intro ("I am Reena from Went Dentals", "I want to verify the patient details", "hoping you can help") at the end — that is strictly for the start of the call.
 
 ROLE & TONE:
 - Professional, polite, patient. One thing per turn.
@@ -699,7 +739,7 @@ Respond with ONLY a JSON object. No markdown. Format:
 
       // Gemini model selection — adjust as needed
       const model = this.gemini.getGenerativeModel({
-        model: 'gemini-2.5-flash',
+        model: GEMINI_MODEL,
       });
 
       const result = await model.generateContent(prompt);
