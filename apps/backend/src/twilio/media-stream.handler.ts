@@ -191,6 +191,48 @@ interface ExtractedData {
   validity: string | null;
 }
 
+/** If the user is asking what value we have for a benefit field (recall), return the reply from stored extractedData so we never give a wrong value. */
+function getRecallReply(userSaid: string, extractedData: ExtractedData): string | null {
+  const t = userSaid.trim().toLowerCase();
+  if (!t || t.length < 3) return null;
+  const recallPatterns = [
+    /\bwhat('s| is)?\s+(the\s+)?(deductible|coverage|copay|validity)/i,
+    /\b(deductible|coverage|copay|validity)\s+(provided|did you get|do you have|was that|we said)/i,
+    /\bwhat did (i say|you get|you have)\s+(for\s+)?(the\s+)?(deductible|coverage|copay|validity)/i,
+    /\b(do you have|what (value|number|did you get))\s+(for\s+)?(the\s+)?(deductible|coverage|copay|validity)/i,
+  ];
+  const fieldFromMatch = (m: string): keyof ExtractedData | null => {
+    if (/deductible/i.test(m)) return 'deductible';
+    if (/coverage/i.test(m)) return 'coverage';
+    if (/copay/i.test(m)) return 'copay';
+    if (/validity|valid/i.test(m)) return 'validity';
+    return null;
+  };
+  for (const re of recallPatterns) {
+    const m = t.match(re);
+    if (m) {
+      const key = fieldFromMatch(m[0]);
+      if (key) {
+        const val = extractedData[key];
+        if (val != null && String(val).trim()) return `I have the ${key} as ${val}.`;
+        return `I don't have that one yet.`;
+      }
+    }
+  }
+  if (/\bwhat is the deductible\b/i.test(t)) {
+    const val = extractedData.deductible;
+    if (val != null && String(val).trim()) return `I have the deductible as ${val}.`;
+    return `I don't have that one yet.`;
+  }
+  if (/\bwhat is the (coverage|copay|validity)\b/i.test(t)) {
+    const k = t.includes('coverage') ? 'coverage' : t.includes('copay') ? 'copay' : 'validity';
+    const val = extractedData[k as keyof ExtractedData];
+    if (val != null && String(val).trim()) return `I have the ${k} as ${val}.`;
+    return `I don't have that one yet.`;
+  }
+  return null;
+}
+
 /** Patient info from DB for EVA to use in prompts (name, DOB, SSN when asked). */
 interface PatientInfo {
   firstName: string;
@@ -238,6 +280,8 @@ interface StreamState {
   /** After goodbye we stay for 10s; hang up at this time if no input. */
   postGoodbyeUntil: number | null;
   postGoodbyeTimeoutId: ReturnType<typeof setTimeout> | null;
+  /** Conversation transcript (User / EVA lines) for verification record — values and important exchange only. */
+  conversationTranscript: string[];
 }
 
 @Injectable()
@@ -276,6 +320,7 @@ export class MediaStreamHandlerService {
       resumeCheckInterval: null,
       postGoodbyeUntil: null,
       postGoodbyeTimeoutId: null,
+      conversationTranscript: [],
     };
 
     const send = (obj: object) => {
@@ -322,8 +367,11 @@ export class MediaStreamHandlerService {
         this.logger.log('[MediaStream] Verification not saved: no extracted data.');
         return;
       }
-      this.logger.log('[MediaStream] Saving verification to DB: payeeId=' + state.payeeId + ' extracted=' + JSON.stringify(state.extractedData));
-      this.aiService.saveCallVerification(state.payeeId, state.extractedData).then(() => {
+      const fullTranscript = state.conversationTranscript.length
+        ? state.conversationTranscript.join('\n')
+        : undefined;
+      this.logger.log('[MediaStream] Saving verification to DB: payeeId=' + state.payeeId + ' extracted=' + JSON.stringify(state.extractedData) + (fullTranscript ? ' transcriptLines=' + state.conversationTranscript.length : ''));
+      this.aiService.saveCallVerification(state.payeeId, state.extractedData, fullTranscript).then(() => {
         this.logger.log('[MediaStream] Verification saved successfully for payeeId=' + state.payeeId);
       }).catch((e) =>
         this.logger.warn('[MediaStream] Save verification failed', (e as Error)?.message));
@@ -416,6 +464,8 @@ export class MediaStreamHandlerService {
               state.resumeCheckInterval = null;
             }
             this.logger.log('[MediaStream] User resumed from hold; transcript="' + userSaid + '" lastAskedField=' + (state.lastAskedField ?? 'none'));
+            if (userSaid?.trim()) state.conversationTranscript.push('User: ' + userSaid.trim());
+            state.conversationTranscript.push('EVA: ' + EVA_RESUME_ACK);
             state.buffer = []; // clear so next processing uses only fresh audio after ack (avoids "couldn't catch" from hold-music/stale audio)
             try {
               await speak(EVA_RESUME_ACK);
@@ -473,6 +523,8 @@ export class MediaStreamHandlerService {
             }
           }, HOLD_MAX_MS);
           this.logger.log('[MediaStream] User put call on hold');
+          if (userSaid?.trim()) state.conversationTranscript.push('User: ' + userSaid.trim());
+          state.conversationTranscript.push('EVA: ' + EVA_HOLD_ACK);
           await speak(EVA_HOLD_ACK);
           state.processing = false;
           return;
@@ -501,13 +553,21 @@ export class MediaStreamHandlerService {
             return;
           }
           this.logger.log('[MediaStream] Post-goodbye: user asked something, answering then asking "Is that all you have?" before ending');
+          if (userSaid?.trim()) state.conversationTranscript.push('User: ' + userSaid.trim());
           try {
             const reply = await this.aiService.replyToUser(userSaid, state.patientInfo ?? undefined);
+            if (reply?.trim()) state.conversationTranscript.push('EVA: ' + reply.trim());
             await speak(reply);
-            await speak('Is that all you have? Let me know when you\'re good.');
+            const followUp = 'Is that all you have? Let me know when you\'re good.';
+            state.conversationTranscript.push('EVA: ' + followUp);
+            await speak(followUp);
           } catch (e) {
-            await speak('Sorry, I didn\'t catch that.');
-            await speak('Is that all you have? Let me know when you\'re good.');
+            const sorry = 'Sorry, I didn\'t catch that.';
+            state.conversationTranscript.push('EVA: ' + sorry);
+            await speak(sorry);
+            const followUp = 'Is that all you have? Let me know when you\'re good.';
+            state.conversationTranscript.push('EVA: ' + followUp);
+            await speak(followUp);
           }
           state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
           state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
@@ -586,6 +646,8 @@ export class MediaStreamHandlerService {
           const validation = this.aiService.validateAndNormalizeBenefitExtracted(extractedUpdates, userSaid);
           if (!validation.ok) {
             this.logger.log('[MediaStream] Benefit value validation failed for ' + validation.invalidField + ': ' + validation.correctionMessage);
+            if (userSaid?.trim() && userSaid !== 'User did not respond or was inaudible.') state.conversationTranscript.push('User: ' + userSaid);
+            if (validation.correctionMessage?.trim()) state.conversationTranscript.push('EVA: ' + validation.correctionMessage.trim());
             await speak(validation.correctionMessage);
             state.processing = false;
             return;
@@ -616,6 +678,13 @@ export class MediaStreamHandlerService {
         }
         const goodbye = 'Thank you for confirming the details. That\'s all I have. Have a good day.';
         let toSpeak = (nextMessage ?? '').trim();
+        // Recall: answer from stored extractedData so we always give the correct value (e.g. "what is the deductible provided?")
+        const recallReply = getRecallReply(userSaid, state.extractedData);
+        if (recallReply) {
+          const confirmPhrases = ['Is it okay?', 'Is that all you have?', 'Are we good?'];
+          toSpeak = recallReply + ' ' + confirmPhrases[Math.floor(Math.random() * confirmPhrases.length)];
+          this.logger.log('[MediaStream] Recall reply from stored data: ' + recallReply);
+        }
         const isGenericFallback = /^(what else|is there anything else)/i.test(toSpeak);
         const soundsLikeRepeat = /didn'?t\s+(get|catch|understand)|couldn'?t\s+catch|sorry,?\s+I\s+didn'?t|can you (please\s+)?repeat|say that once again/i.test(toSpeak);
         // Never say "I didn't catch you" when user clearly said something (e.g. "how can I help", "it is 80$") — keep conversation in sync.
@@ -656,13 +725,20 @@ export class MediaStreamHandlerService {
         if (shouldEndCall) {
           toSpeak = goodbye;
           // Will enter post-goodbye below: stay on line briefly in case user responds, then hang up
-        } else if (!toSpeak || (isGenericFallback && state.lastAskedField)) {
+        } else         if (!toSpeak || (isGenericFallback && state.lastAskedField)) {
           toSpeak = state.lastAskedField
             ? askForFieldPhrase(state.lastAskedField)
             : (toSpeak || 'Is there anything else you can share?');
           if (!(nextMessage ?? '').trim() || isGenericFallback) {
             this.logger.warn('[MediaStream] AI returned empty or generic nextMessage, using fallback');
           }
+        }
+        // Append conversation transcript (user and EVA values / important exchange) for verification
+        if (userSaid && userSaid !== 'User did not respond or was inaudible.' && !/^\[?inaudible\]?\.?$/i.test(userSaid) && !/^\.{2,}$/.test(userSaid)) {
+          state.conversationTranscript.push('User: ' + userSaid);
+        }
+        if (toSpeak?.trim()) {
+          state.conversationTranscript.push('EVA: ' + toSpeak.trim());
         }
         await speak(toSpeak);
 
@@ -739,6 +815,7 @@ export class MediaStreamHandlerService {
               }
             }
             state.lastSpeakTime = Date.now();
+            state.conversationTranscript.push('EVA: ' + CONVERSATION_GREETING);
             await speak(CONVERSATION_GREETING);
           } catch (e) {
             this.logger.warn('[MediaStream] Greeting failed', (e as Error)?.message);
