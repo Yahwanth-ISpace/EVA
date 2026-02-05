@@ -40,6 +40,7 @@ function isSilenceAtEnd(buffer: Buffer): boolean {
   let silent = 0;
   for (let i = 0; i < tail.length; i++) {
     if (isSilentByte(tail[i])) silent++;
+    //test
   }
   return silent / tail.length >= SILENCE_RATIO_THRESHOLD;
 }
