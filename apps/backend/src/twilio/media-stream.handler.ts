@@ -114,6 +114,20 @@ function askForFieldPhrase(field: string): string {
   return templates[Math.floor(Math.random() * templates.length)];
 }
 
+/** True if transcript could be the user asking "how can I help" / "how may I help" (including mishears like "how can elp", "how can i help you"). */
+function looksLikeGreeting(transcript: string): boolean {
+  const t = transcript.trim().toLowerCase();
+  if (!t || t.length < 4) return false;
+  return (
+    /how\s+can\s+(i|you|we)?\s*(help|elp)/i.test(t) ||
+    /how\s+may\s+(i|we)\s*help/i.test(t) ||
+    /(how\s+can|how\s+may).*help/i.test(t) ||
+    /\bhelp\s+you\b/i.test(t) ||
+    /how\s+can\s+you\s+help/i.test(t) ||
+    /what\s+can\s+i\s+do\s+for\s+you/i.test(t)
+  );
+}
+
 /** Extract a single value for a benefit field from transcript (e.g. "28 dollars" -> "28 dollars"). Used to correct after-hold when AI puts value in wrong field. */
 function extractValueForField(transcript: string, field: string): string | null {
   const t = transcript.trim().toLowerCase();
@@ -581,6 +595,7 @@ export class MediaStreamHandlerService {
         const looksLikeRealResponse = (s: string) => {
           const t = s.trim().toLowerCase();
           return (
+            looksLikeGreeting(t) ||
             /how can I help|how are you|doing good|doing great|how can i help|how can you help/i.test(t) ||
             /^(hi|hey|hello|yes|no|yeah|ok|okay|good|great|fine|good morning|good afternoon)$/i.test(t) ||
             t.length > 4 ||
@@ -593,16 +608,18 @@ export class MediaStreamHandlerService {
           (fillerOnly && userSaid.length <= 4);
         const inaudibleLike = /^\[?inaudible\]?\.?$/i.test(userSaid) || /^\.{2,}$/.test(userSaid) || /^[\s\.\-]+$/.test(userSaid);
         const isIdleOrEmpty = userSaid.length === 0 || (noiseOrTooShort && !looksLikeRealResponse(userSaid)) || inaudibleLike;
-        // When transcript is empty but we had very little audio, skip saying "repeat" to avoid cutting off the user (next chunk may have speech).
-        const skipRepeatForShortAudio = userSaid.length === 0 && combined.length < MIN_BYTES_BEFORE_REPEAT;
-        // Never send "inaudible" when user clearly said something (greeting, "how can I help", or a value).
+        // When transcript is empty/inaudible but we had very little audio, skip re-asking so we don't interrupt (transcription may be slow or user mid-sentence).
         const effectiveTranscript =
           isIdleOrEmpty && !looksLikeRealResponse(userSaid)
             ? 'User did not respond or was inaudible.'
             : userSaid;
+        const isInaudibleTurn = effectiveTranscript === 'User did not respond or was inaudible.';
+        const skipRepeatForShortAudio =
+          (userSaid.length === 0 && combined.length < MIN_BYTES_BEFORE_REPEAT) ||
+          (isInaudibleTurn && combined.length < 24_000); // ~3 sec: don't re-ask on empty/inaudible when audio was short
 
         if (skipRepeatForShortAudio) {
-          this.logger.log('[MediaStream] Empty transcript but short audio (' + combined.length + ' bytes), skipping repeat to avoid cutting off user');
+          this.logger.log('[MediaStream] Empty/inaudible transcript but short audio (' + combined.length + ' bytes), skipping re-ask to avoid same question twice');
           state.processing = false;
           return;
         }
@@ -612,6 +629,29 @@ export class MediaStreamHandlerService {
           this.logger.log(`[MediaStream] Noise or too short ("${userSaid}"), prompting repeat`);
         } else {
           this.logger.log(`[MediaStream] User said: ${userSaid}`);
+        }
+
+        // On empty/inaudible we only say a short "Can you repeat?" — never re-ask the full question (e.g. "Can I get the coverage?") so user doesn't hear the same question twice.
+        if (isInaudibleTurn) {
+          this.logger.log('[MediaStream] Inaudible/empty response — saying short repeat only, not re-asking full question');
+          if (userSaid?.trim() && userSaid !== 'User did not respond or was inaudible.') state.conversationTranscript.push('User: ' + userSaid);
+          state.conversationTranscript.push('EVA: ' + getRepeatOnlyPrompt());
+          await speak(getRepeatOnlyPrompt());
+          state.processing = false;
+          startFallbackTimer();
+          return;
+        }
+
+        // When transcript could be "how can I help" (even misheard), respond with purpose only — never "sorry didn't catch" + ask for coverage.
+        if (looksLikeGreeting(userSaid)) {
+          const greetingReply = 'I want to verify the benefits of a patient.';
+          this.logger.log('[MediaStream] Transcript looks like greeting ("' + userSaid + '") — responding with purpose only');
+          if (userSaid?.trim()) state.conversationTranscript.push('User: ' + userSaid.trim());
+          state.conversationTranscript.push('EVA: ' + greetingReply);
+          await speak(greetingReply);
+          state.processing = false;
+          startFallbackTimer();
+          return;
         }
 
         let { nextMessage, extractedUpdates, endCall } =
@@ -689,8 +729,14 @@ export class MediaStreamHandlerService {
         }
         const isGenericFallback = /^(what else|is there anything else)/i.test(toSpeak);
         const soundsLikeRepeat = /didn'?t\s+(get|catch|understand)|couldn'?t\s+catch|sorry,?\s+I\s+didn'?t|can you (please\s+)?repeat|say that once again/i.test(toSpeak);
+        const asksForField = /\b(coverage|deductible|copay|validity)\b|provide\s+(the\s+)?(coverage|deductible|copay|validity)|get\s+the\s+(coverage|deductible|copay|validity)/i.test(toSpeak);
+        // Never say "Sorry I didn't catch. Can you provide coverage?" — if we're saying we didn't catch, say ONLY a short repeat; never add a field question.
+        if (soundsLikeRepeat && asksForField) {
+          toSpeak = getRepeatOnlyPrompt();
+          this.logger.log('[MediaStream] Overriding AI "sorry + field" with repeat-only so we never ask for coverage after "didn\'t catch"');
+        }
         // Never say "I didn't catch you" when user clearly said something (e.g. "how can I help", "it is 80$") — keep conversation in sync.
-        if (looksLikeRealResponse(userSaid) && soundsLikeRepeat) {
+        if (looksLikeRealResponse(userSaid) && soundsLikeRepeat && !asksForField) {
           if (/how can I help|how are you|doing good|doing great|how can i help/i.test(userSaid.trim())) {
             toSpeak = 'I want to verify the patient details.';
           } else if (transcriptHasValue(userSaid) && state.lastAskedField) {
