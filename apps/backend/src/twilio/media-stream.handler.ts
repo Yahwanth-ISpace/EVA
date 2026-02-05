@@ -633,16 +633,30 @@ export class MediaStreamHandlerService {
         const inaudibleLike = /^\[?inaudible\]?\.?$/i.test(userSaid) || /^\.{2,}$/.test(userSaid) || /^[\s\.\-]+$/.test(userSaid);
         const isIdleOrEmpty = userSaid.length === 0 || (noiseOrTooShort && !looksLikeRealResponse(userSaid)) || inaudibleLike;
         // When transcript is empty but we had very little audio, skip saying "repeat" to avoid cutting off the user (next chunk may have speech).
-        const skipRepeatForShortAudio = userSaid.length === 0 && combined.length < MIN_BYTES_BEFORE_REPEAT;
+        const skipRepeatForShortAudio =
+          (userSaid.length === 0 && combined.length < MIN_BYTES_BEFORE_REPEAT) ||
+          (isIdleOrEmpty && combined.length < 24_000);
         // Never send "inaudible" when user clearly said something (greeting, "how can I help", or a value).
         const effectiveTranscript =
           isIdleOrEmpty && !looksLikeRealResponse(userSaid)
             ? 'User did not respond or was inaudible.'
             : userSaid;
+        const wasInaudibleTurn = effectiveTranscript === 'User did not respond or was inaudible.';
 
         if (skipRepeatForShortAudio) {
-          this.logger.log('[MediaStream] Empty transcript but short audio (' + combined.length + ' bytes), skipping repeat to avoid cutting off user');
+          this.logger.log('[MediaStream] Empty/inaudible transcript but short audio (' + combined.length + ' bytes), skipping re-ask to stay in sync');
           state.processing = false;
+          return;
+        }
+        // Inaudible/empty: re-ask the same field only (no AI call) so conversation stays in phase.
+        if (wasInaudibleTurn) {
+          const repeatPhrase = getRepeatOnlyPrompt();
+          const reaskSame = state.lastAskedField ? repeatPhrase + ' ' + askForFieldPhrase(state.lastAskedField) : repeatPhrase;
+          if (userSaid?.trim() && userSaid !== 'User did not respond or was inaudible.') state.conversationTranscript.push('User: ' + userSaid);
+          state.conversationTranscript.push('EVA: ' + reaskSame);
+          await speak(reaskSame);
+          state.processing = false;
+          startFallbackTimer();
           return;
         }
         if (userSaid.length === 0) {
