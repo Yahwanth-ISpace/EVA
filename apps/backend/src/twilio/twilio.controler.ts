@@ -27,13 +27,14 @@ export class TwilioController {
   /**
    * IVR inbound — when a call comes in, play menu and gather 1–4.
    * Configure Twilio phone number webhook: POST {{BACKEND_URL}}/twilio/inbound
+   * Flow: 1 = complaint, 2 = register insurance, 3 = latest offers, 4 = hold 10s then dial agent (e.g. 9515663123).
    */
   @Post('inbound')
   async handleInbound(@Body() body: Record<string, string>, @Res() res: Response) {
     res.type('text/xml').send(`
       <Response>
         <Gather numDigits="1" action="${backendBaseUrl}/twilio/ivr-menu" method="POST" timeout="5">
-          <Say voice="alice">Thank you for calling. Press 1 for complaints. Press 2 to register for insurance. Press 3 for latest insurance offers. Press 4 to speak with a customer agent.</Say>
+          <Say voice="alice">Thank you for calling. Press 1 regarding complaint. Press 2 to register insurance. Press 3 to fetch latest insurance offers. Press 4 to talk to our customer agent.</Say>
         </Gather>
         <Say voice="alice">We didn't receive any input. Goodbye.</Say>
         <Hangup/>
@@ -78,16 +79,12 @@ export class TwilioController {
         return;
       }
       case '4': {
-        const agentNumber = (process.env.IVR_AGENT_PHONE_NUMBER || process.env.TWILIO_AGENT_PHONE_NUMBER || '').trim();
-        if (!agentNumber) {
-          res.type('text/xml').send(`
-            <Response>
-              <Say voice="alice">We are unable to transfer you to an agent at this time. Please try again later or call back. Goodbye.</Say>
-              <Hangup/>
-            </Response>
-          `);
-          return;
-        }
+        // Agent number: env (IVR_AGENT_PHONE_NUMBER or TWILIO_AGENT_PHONE_NUMBER) or default +919515663123
+        const agentNumber = (
+          process.env.IVR_AGENT_PHONE_NUMBER ||
+          process.env.TWILIO_AGENT_PHONE_NUMBER ||
+          '+919515663123'
+        ).trim();
         res.type('text/xml').send(`
           <Response>
             <Say voice="alice">Please hold while we connect you to our customer agent. This may take a few seconds.</Say>
@@ -151,6 +148,45 @@ export class TwilioController {
         </Connect>
       </Response>
     `);
+  }
+
+  /**
+   * TwiML for outbound IVR-bypass call: connect the call to the media stream in ivr-bypass mode.
+   * EVA's Twilio calls the IVR number with this as the initial URL; we return <Connect><Stream url="...?mode=ivr-bypass"/>.
+   */
+  @Get('outbound-ivr-connect')
+  @Post('outbound-ivr-connect')
+  outboundIvrConnect(@Res() res: Response) {
+    const base = (process.env.BACKEND_URL || `http://localhost:${process.env.PORT ?? 3000}`).trim();
+    const streamUrl = base.replace(/^http/, 'ws') + '/twilio/media-stream?mode=ivr-bypass';
+    res.type('text/xml').send(`
+      <Response>
+        <Connect>
+          <Stream url="${streamUrl}" />
+        </Connect>
+      </Response>
+    `);
+  }
+
+  /**
+   * TwiML that sends DTMF 4 into the call (used when IVR bypass detects "customer agent").
+   * Twilio redirects the call here; we return <Play digits="4"/> so the IVR receives 4 and runs option 4 (hold 10s, dial agent).
+   */
+  @Get('play-dtmf-4')
+  @Post('play-dtmf-4')
+  playDtmf4(@Res() res: Response) {
+    res.type('text/xml').send(
+      '<Response><Play digits="4"/></Response>',
+    );
+  }
+
+  /**
+   * Start outbound call from EVA's number to the IVR number; stream runs in ivr-bypass mode (STT listens for "customer agent", then sends 4).
+   * Body optional: { "to": "+1..." } to override TWILIO_IVR_PHONE_NUMBER.
+   */
+  @Post('call-ivr-and-bypass')
+  async callIvrAndBypass(@Body() body: { to?: string }) {
+    return this.twilioService.callIvrAndBypass(body?.to);
   }
 
   /**

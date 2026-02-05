@@ -25,24 +25,29 @@ import { VerificationService } from '../verification/verification.service';
 import { TwilioService } from './twilio.service';
 import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
-/** Minimum speech bytes before we consider processing (~1 sec at 8kHz mulaw) — longer = fewer empty transcripts from ElevenLabs */
-const MIN_SPEECH_BYTES = 8_000;
-/** Tail bytes to check for silence (~0.25 sec). Smaller = process sooner after user stops. */
-const SILENCE_TAIL_BYTES = 2_000;
+/** Minimum speech bytes before we consider processing (~0.75 sec at 8kHz mulaw). Kept low so short answers and details reach EVA quickly. */
+const MIN_SPEECH_BYTES = 6_000;
+/** Tail bytes to check for silence (~0.4 sec). Smaller = less delay after user stops; details reach EVA sooner. */
+const SILENCE_TAIL_BYTES = 3_200;
 /** When transcript is empty, only say "please repeat" if we had at least this much audio (~4 sec). Otherwise skip speaking to avoid cutting off the user. */
 const MIN_BYTES_BEFORE_REPEAT = 32_000;
-/** Fraction of tail bytes that must be "silent" to trigger (0–1) */
-const SILENCE_RATIO_THRESHOLD = 0.85;
-/** Max buffer before we process anyway (~8 sec) — smaller chunks = faster ElevenLabs response */
+/** Fraction of tail bytes that must be "silent" to trigger end-of-speech (0–1). 0.82 = detect end of speech slightly sooner, less delay. */
+const SILENCE_RATIO_THRESHOLD = 0.82;
+/** Max buffer before we process anyway (~8 sec). */
 const MAX_BUFFER_BYTES = 64_000;
-/** Fallback: process at most every N ms. Shorter = faster response when silence isn't detected. */
-const FALLBACK_PROCESS_INTERVAL_MS = 4000;
-/** Minimum ms to wait after EVA speaks before we process user audio. Prevents processing "tail" from previous turn and avoids EVA asking the same question twice while transcription is in flight. */
-const ANSWER_WINDOW_MS = 3000;
+/** Fallback: process at most every N ms when silence not detected. Lower = user's details reach EVA sooner when they talk without a long pause. */
+const FALLBACK_PROCESS_INTERVAL_MS = 3_200;
+/** Minimum ms to wait after EVA speaks before we process user audio (avoid capturing EVA's voice). Lower = quicker turn-around so details don't lag. */
+const ANSWER_WINDOW_MS = 1_200;
 /** Max time allowed on hold before ending the call (9 minutes) */
 const HOLD_MAX_MS = 9 * 60 * 1000;
 /** Chunk size to send back to Twilio (20ms = 160 bytes at 8kHz mulaw). Smaller chunks = playback starts faster. */
 const OUTBOUND_CHUNK_BYTES = 160;
+
+/** IVR bypass: process audio every N ms to detect "customer agent" quickly (ElevenLabs STT + Whisper fallback). */
+const IVR_BYPASS_FALLBACK_MS = 2500;
+/** IVR bypass: minimum audio bytes before running STT (~0.5 s). */
+const IVR_BYPASS_MIN_BYTES = 4_000;
 
 /** Mulaw: 0xFF and 0x7F are typical silence; treat nearby as silent too */
 function isSilentByte(b: number): boolean {
@@ -112,20 +117,6 @@ function askForFieldPhrase(field: string): string {
     `Can you provide the ${field}?`,
   ];
   return templates[Math.floor(Math.random() * templates.length)];
-}
-
-/** True if transcript could be the user asking "how can I help" / "how may I help" (including mishears like "how can elp", "how can i help you"). */
-function looksLikeGreeting(transcript: string): boolean {
-  const t = transcript.trim().toLowerCase();
-  if (!t || t.length < 4) return false;
-  return (
-    /how\s+can\s+(i|you|we)?\s*(help|elp)/i.test(t) ||
-    /how\s+may\s+(i|we)\s*help/i.test(t) ||
-    /(how\s+can|how\s+may).*help/i.test(t) ||
-    /\bhelp\s+you\b/i.test(t) ||
-    /how\s+can\s+you\s+help/i.test(t) ||
-    /what\s+can\s+i\s+do\s+for\s+you/i.test(t)
-  );
 }
 
 /** Extract a single value for a benefit field from transcript (e.g. "28 dollars" -> "28 dollars"). Used to correct after-hold when AI puts value in wrong field. */
@@ -296,6 +287,10 @@ interface StreamState {
   postGoodbyeTimeoutId: ReturnType<typeof setTimeout> | null;
   /** Conversation transcript (User / EVA lines) for verification record — values and important exchange only. */
   conversationTranscript: string[];
+  /** 'ivr-bypass' = call to IVR number; listen for "customer agent", send DTMF 4; no EVA conversation. */
+  mode: 'eva' | 'ivr-bypass';
+  /** When true, we already sent DTMF 4 to the IVR (don't send again). */
+  ivrDigitSent: boolean;
 }
 
 @Injectable()
@@ -310,7 +305,8 @@ export class MediaStreamHandlerService {
     private readonly twilioService: TwilioService,
   ) {}
 
-  handleConnection(ws: WebSocket, payeeId?: string | null): void {
+  handleConnection(ws: WebSocket, payeeId?: string | null, mode?: string | null): void {
+    const isIvrBypass = mode === 'ivr-bypass';
     const state: StreamState = {
       buffer: [],
       streamSid: null,
@@ -335,6 +331,8 @@ export class MediaStreamHandlerService {
       postGoodbyeUntil: null,
       postGoodbyeTimeoutId: null,
       conversationTranscript: [],
+      mode: isIvrBypass ? 'ivr-bypass' : 'eva',
+      ivrDigitSent: false,
     };
 
     const send = (obj: object) => {
@@ -366,7 +364,7 @@ export class MediaStreamHandlerService {
           if (mulawAudio?.length) await playAudio(mulawAudio);
         }
         state.lastSpeakTime = Date.now();
-        // Clear buffer so we don't process "tail" audio that arrived during transcription — prevents EVA asking the same question twice
+        // Clear inbound buffer so the next process only uses audio *after* EVA finished (avoids one-turn delay and EVA repeating)
         state.buffer = [];
       } catch (e) {
         this.logger.warn('[MediaStream] TTS failed', (e as Error)?.message);
@@ -414,11 +412,12 @@ export class MediaStreamHandlerService {
 
     const tryTriggerProcess = () => {
       if (state.processing || state.callEnded || !state.streamSid) return;
-      if (state.onHold) return;
+      if (state.mode !== 'ivr-bypass' && state.onHold) return;
       const now = Date.now();
-      if (state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) return;
+      if (state.mode !== 'ivr-bypass' && state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) return;
       const combined = Buffer.concat(state.buffer);
-      if (combined.length < MIN_SPEECH_BYTES) return;
+      const minBytes = state.mode === 'ivr-bypass' ? IVR_BYPASS_MIN_BYTES : MIN_SPEECH_BYTES;
+      if (combined.length < minBytes) return;
 
       const shouldProcess =
         isSilenceAtEnd(combined) ||
@@ -464,6 +463,24 @@ export class MediaStreamHandlerService {
           return;
         }
         const userSaid = (transcript ?? '').trim();
+
+        // --- IVR bypass: listen for "customer agent" (or "press 4"), then send DTMF 4 so IVR runs option 4 (hold 10s, dial agent)
+        if (state.mode === 'ivr-bypass') {
+          const heardCustomerAgent = /\b(customer agent|press 4 to talk|talk to our customer agent|option 4)\b/i.test(userSaid);
+          if (heardCustomerAgent && !state.ivrDigitSent && state.callSid) {
+            const base = (process.env.BACKEND_URL || '').trim();
+            if (base) {
+              const playDtmfUrl = base + '/twilio/play-dtmf-4';
+              this.twilioService.redirectCall(state.callSid, playDtmfUrl).then(() => {
+                this.logger.log('[MediaStream] IVR bypass: heard "customer agent", sent redirect to play DTMF 4');
+              }).catch((e: any) => this.logger.warn('[MediaStream] IVR bypass redirect failed', (e as Error)?.message));
+            }
+            state.ivrDigitSent = true;
+            state.callEnded = true;
+          }
+          state.processing = false;
+          return;
+        }
 
         // --- Hold / resume handling ---
         if (state.onHold) {
@@ -568,22 +585,30 @@ export class MediaStreamHandlerService {
             state.processing = false;
             return;
           }
-          this.logger.log('[MediaStream] Post-goodbye: user asked something, answering then asking "Is that all you have?" before ending');
+          this.logger.log('[MediaStream] Post-goodbye: user said something, answering (recall or AI) then one confirmation phrase');
           if (userSaid?.trim()) state.conversationTranscript.push('User: ' + userSaid.trim());
+          const postGoodbyeConfirmPhrases = ['Is that all you have?', 'Are we good?', 'Are we clear?'];
+          const randomConfirm = postGoodbyeConfirmPhrases[Math.floor(Math.random() * postGoodbyeConfirmPhrases.length)];
           try {
-            const reply = await this.aiService.replyToUser(userSaid, state.patientInfo ?? undefined);
-            if (reply?.trim()) state.conversationTranscript.push('EVA: ' + reply.trim());
-            await speak(reply);
-            const followUp = 'Is that all you have? Let me know when you\'re good.';
-            state.conversationTranscript.push('EVA: ' + followUp);
-            await speak(followUp);
+            const recallReply = getRecallReply(userSaid, state.extractedData);
+            if (recallReply) {
+              state.conversationTranscript.push('EVA: ' + recallReply);
+              await speak(recallReply);
+              state.conversationTranscript.push('EVA: ' + randomConfirm);
+              await speak(randomConfirm);
+            } else {
+              const reply = await this.aiService.replyToUser(userSaid, state.patientInfo ?? undefined);
+              if (reply?.trim()) state.conversationTranscript.push('EVA: ' + reply.trim());
+              await speak(reply);
+              state.conversationTranscript.push('EVA: ' + randomConfirm);
+              await speak(randomConfirm);
+            }
           } catch (e) {
             const sorry = 'Sorry, I didn\'t catch that.';
             state.conversationTranscript.push('EVA: ' + sorry);
             await speak(sorry);
-            const followUp = 'Is that all you have? Let me know when you\'re good.';
-            state.conversationTranscript.push('EVA: ' + followUp);
-            await speak(followUp);
+            state.conversationTranscript.push('EVA: ' + randomConfirm);
+            await speak(randomConfirm);
           }
           state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
           state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
@@ -595,7 +620,6 @@ export class MediaStreamHandlerService {
         const looksLikeRealResponse = (s: string) => {
           const t = s.trim().toLowerCase();
           return (
-            looksLikeGreeting(t) ||
             /how can I help|how are you|doing good|doing great|how can i help|how can you help/i.test(t) ||
             /^(hi|hey|hello|yes|no|yeah|ok|okay|good|great|fine|good morning|good afternoon)$/i.test(t) ||
             t.length > 4 ||
@@ -608,18 +632,16 @@ export class MediaStreamHandlerService {
           (fillerOnly && userSaid.length <= 4);
         const inaudibleLike = /^\[?inaudible\]?\.?$/i.test(userSaid) || /^\.{2,}$/.test(userSaid) || /^[\s\.\-]+$/.test(userSaid);
         const isIdleOrEmpty = userSaid.length === 0 || (noiseOrTooShort && !looksLikeRealResponse(userSaid)) || inaudibleLike;
-        // When transcript is empty/inaudible but we had very little audio, skip re-asking so we don't interrupt (transcription may be slow or user mid-sentence).
+        // When transcript is empty but we had very little audio, skip saying "repeat" to avoid cutting off the user (next chunk may have speech).
+        const skipRepeatForShortAudio = userSaid.length === 0 && combined.length < MIN_BYTES_BEFORE_REPEAT;
+        // Never send "inaudible" when user clearly said something (greeting, "how can I help", or a value).
         const effectiveTranscript =
           isIdleOrEmpty && !looksLikeRealResponse(userSaid)
             ? 'User did not respond or was inaudible.'
             : userSaid;
-        const isInaudibleTurn = effectiveTranscript === 'User did not respond or was inaudible.';
-        const skipRepeatForShortAudio =
-          (userSaid.length === 0 && combined.length < MIN_BYTES_BEFORE_REPEAT) ||
-          (isInaudibleTurn && combined.length < 24_000); // ~3 sec: don't re-ask on empty/inaudible when audio was short
 
         if (skipRepeatForShortAudio) {
-          this.logger.log('[MediaStream] Empty/inaudible transcript but short audio (' + combined.length + ' bytes), skipping re-ask to avoid same question twice');
+          this.logger.log('[MediaStream] Empty transcript but short audio (' + combined.length + ' bytes), skipping repeat to avoid cutting off user');
           state.processing = false;
           return;
         }
@@ -629,29 +651,6 @@ export class MediaStreamHandlerService {
           this.logger.log(`[MediaStream] Noise or too short ("${userSaid}"), prompting repeat`);
         } else {
           this.logger.log(`[MediaStream] User said: ${userSaid}`);
-        }
-
-        // On empty/inaudible we only say a short "Can you repeat?" — never re-ask the full question (e.g. "Can I get the coverage?") so user doesn't hear the same question twice.
-        if (isInaudibleTurn) {
-          this.logger.log('[MediaStream] Inaudible/empty response — saying short repeat only, not re-asking full question');
-          if (userSaid?.trim() && userSaid !== 'User did not respond or was inaudible.') state.conversationTranscript.push('User: ' + userSaid);
-          state.conversationTranscript.push('EVA: ' + getRepeatOnlyPrompt());
-          await speak(getRepeatOnlyPrompt());
-          state.processing = false;
-          startFallbackTimer();
-          return;
-        }
-
-        // When transcript could be "how can I help" (even misheard), respond with purpose only — never "sorry didn't catch" + ask for coverage.
-        if (looksLikeGreeting(userSaid)) {
-          const greetingReply = 'I want to verify the benefits of a patient.';
-          this.logger.log('[MediaStream] Transcript looks like greeting ("' + userSaid + '") — responding with purpose only');
-          if (userSaid?.trim()) state.conversationTranscript.push('User: ' + userSaid.trim());
-          state.conversationTranscript.push('EVA: ' + greetingReply);
-          await speak(greetingReply);
-          state.processing = false;
-          startFallbackTimer();
-          return;
         }
 
         let { nextMessage, extractedUpdates, endCall } =
@@ -720,23 +719,23 @@ export class MediaStreamHandlerService {
         }
         const goodbye = 'Thank you for confirming the details. That\'s all I have. Have a good day.';
         let toSpeak = (nextMessage ?? '').trim();
+        // Safeguard: if user asked for DOB, never include a coverage request in the same turn — wait for "yes we're good" first
+        const userAskedForDob = /date of birth|DOB|what is the (patient )?date of birth/i.test(userSaid);
+        if (userAskedForDob && /(May I have the coverage|Can I get the coverage|Can you provide the coverage|What is the coverage)/i.test(toSpeak)) {
+          toSpeak = toSpeak.replace(/\s*[.\s]*(May I have the coverage\??|Can I get the coverage\??|Can you provide the coverage\??|What is the coverage\??)[^.]*\.?\s*$/i, '').trim();
+          if (toSpeak) this.logger.log('[MediaStream] Stripped coverage ask from DOB turn; will ask coverage only after user confirms');
+        }
         // Recall: answer from stored extractedData so we always give the correct value (e.g. "what is the deductible provided?")
         const recallReply = getRecallReply(userSaid, state.extractedData);
         if (recallReply) {
-          const confirmPhrases = ['Is it okay?', 'Is that all you have?', 'Are we good?'];
+          const confirmPhrases = ['Is it okay?', 'Is that all you have?', 'Are we good?', 'Are we clear?'];
           toSpeak = recallReply + ' ' + confirmPhrases[Math.floor(Math.random() * confirmPhrases.length)];
           this.logger.log('[MediaStream] Recall reply from stored data: ' + recallReply);
         }
         const isGenericFallback = /^(what else|is there anything else)/i.test(toSpeak);
         const soundsLikeRepeat = /didn'?t\s+(get|catch|understand)|couldn'?t\s+catch|sorry,?\s+I\s+didn'?t|can you (please\s+)?repeat|say that once again/i.test(toSpeak);
-        const asksForField = /\b(coverage|deductible|copay|validity)\b|provide\s+(the\s+)?(coverage|deductible|copay|validity)|get\s+the\s+(coverage|deductible|copay|validity)/i.test(toSpeak);
-        // Never say "Sorry I didn't catch. Can you provide coverage?" — if we're saying we didn't catch, say ONLY a short repeat; never add a field question.
-        if (soundsLikeRepeat && asksForField) {
-          toSpeak = getRepeatOnlyPrompt();
-          this.logger.log('[MediaStream] Overriding AI "sorry + field" with repeat-only so we never ask for coverage after "didn\'t catch"');
-        }
         // Never say "I didn't catch you" when user clearly said something (e.g. "how can I help", "it is 80$") — keep conversation in sync.
-        if (looksLikeRealResponse(userSaid) && soundsLikeRepeat && !asksForField) {
+        if (looksLikeRealResponse(userSaid) && soundsLikeRepeat) {
           if (/how can I help|how are you|doing good|doing great|how can i help/i.test(userSaid.trim())) {
             toSpeak = 'I want to verify the patient details.';
           } else if (transcriptHasValue(userSaid) && state.lastAskedField) {
@@ -829,16 +828,22 @@ export class MediaStreamHandlerService {
       if (event === 'start') {
         state.streamSid = msg?.streamSid ?? msg?.start?.streamSid ?? null;
         state.callSid = msg?.start?.callSid ?? msg?.callSid ?? null;
-        // Resolve payeeId from URL param or from call SID (stored when makeCall was used), so patient details are available before greeting
-        if (!state.payeeId?.trim() && state.callSid) {
-          const fromCallSid = this.twilioService.getPayeeIdForCall(state.callSid);
-          if (fromCallSid) {
-            state.payeeId = fromCallSid;
-            this.logger.log('[MediaStream] Resolved payeeId from call SID: ' + state.payeeId);
+        if (!state.mode || state.mode === 'eva') {
+          // Resolve payeeId from URL param or from call SID (stored when makeCall was used), so patient details are available before greeting
+          if (!state.payeeId?.trim() && state.callSid) {
+            const fromCallSid = this.twilioService.getPayeeIdForCall(state.callSid);
+            if (fromCallSid) {
+              state.payeeId = fromCallSid;
+              this.logger.log('[MediaStream] Resolved payeeId from call SID: ' + state.payeeId);
+            }
           }
         }
-        this.logger.log(`[MediaStream] Start streamSid=${state.streamSid} callSid=${state.callSid ?? 'none'} payeeId=${state.payeeId ?? 'none'}`);
+        this.logger.log(`[MediaStream] Start streamSid=${state.streamSid} callSid=${state.callSid ?? 'none'} payeeId=${state.payeeId ?? 'none'} mode=${state.mode}`);
         startFallbackTimer();
+        if (state.mode === 'ivr-bypass') {
+          // No greeting; we only listen for IVR menu and send DTMF 4 when we hear "customer agent"
+          return;
+        }
         (async () => {
           try {
             if (state.payeeId) {
@@ -923,19 +928,21 @@ export class MediaStreamHandlerService {
       this.logger.warn('[MediaStream] WebSocket error', err?.message);
     });
 
-    // Fallback: if we never detect silence but have enough audio, process every N seconds. Require at least ANSWER_WINDOW_MS past lastSpeakTime so we don't process "tail" and cause EVA to ask twice.
+    // Fallback: if we never detect silence but have enough audio, process every N seconds
     const startFallbackTimer = () => {
       if (state.fallbackTimer) return;
+      const intervalMs = state.mode === 'ivr-bypass' ? IVR_BYPASS_FALLBACK_MS : FALLBACK_PROCESS_INTERVAL_MS;
+      const minBytes = state.mode === 'ivr-bypass' ? IVR_BYPASS_MIN_BYTES : MIN_SPEECH_BYTES;
       state.fallbackTimer = setInterval(() => {
         const combined = Buffer.concat(state.buffer);
-        if (combined.length < MIN_SPEECH_BYTES) return;
+        if (combined.length < minBytes) return;
         const now = Date.now();
-        if (state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) return;
+        if (state.mode !== 'ivr-bypass' && state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) return;
         state.buffer = [];
         clearInterval(state.fallbackTimer!);
         state.fallbackTimer = null;
         processBuffer(combined);
-      }, FALLBACK_PROCESS_INTERVAL_MS);
+      }, intervalMs);
     };
   }
 
