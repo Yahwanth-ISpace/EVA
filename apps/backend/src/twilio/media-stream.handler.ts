@@ -37,8 +37,8 @@ const SILENCE_RATIO_THRESHOLD = 0.85;
 const MAX_BUFFER_BYTES = 64_000;
 /** Fallback: process at most every N ms. Shorter = faster response when silence isn't detected. */
 const FALLBACK_PROCESS_INTERVAL_MS = 4000;
-/** Minimum ms to wait after EVA speaks before processing (give user time to hear and answer). Lower = less lag, respond sooner. */
-const ANSWER_WINDOW_MS = 2000;
+/** Minimum ms to wait after EVA speaks before we process user audio. Prevents processing "tail" from previous turn and avoids EVA asking the same question twice while transcription is in flight. */
+const ANSWER_WINDOW_MS = 3000;
 /** Max time allowed on hold before ending the call (9 minutes) */
 const HOLD_MAX_MS = 9 * 60 * 1000;
 /** Chunk size to send back to Twilio (20ms = 160 bytes at 8kHz mulaw). Smaller chunks = playback starts faster. */
@@ -352,6 +352,8 @@ export class MediaStreamHandlerService {
           if (mulawAudio?.length) await playAudio(mulawAudio);
         }
         state.lastSpeakTime = Date.now();
+        // Clear buffer so we don't process "tail" audio that arrived during transcription — prevents EVA asking the same question twice
+        state.buffer = [];
       } catch (e) {
         this.logger.warn('[MediaStream] TTS failed', (e as Error)?.message);
       }
@@ -875,7 +877,7 @@ export class MediaStreamHandlerService {
       this.logger.warn('[MediaStream] WebSocket error', err?.message);
     });
 
-    // Fallback: if we never detect silence but have enough audio, process every N seconds
+    // Fallback: if we never detect silence but have enough audio, process every N seconds. Require at least ANSWER_WINDOW_MS past lastSpeakTime so we don't process "tail" and cause EVA to ask twice.
     const startFallbackTimer = () => {
       if (state.fallbackTimer) return;
       state.fallbackTimer = setInterval(() => {

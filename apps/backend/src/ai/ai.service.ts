@@ -23,6 +23,8 @@ export class AiService {
     this.gemini = new GoogleGenerativeAI(apiKey);
   }
 
+  
+
   /**
    * Generate a short conversational reply to the user (e.g. for voice/streaming).
    * EVA is a customer care agent from the dental practice calling to get patient benefit details from the insurance company.
