@@ -31,18 +31,18 @@ export class TwilioService {
     return payeeId;
   }
 
-  // STEP PROMPTS (text only; ElevenLabs will convert to speech)
+  /**
+   * Legacy step prompts (TwiML /twilio/step flow only). Main EVA flow uses media-stream + getNextConversationTurn.
+   * Reena from Went Dentals; collects coverage, deductible, copay, validity. Values stored as $ for dollars, % for percent.
+   */
   steps: string[] = [
-    'Hi, how are you doing today?',
-    'Sure, I am Jennifer from Went Dentals.',
-    'Yes, the patient name is John Merick. Date of birth is March thirty-first, nineteen ninety-two.',
-    'Sure, the tax ID is one seven zero one zero one.',
-    'The address is eight sixteen West Main Street, Danville, Virginia, two four five four one.',
-    'I would like the coverage details of the patient.',
-    'Can you please provide the deductible amount?',
+    'Hi, I am Reena from Went Dentals. How are you doing today?',
+    'I want to verify the benefits of a patient.',
+    'Can I get the coverage?',
+    'Can you provide the deductible?',
     'What is the copay?',
     'What is the validity of the insurance?',
-    'Thank you. I am done here.',
+    'Thank you for confirming the details. That\'s all I have. Have a good day.',
   ];
 
   /**

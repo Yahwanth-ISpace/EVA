@@ -27,17 +27,17 @@ import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
 /** Minimum speech bytes before we consider processing (~1 sec at 8kHz mulaw) — longer = fewer empty transcripts from ElevenLabs */
 const MIN_SPEECH_BYTES = 8_000;
-/** Tail bytes to check for silence (~0.25 sec). Smaller = process sooner after user stops. */
-const SILENCE_TAIL_BYTES = 2_000;
+/** Tail bytes to check for silence (~0.75 sec). Larger = wait longer after user stops before processing, so full sentences are captured (avoids cutting off mid-answer). */
+const SILENCE_TAIL_BYTES = 6_000;
 /** When transcript is empty, only say "please repeat" if we had at least this much audio (~4 sec). Otherwise skip speaking to avoid cutting off the user. */
 const MIN_BYTES_BEFORE_REPEAT = 32_000;
-/** Fraction of tail bytes that must be "silent" to trigger (0–1) */
-const SILENCE_RATIO_THRESHOLD = 0.85;
-/** Max buffer before we process anyway (~8 sec) — smaller chunks = faster ElevenLabs response */
+/** Fraction of tail bytes that must be "silent" to trigger end-of-speech (0–1). Higher = require clearer silence so we don't cut off on brief pauses. */
+const SILENCE_RATIO_THRESHOLD = 0.9;
+/** Max buffer before we process anyway (~8 sec). */
 const MAX_BUFFER_BYTES = 64_000;
-/** Fallback: process at most every N ms. Shorter = faster response when silence isn't detected. */
-const FALLBACK_PROCESS_INTERVAL_MS = 4000;
-/** Minimum ms to wait after EVA speaks before processing (give user time to hear and answer). Lower = less lag, respond sooner. */
+/** Fallback: process at most every N ms when silence not detected. Larger = less risk of cutting off long answers (user has up to this long to finish). */
+const FALLBACK_PROCESS_INTERVAL_MS = 6000;
+/** Minimum ms to wait after EVA speaks before we process user audio (so we don't capture EVA's voice). User can start speaking immediately; this only delays when we "listen". */
 const ANSWER_WINDOW_MS = 2000;
 /** Max time allowed on hold before ending the call (9 minutes) */
 const HOLD_MAX_MS = 9 * 60 * 1000;
@@ -552,22 +552,30 @@ export class MediaStreamHandlerService {
             state.processing = false;
             return;
           }
-          this.logger.log('[MediaStream] Post-goodbye: user asked something, answering then asking "Is that all you have?" before ending');
+          this.logger.log('[MediaStream] Post-goodbye: user said something, answering (recall or AI) then one confirmation phrase');
           if (userSaid?.trim()) state.conversationTranscript.push('User: ' + userSaid.trim());
+          const postGoodbyeConfirmPhrases = ['Is that all you have?', 'Are we good?', 'Are we clear?'];
+          const randomConfirm = postGoodbyeConfirmPhrases[Math.floor(Math.random() * postGoodbyeConfirmPhrases.length)];
           try {
-            const reply = await this.aiService.replyToUser(userSaid, state.patientInfo ?? undefined);
-            if (reply?.trim()) state.conversationTranscript.push('EVA: ' + reply.trim());
-            await speak(reply);
-            const followUp = 'Is that all you have? Let me know when you\'re good.';
-            state.conversationTranscript.push('EVA: ' + followUp);
-            await speak(followUp);
+            const recallReply = getRecallReply(userSaid, state.extractedData);
+            if (recallReply) {
+              state.conversationTranscript.push('EVA: ' + recallReply);
+              await speak(recallReply);
+              state.conversationTranscript.push('EVA: ' + randomConfirm);
+              await speak(randomConfirm);
+            } else {
+              const reply = await this.aiService.replyToUser(userSaid, state.patientInfo ?? undefined);
+              if (reply?.trim()) state.conversationTranscript.push('EVA: ' + reply.trim());
+              await speak(reply);
+              state.conversationTranscript.push('EVA: ' + randomConfirm);
+              await speak(randomConfirm);
+            }
           } catch (e) {
             const sorry = 'Sorry, I didn\'t catch that.';
             state.conversationTranscript.push('EVA: ' + sorry);
             await speak(sorry);
-            const followUp = 'Is that all you have? Let me know when you\'re good.';
-            state.conversationTranscript.push('EVA: ' + followUp);
-            await speak(followUp);
+            state.conversationTranscript.push('EVA: ' + randomConfirm);
+            await speak(randomConfirm);
           }
           state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
           state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
@@ -678,10 +686,16 @@ export class MediaStreamHandlerService {
         }
         const goodbye = 'Thank you for confirming the details. That\'s all I have. Have a good day.';
         let toSpeak = (nextMessage ?? '').trim();
+        // Safeguard: if user asked for DOB, never include a coverage request in the same turn — wait for "yes we're good" first
+        const userAskedForDob = /date of birth|DOB|what is the (patient )?date of birth/i.test(userSaid);
+        if (userAskedForDob && /(May I have the coverage|Can I get the coverage|Can you provide the coverage|What is the coverage)/i.test(toSpeak)) {
+          toSpeak = toSpeak.replace(/\s*[.\s]*(May I have the coverage\??|Can I get the coverage\??|Can you provide the coverage\??|What is the coverage\??)[^.]*\.?\s*$/i, '').trim();
+          if (toSpeak) this.logger.log('[MediaStream] Stripped coverage ask from DOB turn; will ask coverage only after user confirms');
+        }
         // Recall: answer from stored extractedData so we always give the correct value (e.g. "what is the deductible provided?")
         const recallReply = getRecallReply(userSaid, state.extractedData);
         if (recallReply) {
-          const confirmPhrases = ['Is it okay?', 'Is that all you have?', 'Are we good?'];
+          const confirmPhrases = ['Is it okay?', 'Is that all you have?', 'Are we good?', 'Are we clear?'];
           toSpeak = recallReply + ' ' + confirmPhrases[Math.floor(Math.random() * confirmPhrases.length)];
           this.logger.log('[MediaStream] Recall reply from stored data: ' + recallReply);
         }
