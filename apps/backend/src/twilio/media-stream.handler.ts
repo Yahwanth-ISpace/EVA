@@ -60,16 +60,6 @@ function isSilenceAtEnd(buffer: Buffer): boolean {
   return silent / tail.length >= SILENCE_RATIO_THRESHOLD;
 }
 
-/** Format date for natural speech (e.g. "March 31, 1992") */
-function formatDobForSpeech(dob: Date): string {
-  const d = new Date(dob);
-  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  const month = months[d.getMonth()];
-  const day = d.getDate();
-  const year = d.getFullYear();
-  return `${month} ${day}, ${year}`;
-}
-
 /** First thing EVA says: natural, human intro. Do not ask for any field — wait for the user to respond. */
 const CONVERSATION_GREETING =
   "Hi, I'm Reena from Went Dentals. How are you doing?";
@@ -81,16 +71,19 @@ const EVA_RESUME_ACK = 'No problem, thank you for getting back. I\'m on the call
 /** Duration (ms) to stay on the line after saying goodbye (in case user responds); then hang up if no input */
 const POST_GOODBYE_LISTEN_MS = 10_000;
 
-/** Detect if user is saying thank you / no more questions / goodbye / confirmation (used in post-goodbye phase) */
+/** Detect if user is saying thank you / no more questions / goodbye / confirmation (used in post-goodbye phase). End call when they say e.g. "yeah I'm good", "yeah thank you". */
 function isThankYouOrGoodbye(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (!t || t.length < 2) return false;
   return (
     /^(thank you|thanks|thank you so much|thanks a lot)/i.test(t) ||
+    /^(yeah,?\s*)?(thank you|thanks)(\.?\s*)$/i.test(t) ||
     /^(no,?\s*)?(that'?s\s+all|nothing else|we'?re\s+done|goodbye|bye)$/i.test(t) ||
     /^(that'?s\s+all|nothing else|we'?re\s+done|goodbye|bye)(\s|$)/i.test(t) ||
     /goodbye|that'?s\s+all\s*\.?\s*$/i.test(t) ||
-    /^(yes|yeah|yep|i'?m\s+all\s+set|we'?re\s+good|that'?s\s+it|all\s+good)$/i.test(t)
+    /^(yes|yeah|yep|i'?m\s+all\s+set|we'?re\s+good|that'?s\s+it|all\s+good)$/i.test(t) ||
+    /^(yeah,?\s*)?(i'?m\s+good|we'?re\s+good)(\.?\s*)$/i.test(t) ||
+    /(i'?m\s+good|we'?re\s+good|that'?s\s+it)(\.?\s*)$/i.test(t)
   );
 }
 
@@ -198,12 +191,13 @@ interface ExtractedData {
   validity: string | null;
 }
 
-/** Patient info for disclosure when user asks (full name, DOB, first name, last name) */
+/** Patient info from DB for EVA to use in prompts (name, DOB, SSN when asked). */
 interface PatientInfo {
   firstName: string;
   lastName: string;
   fullName: string;
   dobFormatted: string | null;
+  ssn: string | null;
 }
 
 /** Static patient data when no payee is loaded (for testing / inbound calls). */
@@ -212,6 +206,7 @@ const STATIC_PATIENT_INFO: PatientInfo = {
   lastName: 'Johnson',
   fullName: 'Sarah Johnson',
   dobFormatted: 'March 15, 1985',
+  ssn: null,
 };
 
 interface StreamState {
@@ -505,14 +500,14 @@ export class MediaStreamHandlerService {
             state.processing = false;
             return;
           }
-          this.logger.log('[MediaStream] Post-goodbye: user asked something, answering then waiting for confirmation before ending');
+          this.logger.log('[MediaStream] Post-goodbye: user asked something, answering then asking "Is that all you have?" before ending');
           try {
-            const reply = await this.aiService.replyToUser(userSaid);
+            const reply = await this.aiService.replyToUser(userSaid, state.patientInfo ?? undefined);
             await speak(reply);
-            await speak('Did that help? Let me know when you\'re all set.');
+            await speak('Is that all you have? Let me know when you\'re good.');
           } catch (e) {
             await speak('Sorry, I didn\'t catch that.');
-            await speak('Let me know when you\'re all set.');
+            await speak('Is that all you have? Let me know when you\'re good.');
           }
           state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
           state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
@@ -720,8 +715,9 @@ export class MediaStreamHandlerService {
                 state.patientInfo = {
                   firstName: info.firstName,
                   lastName: info.lastName,
-                  fullName: `${info.firstName} ${info.lastName}`.trim(),
-                  dobFormatted: info.dob ? formatDobForSpeech(info.dob) : null,
+                  fullName: info.fullName,
+                  dobFormatted: info.dobFormatted,
+                  ssn: info.ssn,
                 };
                 this.logger.log('[MediaStream] Patient info loaded from DB for payeeId=' + state.payeeId);
               } else {
