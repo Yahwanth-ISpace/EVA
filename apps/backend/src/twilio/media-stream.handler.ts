@@ -705,6 +705,14 @@ export class MediaStreamHandlerService {
       if (event === 'start') {
         state.streamSid = msg?.streamSid ?? msg?.start?.streamSid ?? null;
         state.callSid = msg?.start?.callSid ?? msg?.callSid ?? null;
+        // Resolve payeeId from URL param or from call SID (stored when makeCall was used), so patient details are available before greeting
+        if (!state.payeeId?.trim() && state.callSid) {
+          const fromCallSid = this.twilioService.getPayeeIdForCall(state.callSid);
+          if (fromCallSid) {
+            state.payeeId = fromCallSid;
+            this.logger.log('[MediaStream] Resolved payeeId from call SID: ' + state.payeeId);
+          }
+        }
         this.logger.log(`[MediaStream] Start streamSid=${state.streamSid} callSid=${state.callSid ?? 'none'} payeeId=${state.payeeId ?? 'none'}`);
         startFallbackTimer();
         (async () => {
