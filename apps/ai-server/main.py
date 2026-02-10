@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from transcription.routes import router as transcribe_router
 from rag.routes import router as rag_router
 
-app = FastAPI(title="CovrAi AI Server", version="1.0.0")
+app = FastAPI(title="EVA AI Server", version="1.0.0")
 
 origins = [
     "http://localhost:5173",
@@ -28,7 +28,7 @@ def root():
     return {"status": "ok"}
 
 # Routers
-app.include_router(transcribe_router, prefix="/transcription")
+# app.include_router(transcribe_router, prefix="/transcription")
 app.include_router(rag_router, prefix="/rag")
 
 

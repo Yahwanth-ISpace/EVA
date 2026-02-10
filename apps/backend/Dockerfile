@@ -2,6 +2,9 @@
 
 FROM node:20-alpine
 
+# ffmpeg required for Media Stream: MP3→mulaw (TTS) and mulaw→WAV (transcription)
+RUN apk add --no-cache ffmpeg
+
 # Set working directory
 WORKDIR /app
 

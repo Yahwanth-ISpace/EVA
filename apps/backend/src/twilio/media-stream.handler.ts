@@ -1,0 +1,976 @@
+/**
+ * Media stream handler for EVA voice calls (Twilio bidirectional stream).
+ * Handled edge cases: processing during greeting (lastSpeakTime), transcription failure (fallback TTS),
+ * inaudible-like transcripts ([inaudible], ...), empty/generic AI reply (re-ask lastAskedField),
+ * end-call only when all four fields collected (never end with missing fields).
+ * On any failure we ask the user to repeat only the current field; we never go back or re-ask earlier questions.
+ *
+ * PERFORMANCE / CHUNKING:
+ * - TTS streaming: first audio plays as soon as first chunks arrive from ElevenLabs (faster time-to-first-word).
+ * - STT: MIN_SPEECH_BYTES, SILENCE_TAIL_BYTES, MAX_BUFFER_BYTES, FALLBACK_PROCESS_INTERVAL_MS are tuned so we
+ *   process user speech sooner (smaller buffers = less wait before sending to transcription). Before chunking
+ *   we used ~4k min, 120k max, 6s fallback; now ~2k min, 64k max, 4s fallback for faster turnaround.
+ * - Most latency is usually from external APIs (ElevenLabs STT/TTS, Gemini). Chunking reduces wait on our side.
+ */
+import { Injectable, Logger } from '@nestjs/common';
+import { spawnSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import type { WebSocket } from 'ws';
+import { AiService } from '../ai/ai.service';
+import { TranscriptionService } from '../transcription/transcription.service';
+import { ElevenLabsAudioStackService } from '../voice/elevenlabs-audio-stack.service';
+import { VerificationService } from '../verification/verification.service';
+import { TwilioService } from './twilio.service';
+import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
+
+/** Minimum speech bytes before we consider processing (~0.75 sec at 8kHz mulaw). Kept low so short answers and details reach EVA quickly. */
+const MIN_SPEECH_BYTES = 6_000;
+/** Tail bytes to check for silence (~0.4 sec). Smaller = less delay after user stops; details reach EVA sooner. */
+const SILENCE_TAIL_BYTES = 3_200;
+/** When transcript is empty, only say "please repeat" if we had at least this much audio (~4 sec). Otherwise skip speaking to avoid cutting off the user. */
+const MIN_BYTES_BEFORE_REPEAT = 32_000;
+/** Fraction of tail bytes that must be "silent" to trigger end-of-speech (0–1). 0.82 = detect end of speech slightly sooner, less delay. */
+const SILENCE_RATIO_THRESHOLD = 0.82;
+/** Max buffer before we process anyway (~8 sec). */
+const MAX_BUFFER_BYTES = 64_000;
+/** Fallback: process at most every N ms when silence not detected. Lower = user's details reach EVA sooner when they talk without a long pause. */
+const FALLBACK_PROCESS_INTERVAL_MS = 3_200;
+/** Minimum ms to wait after EVA speaks before we process user audio (avoid capturing EVA's voice). Lower = quicker turn-around so details don't lag. */
+const ANSWER_WINDOW_MS = 1_200;
+/** Max time allowed on hold before ending the call (9 minutes) */
+const HOLD_MAX_MS = 9 * 60 * 1000;
+/** Chunk size to send back to Twilio (20ms = 160 bytes at 8kHz mulaw). Smaller chunks = playback starts faster. */
+const OUTBOUND_CHUNK_BYTES = 160;
+
+/** IVR bypass: process audio every N ms to detect "customer agent" quickly (ElevenLabs STT + Whisper fallback). */
+const IVR_BYPASS_FALLBACK_MS = 2500;
+/** IVR bypass: minimum audio bytes before running STT (~0.5 s). */
+const IVR_BYPASS_MIN_BYTES = 4_000;
+
+/** Mulaw: 0xFF and 0x7F are typical silence; treat nearby as silent too */
+function isSilentByte(b: number): boolean {
+  return b === 0xff || b === 0x7f || Math.abs(b - 0xff) <= 2;
+}
+
+/** Check if the last SILENCE_TAIL_BYTES of buffer are mostly silence */
+function isSilenceAtEnd(buffer: Buffer): boolean {
+  if (buffer.length < SILENCE_TAIL_BYTES) return false;
+  const tail = buffer.subarray(buffer.length - SILENCE_TAIL_BYTES);
+  let silent = 0;
+  for (let i = 0; i < tail.length; i++) {
+    if (isSilentByte(tail[i])) silent++;
+  }
+  return silent / tail.length >= SILENCE_RATIO_THRESHOLD;
+}
+
+/** First thing EVA says: natural, human intro. Do not ask for any field — wait for the user to respond. */
+const CONVERSATION_GREETING =
+  "Hi, I'm Reena from Went Dentals. How are you doing?";
+
+const EVA_HOLD_ACK = 'Sure, I\'ll hold. Take your time.';
+/** After they say "thanks for waiting", "are you there" etc. — acknowledge only; do not re-ask the question yet. */
+const EVA_RESUME_ACK = 'No problem, thank you for getting back. I\'m on the call.';
+
+/** Duration (ms) to stay on the line after saying goodbye (in case user responds); then hang up if no input */
+const POST_GOODBYE_LISTEN_MS = 10_000;
+
+/** Detect if user is saying thank you / no more questions / goodbye / confirmation (used in post-goodbye phase). End call when they say e.g. "yeah I'm good", "yeah thank you". */
+function isThankYouOrGoodbye(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t || t.length < 2) return false;
+  return (
+    /^(thank you|thanks|thank you so much|thanks a lot)/i.test(t) ||
+    /^(yeah,?\s*)?(thank you|thanks)(\.?\s*)$/i.test(t) ||
+    /^(no,?\s*)?(that'?s\s+all|nothing else|we'?re\s+done|goodbye|bye)$/i.test(t) ||
+    /^(that'?s\s+all|nothing else|we'?re\s+done|goodbye|bye)(\s|$)/i.test(t) ||
+    /goodbye|that'?s\s+all\s*\.?\s*$/i.test(t) ||
+    /^(yes|yeah|yep|i'?m\s+all\s+set|we'?re\s+good|that'?s\s+it|all\s+good)$/i.test(t) ||
+    /^(yeah,?\s*)?(i'?m\s+good|we'?re\s+good)(\.?\s*)$/i.test(t) ||
+    /(i'?m\s+good|we'?re\s+good|that'?s\s+it)(\.?\s*)$/i.test(t)
+  );
+}
+
+/** First missing field in order: coverage → deductible → copay → validity */
+function getFirstMissingField(data: ExtractedData): string | null {
+  const has = (v: string | null) => v != null && String(v).trim().length > 0;
+  if (!has(data.coverage)) return 'coverage';
+  if (!has(data.deductible)) return 'deductible';
+  if (!has(data.copay)) return 'copay';
+  if (!has(data.validity)) return 'validity';
+  return null;
+}
+
+/** When we couldn't hear or had an error: only ask to repeat; do not mention the field. */
+function getRepeatOnlyPrompt(): string {
+  const options = ['Can you please repeat that?', 'Can you say that once again?'];
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+/** Varied phrase for asking a benefit field (used when AI returns empty/generic). */
+function askForFieldPhrase(field: string): string {
+  const templates = [
+    `What is the ${field}?`,
+    `Can I get the ${field}?`,
+    `May I have the ${field}?`,
+    `Can you provide the ${field}?`,
+  ];
+  return templates[Math.floor(Math.random() * templates.length)];
+}
+
+/** Extract a single value for a benefit field from transcript (e.g. "28 dollars" -> "28 dollars"). Used to correct after-hold when AI puts value in wrong field. */
+function extractValueForField(transcript: string, field: string): string | null {
+  const t = transcript.trim().toLowerCase();
+  const dollarMatch = t.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
+  const percentMatch = t.match(/(\d+)\s*%|(\d+)\s*percent/i);
+  const numberMatch = t.match(/\b(\d+)\b/);
+  if (field === 'validity') {
+    const validityMatch = t.match(/year|month|dec|jan|feb|valid|till|until|through|twenty|dec/i);
+    if (validityMatch) return transcript.trim().replace(/\s+/g, ' ');
+    return null;
+  }
+  if (dollarMatch) {
+    const num = dollarMatch[1] || dollarMatch[2] || dollarMatch[3];
+    return num ? `${num} dollars` : null;
+  }
+  if (percentMatch && (field === 'copay' || field === 'coverage')) {
+    const num = percentMatch[1] || percentMatch[2];
+    return num ? `${num} percent` : null;
+  }
+  if (numberMatch) {
+    const num = numberMatch[1];
+    if (field === 'deductible' || field === 'copay') return `${num} dollars`;
+    if (field === 'coverage') return num;
+    return num;
+  }
+  return null;
+}
+
+/** True if transcript looks like it contains a number, dollar amount, or percent (user may be giving a value). */
+function transcriptHasValue(transcript: string): boolean {
+  return /\d+|dollar|percent|%\s*\$/.test(transcript);
+}
+
+/** Detect if user is asking to put the call on hold */
+function isHoldPhrase(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  return (
+    /putting?\s+(?:the\s+)?call\s+on\s+hold/i.test(t) ||
+    /put\s+(?:me\s+)?(?:on\s+)?hold/i.test(t) ||
+    /(?:please\s+)?hold\s+(?:please)?/i.test(t) ||
+    /(?:can you\s+)?(?:please\s+)?(?:wait|hold)/i.test(t) ||
+    /one\s+moment/i.test(t) ||
+    /putting\s+you\s+on\s+hold/i.test(t) ||
+    /i'?m\s+putting\s+(?:the\s+)?call\s+on\s+hold/i.test(t) ||
+    /please\s+wait/i.test(t)
+  );
+}
+
+/** Detect if user is saying they are back from hold. When matched, we stop hold, speak ack, and transcription + full conversation flow resume from the next user message. */
+function isResumePhrase(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t) return false;
+  return (
+    /i'?m\s+back/i.test(t) ||
+    /(?:thank you|thanks)\s+for\s+(?:waiting|holding)/i.test(t) ||
+    /thanks?\s+for\s+staying\s+on\s+hold/i.test(t) ||
+    /thanks?\s+for\s+waiting\s+on\s+(?:the\s+)?call/i.test(t) ||
+    /thanks?\s+for\s+waiting\s+on\s+hold/i.test(t) ||
+    /(?:we'?re\s+)?back\s+on\s+(?:the\s+)?line/i.test(t) ||
+    /(?:are\s+)?you\s+(?:still\s+)?(?:there|online)/i.test(t) ||
+    /(?:are\s+)?you\s+there/i.test(t) ||
+    /(?:are\s+)?you\s+online/i.test(t) ||
+    /let'?s\s+continue/i.test(t) ||
+    /ready\s+(?:to\s+)?continue/i.test(t) ||
+    /(?:i'?m\s+)?ready/i.test(t) ||
+    /continue\s+(?:please)?/i.test(t) ||
+    /hold\s+(?:is\s+)?(?:removed|off)/i.test(t)
+  );
+}
+
+interface ExtractedData {
+  coverage: string | null;
+  deductible: string | null;
+  copay: string | null;
+  validity: string | null;
+}
+
+/** If the user is asking what value we have for a benefit field (recall), return the reply from stored extractedData so we never give a wrong value. */
+function getRecallReply(userSaid: string, extractedData: ExtractedData): string | null {
+  const t = userSaid.trim().toLowerCase();
+  if (!t || t.length < 3) return null;
+  const recallPatterns = [
+    /\bwhat('s| is)?\s+(the\s+)?(deductible|coverage|copay|validity)/i,
+    /\b(deductible|coverage|copay|validity)\s+(provided|did you get|do you have|was that|we said)/i,
+    /\bwhat did (i say|you get|you have)\s+(for\s+)?(the\s+)?(deductible|coverage|copay|validity)/i,
+    /\b(do you have|what (value|number|did you get))\s+(for\s+)?(the\s+)?(deductible|coverage|copay|validity)/i,
+  ];
+  const fieldFromMatch = (m: string): keyof ExtractedData | null => {
+    if (/deductible/i.test(m)) return 'deductible';
+    if (/coverage/i.test(m)) return 'coverage';
+    if (/copay/i.test(m)) return 'copay';
+    if (/validity|valid/i.test(m)) return 'validity';
+    return null;
+  };
+  for (const re of recallPatterns) {
+    const m = t.match(re);
+    if (m) {
+      const key = fieldFromMatch(m[0]);
+      if (key) {
+        const val = extractedData[key];
+        if (val != null && String(val).trim()) return `I have the ${key} as ${val}.`;
+        return `I don't have that one yet.`;
+      }
+    }
+  }
+  if (/\bwhat is the deductible\b/i.test(t)) {
+    const val = extractedData.deductible;
+    if (val != null && String(val).trim()) return `I have the deductible as ${val}.`;
+    return `I don't have that one yet.`;
+  }
+  if (/\bwhat is the (coverage|copay|validity)\b/i.test(t)) {
+    const k = t.includes('coverage') ? 'coverage' : t.includes('copay') ? 'copay' : 'validity';
+    const val = extractedData[k as keyof ExtractedData];
+    if (val != null && String(val).trim()) return `I have the ${k} as ${val}.`;
+    return `I don't have that one yet.`;
+  }
+  return null;
+}
+
+/** Patient info from DB for EVA to use in prompts (name, DOB, SSN when asked). */
+interface PatientInfo {
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  dobFormatted: string | null;
+  ssn: string | null;
+}
+
+/** Static patient data when no payee is loaded (for testing / inbound calls). */
+const STATIC_PATIENT_INFO: PatientInfo = {
+  firstName: 'Sarah',
+  lastName: 'Johnson',
+  fullName: 'Sarah Johnson',
+  dobFormatted: 'March 15, 1985',
+  ssn: null,
+};
+
+interface StreamState {
+  buffer: Buffer[];
+  streamSid: string | null;
+  /** Twilio call SID for hanging up when we have all details */
+  callSid: string | null;
+  processing: boolean;
+  /** Fallback timer when silence isn't detected */
+  fallbackTimer: ReturnType<typeof setInterval> | null;
+  payeeId: string | null;
+  /** Patient (payee) info so EVA can disclose full name and DOB when asked */
+  patientInfo: PatientInfo | null;
+  extractedData: ExtractedData;
+  /** When true, we've said goodbye and shouldn't process more */
+  callEnded: boolean;
+  /** Time (ms) when EVA last spoke; we don't process before ANSWER_WINDOW_MS after this */
+  lastSpeakTime: number;
+  /** User put the call on hold; we don't transcribe for conversation until they resume */
+  onHold: boolean;
+  /** When hold started (ms); used for 9-min limit */
+  holdStartedAt: number | null;
+  /** Timeout to end call when hold exceeds 9 min */
+  holdTimeoutId: ReturnType<typeof setTimeout> | null;
+  /** Field we were asking when user put call on hold (or current field we are asking). Used so we remember and can accept e.g. "80$" or re-ask only when user says "what do you need?". */
+  lastAskedField: string | null;
+  /** When on hold: only this interval runs (every 8s) to check for resume phrase; no other processing. */
+  resumeCheckInterval: ReturnType<typeof setInterval> | null;
+  /** After goodbye we stay for 10s; hang up at this time if no input. */
+  postGoodbyeUntil: number | null;
+  postGoodbyeTimeoutId: ReturnType<typeof setTimeout> | null;
+  /** Conversation transcript (User / EVA lines) for verification record — values and important exchange only. */
+  conversationTranscript: string[];
+  /** 'ivr-bypass' = call to IVR number; listen for "customer agent", send DTMF 4; no EVA conversation. */
+  mode: 'eva' | 'ivr-bypass';
+  /** When true, we already sent DTMF 4 to the IVR (don't send again). */
+  ivrDigitSent: boolean;
+}
+
+@Injectable()
+export class MediaStreamHandlerService {
+  private readonly logger = new Logger(MediaStreamHandlerService.name);
+
+  constructor(
+    private readonly transcriptionService: TranscriptionService,
+    private readonly elevenLabsAudioStack: ElevenLabsAudioStackService,
+    private readonly aiService: AiService,
+    private readonly verificationService: VerificationService,
+    private readonly twilioService: TwilioService,
+  ) {}
+
+  handleConnection(ws: WebSocket, payeeId?: string | null, mode?: string | null): void {
+    const isIvrBypass = mode === 'ivr-bypass';
+    const state: StreamState = {
+      buffer: [],
+      streamSid: null,
+      callSid: null,
+      processing: false,
+      fallbackTimer: null,
+      payeeId: payeeId ?? null,
+      patientInfo: null,
+      extractedData: {
+        coverage: null,
+        deductible: null,
+        copay: null,
+        validity: null,
+      },
+      callEnded: false,
+      lastSpeakTime: 0,
+      onHold: false,
+      holdStartedAt: null,
+      holdTimeoutId: null,
+      lastAskedField: null,
+      resumeCheckInterval: null,
+      postGoodbyeUntil: null,
+      postGoodbyeTimeoutId: null,
+      conversationTranscript: [],
+      mode: isIvrBypass ? 'ivr-bypass' : 'eva',
+      ivrDigitSent: false,
+    };
+
+    const send = (obj: object) => {
+      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
+    };
+
+    const playAudio = async (mulawBuffer: Buffer) => {
+      for (let i = 0; i < mulawBuffer.length; i += OUTBOUND_CHUNK_BYTES) {
+        const chunk = mulawBuffer.subarray(i, i + OUTBOUND_CHUNK_BYTES);
+        send({
+          event: 'media',
+          streamSid: state.streamSid,
+          media: { payload: chunk.toString('base64') },
+        });
+      }
+    };
+
+    const speak = async (text: string) => {
+      if (!text?.trim()) return;
+      try {
+        // Prefer streaming TTS so playback starts as soon as first chunks arrive (faster response)
+        try {
+          for await (const mulawChunk of this.elevenLabsAudioStack.synthesizeStream(text)) {
+            if (mulawChunk?.length) await playAudio(mulawChunk);
+          }
+        } catch (streamErr: any) {
+          this.logger.debug('[MediaStream] TTS stream failed, using full buffer', (streamErr as Error)?.message);
+          const mulawAudio = await this.elevenLabsAudioStack.synthesize(text);
+          if (mulawAudio?.length) await playAudio(mulawAudio);
+        }
+        state.lastSpeakTime = Date.now();
+        // Clear inbound buffer so the next process only uses audio *after* EVA finished (avoids one-turn delay and EVA repeating)
+        state.buffer = [];
+      } catch (e) {
+        this.logger.warn('[MediaStream] TTS failed', (e as Error)?.message);
+      }
+    };
+
+    const pushToVerificationService = () => {
+      if (!state.payeeId) {
+        this.logger.warn('[MediaStream] Verification NOT saved: payeeId is missing. Pass payeeId in the media-stream URL (e.g. ?payeeId=...) so verification can be stored.');
+        return;
+      }
+      const hasAny = state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity;
+      if (!hasAny) {
+        this.logger.log('[MediaStream] Verification not saved: no extracted data.');
+        return;
+      }
+      const fullTranscript = state.conversationTranscript.length
+        ? state.conversationTranscript.join('\n')
+        : undefined;
+      this.logger.log('[MediaStream] Saving verification to DB: payeeId=' + state.payeeId + ' extracted=' + JSON.stringify(state.extractedData) + (fullTranscript ? ' transcriptLines=' + state.conversationTranscript.length : ''));
+      this.aiService.saveCallVerification(state.payeeId, state.extractedData, fullTranscript).then(() => {
+        this.logger.log('[MediaStream] Verification saved successfully for payeeId=' + state.payeeId);
+      }).catch((e) =>
+        this.logger.warn('[MediaStream] Save verification failed', (e as Error)?.message));
+    };
+
+    const doPostGoodbyeHangUp = () => {
+      if (state.callEnded) return;
+      state.callEnded = true;
+      state.postGoodbyeUntil = null;
+      if (state.postGoodbyeTimeoutId) {
+        clearTimeout(state.postGoodbyeTimeoutId);
+        state.postGoodbyeTimeoutId = null;
+      }
+      if (state.fallbackTimer) {
+        clearInterval(state.fallbackTimer);
+        state.fallbackTimer = null;
+      }
+      if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
+        pushToVerificationService();
+      }
+      const sid = state.callSid;
+      if (sid) this.twilioService.hangUp(sid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));
+    };
+
+    const tryTriggerProcess = () => {
+      if (state.processing || state.callEnded || !state.streamSid) return;
+      if (state.mode !== 'ivr-bypass' && state.onHold) return;
+      const now = Date.now();
+      if (state.mode !== 'ivr-bypass' && state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) return;
+      const combined = Buffer.concat(state.buffer);
+      const minBytes = state.mode === 'ivr-bypass' ? IVR_BYPASS_MIN_BYTES : MIN_SPEECH_BYTES;
+      if (combined.length < minBytes) return;
+
+      const shouldProcess =
+        isSilenceAtEnd(combined) ||
+        combined.length >= MAX_BUFFER_BYTES;
+
+      if (shouldProcess) {
+        state.buffer = [];
+        if (state.fallbackTimer) {
+          clearInterval(state.fallbackTimer);
+          state.fallbackTimer = null;
+        }
+        processBuffer(combined);
+      }
+    };
+
+    const processBuffer = async (
+      combined: Buffer,
+      opts?: { resumeCheckOnly?: boolean },
+    ) => {
+      if (state.processing || state.callEnded) return;
+      state.processing = true;
+      const resumeCheckOnly = opts?.resumeCheckOnly === true;
+
+      const tmpDir = os.tmpdir();
+      const rawPath = path.join(tmpDir, `stream_${Date.now()}_${Math.random().toString(36).slice(2)}.raw`);
+      const wavPath = path.join(tmpDir, `stream_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
+
+      try {
+        fs.writeFileSync(rawPath, combined);
+        this.mulawRawToWav(rawPath, wavPath);
+
+        let transcript: string;
+        try {
+          const result = await this.transcriptionService.transcribeAudio(
+            wavPath,
+            resumeCheckOnly ? { skipWhisperFallback: true } : undefined,
+          );
+          transcript = result?.transcript ?? '';
+        } catch (transcribeErr: any) {
+          this.logger.warn('[MediaStream] Transcription failed', transcribeErr?.message);
+          state.processing = false;
+          await speak(getRepeatOnlyPrompt()).catch(() => {});
+          return;
+        }
+        const userSaid = (transcript ?? '').trim();
+
+        // --- IVR bypass: listen for "customer agent" (or "press 4"), then send DTMF 4 so IVR runs option 4 (hold 10s, dial agent)
+        if (state.mode === 'ivr-bypass') {
+          const heardCustomerAgent = /\b(customer agent|press 4 to talk|talk to our customer agent|option 4)\b/i.test(userSaid);
+          if (heardCustomerAgent && !state.ivrDigitSent && state.callSid) {
+            const base = (process.env.BACKEND_URL || '').trim();
+            if (base) {
+              const playDtmfUrl = base + '/twilio/play-dtmf-4';
+              this.twilioService.redirectCall(state.callSid, playDtmfUrl).then(() => {
+                this.logger.log('[MediaStream] IVR bypass: heard "customer agent", sent redirect to play DTMF 4');
+              }).catch((e: any) => this.logger.warn('[MediaStream] IVR bypass redirect failed', (e as Error)?.message));
+            }
+            state.ivrDigitSent = true;
+            state.callEnded = true;
+          }
+          state.processing = false;
+          return;
+        }
+
+        // --- Hold / resume handling ---
+        if (state.onHold) {
+          const matchedResume = userSaid.length > 0 && isResumePhrase(userSaid);
+          if (matchedResume) {
+            state.onHold = false;
+            state.holdStartedAt = null;
+            if (state.holdTimeoutId) {
+              clearTimeout(state.holdTimeoutId);
+              state.holdTimeoutId = null;
+            }
+            if (state.resumeCheckInterval) {
+              clearInterval(state.resumeCheckInterval);
+              state.resumeCheckInterval = null;
+            }
+            this.logger.log('[MediaStream] User resumed from hold; transcript="' + userSaid + '" lastAskedField=' + (state.lastAskedField ?? 'none'));
+            if (userSaid?.trim()) state.conversationTranscript.push('User: ' + userSaid.trim());
+            state.conversationTranscript.push('EVA: ' + EVA_RESUME_ACK);
+            state.buffer = []; // clear so next processing uses only fresh audio after ack (avoids "couldn't catch" from hold-music/stale audio)
+            try {
+              await speak(EVA_RESUME_ACK);
+            } catch (e) {
+              this.logger.warn('[MediaStream] Resume ack TTS failed', (e as Error)?.message);
+            }
+            state.processing = false;
+            startFallbackTimer();
+            return;
+          } else if (state.holdStartedAt && Date.now() - state.holdStartedAt > HOLD_MAX_MS) {
+            this.logger.log('[MediaStream] Hold limit exceeded (9 min), ending call');
+            state.callEnded = true;
+            state.onHold = false;
+            state.holdStartedAt = null;
+            if (state.holdTimeoutId) { clearTimeout(state.holdTimeoutId); state.holdTimeoutId = null; }
+            if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
+            if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
+              pushToVerificationService();
+            }
+            const sid = state.callSid;
+            if (sid) this.twilioService.hangUp(sid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));
+          } else if (userSaid.length > 0) {
+            this.logger.log('[MediaStream] On hold: transcript not a resume phrase, ignoring. transcript="' + userSaid + '"');
+          }
+          state.processing = false;
+          return;
+        }
+
+        if (!state.onHold && userSaid.length > 0 && isHoldPhrase(userSaid)) {
+          state.onHold = true;
+          state.holdStartedAt = Date.now();
+          if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
+          state.resumeCheckInterval = setInterval(() => {
+            if (!state.onHold || state.callEnded) {
+              if (state.resumeCheckInterval) { clearInterval(state.resumeCheckInterval); state.resumeCheckInterval = null; }
+              return;
+            }
+            const combined = Buffer.concat(state.buffer);
+            state.buffer = [];
+            if (combined.length < MIN_SPEECH_BYTES) return;
+            processBuffer(combined, { resumeCheckOnly: true });
+          }, 8000);
+          state.holdTimeoutId = setTimeout(() => {
+            if (state.onHold && !state.callEnded) {
+              this.logger.log('[MediaStream] Hold limit exceeded (9 min), ending call');
+              state.callEnded = true;
+              state.onHold = false;
+              state.holdStartedAt = null;
+              state.holdTimeoutId = null;
+              if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
+              if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
+                pushToVerificationService();
+              }
+              if (state.callSid) this.twilioService.hangUp(state.callSid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));
+            }
+          }, HOLD_MAX_MS);
+          this.logger.log('[MediaStream] User put call on hold');
+          if (userSaid?.trim()) state.conversationTranscript.push('User: ' + userSaid.trim());
+          state.conversationTranscript.push('EVA: ' + EVA_HOLD_ACK);
+          await speak(EVA_HOLD_ACK);
+          state.processing = false;
+          return;
+        }
+
+        // --- Post-goodbye: we said closing line and are waiting briefly; if user says something, answer or end ---
+        if (state.postGoodbyeUntil != null) {
+          if (state.postGoodbyeTimeoutId) {
+            clearTimeout(state.postGoodbyeTimeoutId);
+            state.postGoodbyeTimeoutId = null;
+          }
+          const substantive =
+            userSaid.trim().length > 2 &&
+            !/^\[?inaudible\]?\.?$/i.test(userSaid) &&
+            !/^\.{2,}$/.test(userSaid);
+          if (!substantive) {
+            state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
+            state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
+            state.processing = false;
+            return;
+          }
+          if (isThankYouOrGoodbye(userSaid)) {
+            this.logger.log('[MediaStream] Post-goodbye: user said thank you / goodbye, ending call');
+            doPostGoodbyeHangUp();
+            state.processing = false;
+            return;
+          }
+          this.logger.log('[MediaStream] Post-goodbye: user said something, answering (recall or AI) then one confirmation phrase');
+          if (userSaid?.trim()) state.conversationTranscript.push('User: ' + userSaid.trim());
+          const postGoodbyeConfirmPhrases = ['Is that all you have?', 'Are we good?', 'Are we clear?'];
+          const randomConfirm = postGoodbyeConfirmPhrases[Math.floor(Math.random() * postGoodbyeConfirmPhrases.length)];
+          try {
+            const recallReply = getRecallReply(userSaid, state.extractedData);
+            if (recallReply) {
+              state.conversationTranscript.push('EVA: ' + recallReply);
+              await speak(recallReply);
+              state.conversationTranscript.push('EVA: ' + randomConfirm);
+              await speak(randomConfirm);
+            } else {
+              const reply = await this.aiService.replyToUser(userSaid, state.patientInfo ?? undefined);
+              if (reply?.trim()) state.conversationTranscript.push('EVA: ' + reply.trim());
+              await speak(reply);
+              state.conversationTranscript.push('EVA: ' + randomConfirm);
+              await speak(randomConfirm);
+            }
+          } catch (e) {
+            const sorry = 'Sorry, I didn\'t catch that.';
+            state.conversationTranscript.push('EVA: ' + sorry);
+            await speak(sorry);
+            state.conversationTranscript.push('EVA: ' + randomConfirm);
+            await speak(randomConfirm);
+          }
+          state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
+          state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
+          state.processing = false;
+          return;
+        }
+
+        // Don't treat greetings or substantive replies as noise ("hi", "good", "how can I help", numbers, etc.)
+        const looksLikeRealResponse = (s: string) => {
+          const t = s.trim().toLowerCase();
+          return (
+            /how can I help|how are you|doing good|doing great|how can i help|how can you help/i.test(t) ||
+            /^(hi|hey|hello|yes|no|yeah|ok|okay|good|great|fine|good morning|good afternoon)$/i.test(t) ||
+            t.length > 4 ||
+            transcriptHasValue(t)
+          );
+        };
+        const fillerOnly = /^(you|uh|um|oh|ah|eh|hmm|mmm)$/i.test(userSaid.trim());
+        const noiseOrTooShort =
+          (userSaid.length <= 2 && !/^(hi|hey|yes|no|yeah|ok)$/i.test(userSaid.trim())) ||
+          (fillerOnly && userSaid.length <= 4);
+        const inaudibleLike = /^\[?inaudible\]?\.?$/i.test(userSaid) || /^\.{2,}$/.test(userSaid) || /^[\s\.\-]+$/.test(userSaid);
+        const isIdleOrEmpty = userSaid.length === 0 || (noiseOrTooShort && !looksLikeRealResponse(userSaid)) || inaudibleLike;
+        // When transcript is empty but we had very little audio, skip saying "repeat" to avoid cutting off the user (next chunk may have speech).
+        const skipRepeatForShortAudio =
+          (userSaid.length === 0 && combined.length < MIN_BYTES_BEFORE_REPEAT) ||
+          (isIdleOrEmpty && combined.length < 24_000);
+        // Never send "inaudible" when user clearly said something (greeting, "how can I help", or a value).
+        const effectiveTranscript =
+          isIdleOrEmpty && !looksLikeRealResponse(userSaid)
+            ? 'User did not respond or was inaudible.'
+            : userSaid;
+        const wasInaudibleTurn = effectiveTranscript === 'User did not respond or was inaudible.';
+
+        if (skipRepeatForShortAudio) {
+          this.logger.log('[MediaStream] Empty/inaudible transcript but short audio (' + combined.length + ' bytes), skipping re-ask to stay in sync');
+          state.processing = false;
+          return;
+        }
+        // Inaudible/empty: re-ask the same field only (no AI call) so conversation stays in phase.
+        if (wasInaudibleTurn) {
+          const repeatPhrase = getRepeatOnlyPrompt();
+          const reaskSame = state.lastAskedField ? repeatPhrase + ' ' + askForFieldPhrase(state.lastAskedField) : repeatPhrase;
+          if (userSaid?.trim() && userSaid !== 'User did not respond or was inaudible.') state.conversationTranscript.push('User: ' + userSaid);
+          state.conversationTranscript.push('EVA: ' + reaskSame);
+          await speak(reaskSame);
+          state.processing = false;
+          startFallbackTimer();
+          return;
+        }
+        if (userSaid.length === 0) {
+          this.logger.log('[MediaStream] No speech detected, prompting repeat');
+        } else if (noiseOrTooShort) {
+          this.logger.log(`[MediaStream] Noise or too short ("${userSaid}"), prompting repeat`);
+        } else {
+          this.logger.log(`[MediaStream] User said: ${userSaid}`);
+        }
+
+        let { nextMessage, extractedUpdates, endCall } =
+          await this.aiService.getNextConversationTurn(
+            effectiveTranscript,
+            state.extractedData,
+            state.patientInfo,
+            state.lastAskedField,
+          );
+
+        const hasValue = (v: string | null) => v != null && String(v).trim().length > 0;
+        // After-hold safeguard: we were asking for lastAskedField; if user gave a value but AI put it in the wrong field, assign to lastAskedField only
+        const expectedField = state.lastAskedField;
+        if (
+          expectedField &&
+          ['coverage', 'deductible', 'copay', 'validity'].includes(expectedField) &&
+          !isIdleOrEmpty &&
+          transcriptHasValue(userSaid) &&
+          extractedUpdates &&
+          Object.keys(extractedUpdates).length > 0
+        ) {
+          const hasExpected = hasValue(extractedUpdates[expectedField as keyof typeof extractedUpdates] ?? null);
+          if (!hasExpected) {
+            const corrected = extractValueForField(userSaid, expectedField);
+            if (corrected) {
+              this.logger.log(`[MediaStream] After-hold correction: assigning value to expected field "${expectedField}" (was in wrong field)`);
+              extractedUpdates = { [expectedField]: corrected };
+            }
+          }
+        }
+
+        // Data validation: coverage = %, deductible/copay = $, validity = date (month and year). Polite correction if wrong type.
+        if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+          const validation = this.aiService.validateAndNormalizeBenefitExtracted(extractedUpdates, userSaid);
+          if (!validation.ok) {
+            this.logger.log('[MediaStream] Benefit value validation failed for ' + validation.invalidField + ': ' + validation.correctionMessage);
+            if (userSaid?.trim() && userSaid !== 'User did not respond or was inaudible.') state.conversationTranscript.push('User: ' + userSaid);
+            if (validation.correctionMessage?.trim()) state.conversationTranscript.push('EVA: ' + validation.correctionMessage.trim());
+            await speak(validation.correctionMessage);
+            state.processing = false;
+            return;
+          }
+          extractedUpdates = validation.normalized;
+        }
+
+        if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+          if (hasValue(extractedUpdates.coverage ?? null)) state.extractedData.coverage = extractedUpdates.coverage ?? null;
+          if (hasValue(extractedUpdates.deductible ?? null)) state.extractedData.deductible = extractedUpdates.deductible ?? null;
+          if (hasValue(extractedUpdates.copay ?? null)) state.extractedData.copay = extractedUpdates.copay ?? null;
+          if (hasValue(extractedUpdates.validity ?? null)) state.extractedData.validity = extractedUpdates.validity ?? null;
+        }
+
+        state.lastAskedField = getFirstMissingField(state.extractedData);
+        this.logger.log('[MediaStream] Extracted details after turn: ' + JSON.stringify(state.extractedData));
+
+        const allCollected =
+          hasValue(state.extractedData.coverage) &&
+          hasValue(state.extractedData.deductible) &&
+          hasValue(state.extractedData.copay) &&
+          hasValue(state.extractedData.validity);
+        // Only end when we have all four fields; never end with missing fields
+        let shouldEndCall = allCollected;
+        if (endCall && !allCollected) {
+          this.logger.warn('[MediaStream] AI returned endCall but not all fields collected; will not end. Missing: ' + ['coverage', 'deductible', 'copay', 'validity'].filter(f => !hasValue(state.extractedData[f as keyof ExtractedData] ?? null)).join(', '));
+          shouldEndCall = false;
+        }
+        const goodbye = 'Thank you for confirming the details. That\'s all I have. Have a good day.';
+        let toSpeak = (nextMessage ?? '').trim();
+        // Safeguard: if user asked for DOB, never include a coverage request in the same turn — wait for "yes we're good" first
+        const userAskedForDob = /date of birth|DOB|what is the (patient )?date of birth/i.test(userSaid);
+        if (userAskedForDob && /(May I have the coverage|Can I get the coverage|Can you provide the coverage|What is the coverage)/i.test(toSpeak)) {
+          toSpeak = toSpeak.replace(/\s*[.\s]*(May I have the coverage\??|Can I get the coverage\??|Can you provide the coverage\??|What is the coverage\??)[^.]*\.?\s*$/i, '').trim();
+          if (toSpeak) this.logger.log('[MediaStream] Stripped coverage ask from DOB turn; will ask coverage only after user confirms');
+        }
+        // Recall: answer from stored extractedData so we always give the correct value (e.g. "what is the deductible provided?")
+        const recallReply = getRecallReply(userSaid, state.extractedData);
+        if (recallReply) {
+          const confirmPhrases = ['Is it okay?', 'Is that all you have?', 'Are we good?', 'Are we clear?'];
+          toSpeak = recallReply + ' ' + confirmPhrases[Math.floor(Math.random() * confirmPhrases.length)];
+          this.logger.log('[MediaStream] Recall reply from stored data: ' + recallReply);
+        }
+        const isGenericFallback = /^(what else|is there anything else)/i.test(toSpeak);
+        const soundsLikeRepeat = /didn'?t\s+(get|catch|understand)|couldn'?t\s+catch|sorry,?\s+I\s+didn'?t|can you (please\s+)?repeat|say that once again/i.test(toSpeak);
+        // Never say "I didn't catch you" when user clearly said something (e.g. "how can I help", "it is 80$") — keep conversation in sync.
+        if (looksLikeRealResponse(userSaid) && soundsLikeRepeat) {
+          if (/how can I help|how are you|doing good|doing great|how can i help/i.test(userSaid.trim())) {
+            toSpeak = 'I want to verify the patient details.';
+          } else if (transcriptHasValue(userSaid) && state.lastAskedField) {
+            const corrected = extractValueForField(userSaid, state.lastAskedField);
+            if (corrected) {
+              const oneUpdate: Record<string, string> = { [state.lastAskedField]: corrected };
+              const validation = this.aiService.validateAndNormalizeBenefitExtracted(oneUpdate, userSaid);
+              if (!validation.ok) {
+                toSpeak = validation.correctionMessage;
+              } else {
+                const norm = validation.normalized[state.lastAskedField];
+                if (norm) {
+                  if (state.lastAskedField === 'coverage') state.extractedData.coverage = norm;
+                  else if (state.lastAskedField === 'deductible') state.extractedData.deductible = norm;
+                  else if (state.lastAskedField === 'copay') state.extractedData.copay = norm;
+                  else if (state.lastAskedField === 'validity') state.extractedData.validity = norm;
+                }
+                state.lastAskedField = getFirstMissingField(state.extractedData);
+                if (!state.lastAskedField) {
+                  toSpeak = goodbye;
+                  shouldEndCall = true;
+                } else {
+                  toSpeak = 'Got it, thanks. ' + askForFieldPhrase(state.lastAskedField);
+                }
+              }
+            } else {
+              toSpeak = askForFieldPhrase(state.lastAskedField);
+            }
+          } else {
+            toSpeak = state.lastAskedField ? askForFieldPhrase(state.lastAskedField) : 'What is the coverage?';
+          }
+          this.logger.log('[MediaStream] Overriding AI repeat with proper reply (user said something substantive)');
+        }
+        if (shouldEndCall) {
+          toSpeak = goodbye;
+          // Will enter post-goodbye below: stay on line briefly in case user responds, then hang up
+        } else         if (!toSpeak || (isGenericFallback && state.lastAskedField)) {
+          toSpeak = state.lastAskedField
+            ? askForFieldPhrase(state.lastAskedField)
+            : (toSpeak || 'Is there anything else you can share?');
+          if (!(nextMessage ?? '').trim() || isGenericFallback) {
+            this.logger.warn('[MediaStream] AI returned empty or generic nextMessage, using fallback');
+          }
+        }
+        // Append conversation transcript (user and EVA values / important exchange) for verification
+        if (userSaid && userSaid !== 'User did not respond or was inaudible.' && !/^\[?inaudible\]?\.?$/i.test(userSaid) && !/^\.{2,}$/.test(userSaid)) {
+          state.conversationTranscript.push('User: ' + userSaid);
+        }
+        if (toSpeak?.trim()) {
+          state.conversationTranscript.push('EVA: ' + toSpeak.trim());
+        }
+        await speak(toSpeak);
+
+        if (shouldEndCall) {
+          // Post-goodbye: already said "Thank you for confirming... Have a good day." — stay on line briefly in case user responds
+          state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
+          state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
+          startFallbackTimer(); // keep processing buffer so we hear if user says something or thank you
+        }
+      } catch (err: any) {
+        this.logger.warn('[MediaStream] Process buffer failed', err?.message);
+        // Only ask to repeat; do not ask for the field again (same as transcription failure).
+        await speak(getRepeatOnlyPrompt()).catch(() => {});
+      } finally {
+        try {
+          fs.unlinkSync(rawPath);
+        } catch { }
+        try {
+          fs.unlinkSync(wavPath);
+        } catch { }
+        state.processing = false;
+      }
+    };
+
+    ws.on('message', (data: Buffer | string) => {
+      let msg: any;
+      try {
+        msg = typeof data === 'string' ? JSON.parse(data) : JSON.parse(data.toString('utf-8'));
+      } catch {
+        return;
+      }
+
+      const event = msg?.event;
+
+      if (event === 'connected') {
+        this.logger.log('[MediaStream] Connected');
+        return;
+      }
+
+      if (event === 'start') {
+        state.streamSid = msg?.streamSid ?? msg?.start?.streamSid ?? null;
+        state.callSid = msg?.start?.callSid ?? msg?.callSid ?? null;
+        if (!state.mode || state.mode === 'eva') {
+          // Resolve payeeId from URL param or from call SID (stored when makeCall was used), so patient details are available before greeting
+          if (!state.payeeId?.trim() && state.callSid) {
+            const fromCallSid = this.twilioService.getPayeeIdForCall(state.callSid);
+            if (fromCallSid) {
+              state.payeeId = fromCallSid;
+              this.logger.log('[MediaStream] Resolved payeeId from call SID: ' + state.payeeId);
+            }
+          }
+        }
+        this.logger.log(`[MediaStream] Start streamSid=${state.streamSid} callSid=${state.callSid ?? 'none'} payeeId=${state.payeeId ?? 'none'} mode=${state.mode}`);
+        startFallbackTimer();
+        if (state.mode === 'ivr-bypass') {
+          // No greeting; we only listen for IVR menu and send DTMF 4 when we hear "customer agent"
+          return;
+        }
+        (async () => {
+          try {
+            if (state.payeeId) {
+              const info = await this.verificationService.getPayeePatientInfo(state.payeeId);
+              if (info) {
+                state.patientInfo = {
+                  firstName: info.firstName,
+                  lastName: info.lastName,
+                  fullName: info.fullName,
+                  dobFormatted: info.dobFormatted,
+                  ssn: info.ssn,
+                };
+                this.logger.log('[MediaStream] Patient info loaded from DB for payeeId=' + state.payeeId);
+              } else {
+                this.logger.warn('[MediaStream] Payee not found in DB for payeeId=' + state.payeeId + ' — patient details will be unavailable on this call.');
+              }
+            }
+            if (!state.patientInfo) {
+              if (!state.payeeId) {
+                state.patientInfo = STATIC_PATIENT_INFO;
+                this.logger.warn('[MediaStream] Using static patient info (no payeeId on stream). Pass payeeId in the stream URL to use real patient details from the database.');
+              }
+            }
+            state.lastSpeakTime = Date.now();
+            state.conversationTranscript.push('EVA: ' + CONVERSATION_GREETING);
+            await speak(CONVERSATION_GREETING);
+          } catch (e) {
+            this.logger.warn('[MediaStream] Greeting failed', (e as Error)?.message);
+          }
+        })();
+        return;
+      }
+
+      if (event === 'media' && msg?.media?.payload) {
+        try {
+          const payload = Buffer.from(msg.media.payload, 'base64');
+          state.buffer.push(payload);
+          tryTriggerProcess();
+        } catch { }
+        return;
+      }
+
+      if (event === 'stop') {
+        if (state.fallbackTimer) {
+          clearInterval(state.fallbackTimer);
+          state.fallbackTimer = null;
+        }
+        if (state.holdTimeoutId) {
+          clearTimeout(state.holdTimeoutId);
+          state.holdTimeoutId = null;
+        }
+        if (state.postGoodbyeTimeoutId) {
+          clearTimeout(state.postGoodbyeTimeoutId);
+          state.postGoodbyeTimeoutId = null;
+        }
+        this.logger.log('[MediaStream] Stop');
+        if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
+          this.logger.log('[MediaStream] Call stopped with extracted data — pushing to verification DB.');
+          pushToVerificationService();
+        } else if (!state.payeeId) {
+          this.logger.warn('[MediaStream] Call stopped but payeeId missing — verification NOT saved. Use ?payeeId=... in stream URL.');
+        }
+      }
+    });
+
+    ws.on('close', () => {
+      if (state.fallbackTimer) {
+        clearInterval(state.fallbackTimer);
+        state.fallbackTimer = null;
+      }
+      if (state.holdTimeoutId) {
+        clearTimeout(state.holdTimeoutId);
+        state.holdTimeoutId = null;
+      }
+      if (state.postGoodbyeTimeoutId) {
+        clearTimeout(state.postGoodbyeTimeoutId);
+        state.postGoodbyeTimeoutId = null;
+      }
+    });
+
+    ws.on('error', (err) => {
+      this.logger.warn('[MediaStream] WebSocket error', err?.message);
+    });
+
+    // Fallback: if we never detect silence but have enough audio, process every N seconds
+    const startFallbackTimer = () => {
+      if (state.fallbackTimer) return;
+      const intervalMs = state.mode === 'ivr-bypass' ? IVR_BYPASS_FALLBACK_MS : FALLBACK_PROCESS_INTERVAL_MS;
+      const minBytes = state.mode === 'ivr-bypass' ? IVR_BYPASS_MIN_BYTES : MIN_SPEECH_BYTES;
+      state.fallbackTimer = setInterval(() => {
+        const combined = Buffer.concat(state.buffer);
+        if (combined.length < minBytes) return;
+        const now = Date.now();
+        if (state.mode !== 'ivr-bypass' && state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) return;
+        state.buffer = [];
+        clearInterval(state.fallbackTimer!);
+        state.fallbackTimer = null;
+        processBuffer(combined);
+      }, intervalMs);
+    };
+  }
+
+  /** Convert raw mulaw (8kHz mono) file to wav for transcription API */
+  private mulawRawToWav(rawPath: string, wavPath: string): void {
+    const result = spawnSync(
+      'ffmpeg',
+      ['-f', 'mulaw', '-ar', '8000', '-ac', '1', '-i', rawPath, '-y', wavPath],
+      { encoding: 'buffer', timeout: 10_000 },
+    );
+    if (result.status !== 0 || result.error) {
+      const stderr = (result.stderr ?? Buffer.alloc(0)).toString('utf-8');
+      const errMsg = getFfmpegErrorMessage(result.error, stderr);
+      throw new Error(errMsg);
+    }
+  }
+}
