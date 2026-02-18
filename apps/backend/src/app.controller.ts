@@ -9,4 +9,10 @@ export class AppController {
   getHello(): string {
     return this.appService.getHello();
   }
+
+  /** Public health check for AWS/load balancers and Postman. No auth required. */
+  @Get('health')
+  getHealth(): { status: string } {
+    return this.appService.getHealth();
+  }
 }

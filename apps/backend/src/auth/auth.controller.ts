@@ -15,6 +15,7 @@ export class AuthController {
 
   @Post('login')
   login(@Body() dto: LoginDto) {
+    console.log('LOGIN ROUTE HIT');
     return this.authService.login(dto);
   }
 }
