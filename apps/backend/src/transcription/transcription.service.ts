@@ -6,8 +6,9 @@ import * as path from 'path';
 import mime from 'mime';
 
 const ai_server_url = process.env.AI_SERVER_URL;
-const ELEVENLABS_STT_URL = 'https://api.elevenlabs.io/v1/speech-to-text';
-const ELEVENLABS_STT_MODEL = 'scribe_v2';
+// ElevenLabs STT (commented out — Whisper is primary)
+// const ELEVENLABS_STT_URL = 'https://api.elevenlabs.io/v1/speech-to-text';
+// const ELEVENLABS_STT_MODEL = 'scribe_v2';
 
 /** Returns true if text looks like it's primarily not English (e.g. Devanagari, other scripts). We only accept English. */
 function isNonEnglish(text: string): boolean {
@@ -48,9 +49,8 @@ export class TranscriptionService {
   private readonly logger = new Logger(TranscriptionService.name);
 
   /**
-   * Transcribe audio file to text. Uses ElevenLabs speech-to-text first (fast, clear).
-   * Falls back to Whisper (AI server) if ElevenLabs fails or is not configured.
-   * @param options.skipWhisperFallback - When true (e.g. during hold resume check), do not call Whisper; return empty transcript instead. Avoids 502s on hold music.
+   * Transcribe audio file to text. Uses Whisper (AI server) as primary STT.
+   * @param options.skipWhisperFallback - When true (e.g. during hold resume check), do not call Whisper; return empty transcript instead.
    */
   async transcribeAudio(
     filePath: string,
@@ -60,47 +60,8 @@ export class TranscriptionService {
       throw new Error('File not found');
     }
 
-    const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
     const skipWhisper = options?.skipWhisperFallback === true;
-
-    // ElevenLabs often returns empty for very short audio (< ~0.5 sec). Skip it for tiny files to avoid "empty → Whisper" and delay.
-    const stat = fs.statSync(filePath);
-    const fileSizeBytes = stat.size;
-    const minBytesForElevenLabs = 6_000; // ~0.75 sec at 8kHz mulaw; below this use Whisper directly or return empty
-    const useElevenLabs = apiKey && fileSizeBytes >= minBytesForElevenLabs;
-
-    if (useElevenLabs) {
-      try {
-        const transcript = await this.transcribeWithElevenLabs(filePath, apiKey);
-        if (transcript != null && transcript.trim().length > 0) {
-          if (isLikelyHallucination(transcript)) {
-            this.logger.debug('ElevenLabs returned likely hallucination ("' + transcript + '"), returning empty');
-            return { transcript: '' };
-          }
-          this.logger.log('Transcription (ElevenLabs) successful');
-          return { transcript };
-        }
-        // ElevenLabs returned empty (silence/unclear). Do NOT fall back to Whisper—it often hallucinates e.g. "Thank you very much".
-        this.logger.debug('ElevenLabs returned empty, returning empty (no Whisper fallback to avoid hallucinations)');
-        return { transcript: '' };
-      } catch (err: any) {
-        if (skipWhisper) {
-          this.logger.debug('ElevenLabs failed during resume check, skipping Whisper');
-          return { transcript: '' };
-        }
-        this.logger.warn(
-          'ElevenLabs transcription failed, falling back to Whisper',
-          err?.message ?? err,
-        );
-      }
-    } else {
-      if (skipWhisper) return { transcript: '' };
-      if (apiKey && fileSizeBytes < minBytesForElevenLabs) {
-        this.logger.debug('Audio too short for ElevenLabs (' + fileSizeBytes + ' bytes), using Whisper');
-      } else if (!apiKey) {
-        this.logger.debug('ELEVENLABS_API_KEY not set, using Whisper');
-      }
-    }
+    if (skipWhisper) return { transcript: '' };
 
     const result = await this.transcribeWithWhisper(filePath);
     if (result.transcript && isLikelyHallucination(result.transcript)) {
@@ -110,6 +71,7 @@ export class TranscriptionService {
     return result;
   }
 
+  /* ——— ElevenLabs STT (commented out — Whisper is primary) ———
   private async transcribeWithElevenLabs(
     filePath: string,
     apiKey: string,
@@ -157,11 +119,12 @@ export class TranscriptionService {
       throw err;
     }
   }
+  ——— */
 
   private async transcribeWithWhisper(filePath: string): Promise<{ transcript: string }> {
     if (!ai_server_url) {
       throw new Error(
-        'AI server URL not configured. Set AI_SERVER_URL for Whisper fallback.',
+        'AI server URL not configured. Set AI_SERVER_URL for Whisper (primary STT).',
       );
     }
 
@@ -174,10 +137,9 @@ export class TranscriptionService {
       filename,
       contentType: mimeType,
     });
-    // Request English-only if the AI server supports a 'language' field
     form.append('language', 'en');
 
-    this.logger.log(`Whisper fallback: sending to ${ai_server_url}/transcription/transcribe (language=en)`);
+    this.logger.log(`Whisper (primary STT): sending to ${ai_server_url}/transcription/transcribe (language=en)`);
 
     const response = await axios.post(
       `${ai_server_url}/transcription/transcribe`,
