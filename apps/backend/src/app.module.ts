@@ -13,6 +13,7 @@ import { AppointmentModule } from './appointment/appointment.module';
 import { OfficeModule } from './offices/office.module';
 import { ProviderModule } from './providers/provider.module';
 import { TwilioModule } from './twilio/twilio.module';
+import { VerificationRequirementModule } from './verification-requirement/verification-requirement.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { TwilioModule } from './twilio/twilio.module';
     OfficeModule,
     PayerModule,
     VerificationModule,
+    VerificationRequirementModule,
     AiModule,
     AuthModule,
     UserModule,

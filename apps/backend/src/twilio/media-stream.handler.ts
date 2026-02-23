@@ -22,6 +22,7 @@ import { AiService } from '../ai/ai.service';
 import { TranscriptionService } from '../transcription/transcription.service';
 import { ElevenLabsAudioStackService } from '../voice/elevenlabs-audio-stack.service';
 import { VerificationService } from '../verification/verification.service';
+import { VerificationRequirementService } from '../verification-requirement/verification-requirement.service';
 import { TwilioService } from './twilio.service';
 import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
@@ -92,13 +93,16 @@ function isThankYouOrGoodbye(text: string): boolean {
   );
 }
 
-/** First missing field in order: coverage → deductible → copay → validity */
-function getFirstMissingField(data: ExtractedData): string | null {
+/** First missing field in order (uses orderedFields or default four). */
+function getFirstMissingField(
+  data: Record<string, string | null>,
+  orderedFields: string[],
+): string | null {
   const has = (v: string | null) => v != null && String(v).trim().length > 0;
-  if (!has(data.coverage)) return 'coverage';
-  if (!has(data.deductible)) return 'deductible';
-  if (!has(data.copay)) return 'copay';
-  if (!has(data.validity)) return 'validity';
+  const fields = orderedFields.length ? orderedFields : ['coverage', 'deductible', 'copay', 'validity'];
+  for (const f of fields) {
+    if (!has(data[f] ?? null)) return f;
+  }
   return null;
 }
 
@@ -189,39 +193,21 @@ function isResumePhrase(text: string): boolean {
   );
 }
 
-interface ExtractedData {
-  coverage: string | null;
-  deductible: string | null;
-  copay: string | null;
-  validity: string | null;
-}
-
-/** If the user is asking what value we have for a benefit field (recall), return the reply from stored extractedData so we never give a wrong value. */
-function getRecallReply(userSaid: string, extractedData: ExtractedData): string | null {
+/** If the user is asking what value we have for a benefit field (recall), return the reply from stored extractedData. */
+function getRecallReply(
+  userSaid: string,
+  extractedData: Record<string, string | null>,
+  orderedFields: string[],
+): string | null {
   const t = userSaid.trim().toLowerCase();
   if (!t || t.length < 3) return null;
-  const recallPatterns = [
-    /\bwhat('s| is)?\s+(the\s+)?(deductible|coverage|copay|validity)/i,
-    /\b(deductible|coverage|copay|validity)\s+(provided|did you get|do you have|was that|we said)/i,
-    /\bwhat did (i say|you get|you have)\s+(for\s+)?(the\s+)?(deductible|coverage|copay|validity)/i,
-    /\b(do you have|what (value|number|did you get))\s+(for\s+)?(the\s+)?(deductible|coverage|copay|validity)/i,
-  ];
-  const fieldFromMatch = (m: string): keyof ExtractedData | null => {
-    if (/deductible/i.test(m)) return 'deductible';
-    if (/coverage/i.test(m)) return 'coverage';
-    if (/copay/i.test(m)) return 'copay';
-    if (/validity|valid/i.test(m)) return 'validity';
-    return null;
-  };
-  for (const re of recallPatterns) {
-    const m = t.match(re);
-    if (m) {
-      const key = fieldFromMatch(m[0]);
-      if (key) {
-        const val = extractedData[key];
-        if (val != null && String(val).trim()) return `I have the ${key} as ${val}.`;
-        return `I don't have that one yet.`;
-      }
+  const fields = orderedFields.length ? orderedFields : ['coverage', 'deductible', 'copay', 'validity'];
+  for (const field of fields) {
+    const re = new RegExp(`\\bwhat('s| is)?\\s+(the\\s+)?${field}\\b|\\b${field}\\s+(provided|did you get|do you have|was that|we said)|\\bwhat did (i say|you get|you have)\\s+(for\\s+)?(the\\s+)?${field}|\\b(do you have|what (value|number|did you get))\\s+(for\\s+)?(the\\s+)?${field}`, 'i');
+    if (re.test(t)) {
+      const val = extractedData[field];
+      if (val != null && String(val).trim()) return `I have the ${field} as ${val}.`;
+      return `I don't have that one yet.`;
     }
   }
   if (/\bwhat is the deductible\b/i.test(t)) {
@@ -231,7 +217,7 @@ function getRecallReply(userSaid: string, extractedData: ExtractedData): string 
   }
   if (/\bwhat is the (coverage|copay|validity)\b/i.test(t)) {
     const k = t.includes('coverage') ? 'coverage' : t.includes('copay') ? 'copay' : 'validity';
-    const val = extractedData[k as keyof ExtractedData];
+    const val = extractedData[k];
     if (val != null && String(val).trim()) return `I have the ${k} as ${val}.`;
     return `I don't have that one yet.`;
   }
@@ -259,37 +245,28 @@ const STATIC_PATIENT_INFO: PatientInfo = {
 interface StreamState {
   buffer: Buffer[];
   streamSid: string | null;
-  /** Twilio call SID for hanging up when we have all details */
   callSid: string | null;
   processing: boolean;
-  /** Fallback timer when silence isn't detected */
   fallbackTimer: ReturnType<typeof setInterval> | null;
   payeeId: string | null;
-  /** Patient (payee) info so EVA can disclose full name and DOB when asked */
   patientInfo: PatientInfo | null;
-  extractedData: ExtractedData;
-  /** When true, we've said goodbye and shouldn't process more */
+  /** Dynamic verification fields (key = field name from VerificationRequirement). */
+  extractedData: Record<string, string | null>;
+  /** Ordered list of field names to collect (from VerificationRequirement or default). Loaded when payeeId is set. */
+  orderedFields: string[];
+  /** When set, verification is linked to this requirement and extractedData is stored in Verification.extractedData. */
+  verificationRequirementId: string | null;
   callEnded: boolean;
-  /** Time (ms) when EVA last spoke; we don't process before ANSWER_WINDOW_MS after this */
   lastSpeakTime: number;
-  /** User put the call on hold; we don't transcribe for conversation until they resume */
   onHold: boolean;
-  /** When hold started (ms); used for 9-min limit */
   holdStartedAt: number | null;
-  /** Timeout to end call when hold exceeds 9 min */
   holdTimeoutId: ReturnType<typeof setTimeout> | null;
-  /** Field we were asking when user put call on hold (or current field we are asking). Used so we remember and can accept e.g. "80$" or re-ask only when user says "what do you need?". */
   lastAskedField: string | null;
-  /** When on hold: only this interval runs (every 8s) to check for resume phrase; no other processing. */
   resumeCheckInterval: ReturnType<typeof setInterval> | null;
-  /** After goodbye we stay for 10s; hang up at this time if no input. */
   postGoodbyeUntil: number | null;
   postGoodbyeTimeoutId: ReturnType<typeof setTimeout> | null;
-  /** Conversation transcript (User / EVA lines) for verification record — values and important exchange only. */
   conversationTranscript: string[];
-  /** 'ivr-bypass' = call to IVR number; listen for "customer agent", send DTMF 4; no EVA conversation. */
   mode: 'eva' | 'ivr-bypass';
-  /** When true, we already sent DTMF 4 to the IVR (don't send again). */
   ivrDigitSent: boolean;
 }
 
@@ -302,6 +279,7 @@ export class MediaStreamHandlerService {
     private readonly elevenLabsAudioStack: ElevenLabsAudioStackService,
     private readonly aiService: AiService,
     private readonly verificationService: VerificationService,
+    private readonly verificationRequirementService: VerificationRequirementService,
     private readonly twilioService: TwilioService,
   ) {}
 
@@ -315,12 +293,9 @@ export class MediaStreamHandlerService {
       fallbackTimer: null,
       payeeId: payeeId ?? null,
       patientInfo: null,
-      extractedData: {
-        coverage: null,
-        deductible: null,
-        copay: null,
-        validity: null,
-      },
+      extractedData: {},
+      orderedFields: [],
+      verificationRequirementId: null,
       callEnded: false,
       lastSpeakTime: 0,
       onHold: false,
@@ -376,7 +351,8 @@ export class MediaStreamHandlerService {
         this.logger.warn('[MediaStream] Verification NOT saved: payeeId is missing. Pass payeeId in the media-stream URL (e.g. ?payeeId=...) so verification can be stored.');
         return;
       }
-      const hasAny = state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity;
+      const fields = state.orderedFields.length ? state.orderedFields : ['coverage', 'deductible', 'copay', 'validity'];
+      const hasAny = fields.some((f) => state.extractedData[f] != null && String(state.extractedData[f]).trim());
       if (!hasAny) {
         this.logger.log('[MediaStream] Verification not saved: no extracted data.');
         return;
@@ -385,7 +361,7 @@ export class MediaStreamHandlerService {
         ? state.conversationTranscript.join('\n')
         : undefined;
       this.logger.log('[MediaStream] Saving verification to DB: payeeId=' + state.payeeId + ' extracted=' + JSON.stringify(state.extractedData) + (fullTranscript ? ' transcriptLines=' + state.conversationTranscript.length : ''));
-      this.aiService.saveCallVerification(state.payeeId, state.extractedData, fullTranscript).then(() => {
+      this.aiService.saveCallVerification(state.payeeId, state.extractedData, fullTranscript, state.verificationRequirementId).then(() => {
         this.logger.log('[MediaStream] Verification saved successfully for payeeId=' + state.payeeId);
       }).catch((e) =>
         this.logger.warn('[MediaStream] Save verification failed', (e as Error)?.message));
@@ -403,9 +379,9 @@ export class MediaStreamHandlerService {
         clearInterval(state.fallbackTimer);
         state.fallbackTimer = null;
       }
-      if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
-        pushToVerificationService();
-      }
+      const fields = state.orderedFields.length ? state.orderedFields : ['coverage', 'deductible', 'copay', 'validity'];
+      const hasAny = state.payeeId && fields.some((f) => state.extractedData[f] != null && String(state.extractedData[f]).trim());
+      if (hasAny) pushToVerificationService();
       const sid = state.callSid;
       if (sid) this.twilioService.hangUp(sid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));
     };
@@ -482,6 +458,20 @@ export class MediaStreamHandlerService {
           return;
         }
 
+        // --- Lazy-load verification requirement fields for this payee (once per call) ---
+        if (state.payeeId && state.orderedFields.length === 0) {
+          try {
+            const { orderedFields, requirementId } = await this.verificationRequirementService.getOrderedFieldsAndRequirementId(state.payeeId);
+            state.orderedFields = orderedFields;
+            state.verificationRequirementId = requirementId;
+            this.logger.log('[MediaStream] Loaded verification fields for payee: ' + orderedFields.join(', ') + (requirementId ? ' (requirementId=' + requirementId + ')' : ' (default)'));
+          } catch (e: any) {
+            this.logger.warn('[MediaStream] Failed to load verification requirement, using default fields', e?.message);
+            state.orderedFields = ['coverage', 'deductible', 'copay', 'validity'];
+            state.verificationRequirementId = null;
+          }
+        }
+
         // --- Hold / resume handling ---
         if (state.onHold) {
           const matchedResume = userSaid.length > 0 && isResumePhrase(userSaid);
@@ -515,9 +505,8 @@ export class MediaStreamHandlerService {
             state.holdStartedAt = null;
             if (state.holdTimeoutId) { clearTimeout(state.holdTimeoutId); state.holdTimeoutId = null; }
             if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
-            if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
-              pushToVerificationService();
-            }
+            const hasAnyData = state.payeeId && (state.orderedFields.length ? state.orderedFields : ['coverage', 'deductible', 'copay', 'validity']).some((f) => state.extractedData[f] != null && String(state.extractedData[f]).trim());
+            if (hasAnyData) pushToVerificationService();
             const sid = state.callSid;
             if (sid) this.twilioService.hangUp(sid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));
           } else if (userSaid.length > 0) {
@@ -549,9 +538,8 @@ export class MediaStreamHandlerService {
               state.holdStartedAt = null;
               state.holdTimeoutId = null;
               if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
-              if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
-                pushToVerificationService();
-              }
+              const hasAnyData = state.payeeId && (state.orderedFields.length ? state.orderedFields : ['coverage', 'deductible', 'copay', 'validity']).some((f) => state.extractedData[f] != null && String(state.extractedData[f]).trim());
+              if (hasAnyData) pushToVerificationService();
               if (state.callSid) this.twilioService.hangUp(state.callSid).catch((e) => this.logger.warn('[MediaStream] Hang up failed', (e as Error)?.message));
             }
           }, HOLD_MAX_MS);
@@ -590,7 +578,8 @@ export class MediaStreamHandlerService {
           const postGoodbyeConfirmPhrases = ['Is that all you have?', 'Are we good?', 'Are we clear?'];
           const randomConfirm = postGoodbyeConfirmPhrases[Math.floor(Math.random() * postGoodbyeConfirmPhrases.length)];
           try {
-            const recallReply = getRecallReply(userSaid, state.extractedData);
+            const postOrderedF = state.orderedFields.length ? state.orderedFields : ['coverage', 'deductible', 'copay', 'validity'];
+            const recallReply = getRecallReply(userSaid, state.extractedData, postOrderedF);
             if (recallReply) {
               state.conversationTranscript.push('EVA: ' + recallReply);
               await speak(recallReply);
@@ -667,12 +656,14 @@ export class MediaStreamHandlerService {
           this.logger.log(`[MediaStream] User said: ${userSaid}`);
         }
 
+        const orderedF = state.orderedFields.length ? state.orderedFields : ['coverage', 'deductible', 'copay', 'validity'];
         let { nextMessage, extractedUpdates, endCall } =
           await this.aiService.getNextConversationTurn(
             effectiveTranscript,
             state.extractedData,
             state.patientInfo,
             state.lastAskedField,
+            orderedF,
           );
 
         const hasValue = (v: string | null) => v != null && String(v).trim().length > 0;
@@ -680,7 +671,7 @@ export class MediaStreamHandlerService {
         const expectedField = state.lastAskedField;
         if (
           expectedField &&
-          ['coverage', 'deductible', 'copay', 'validity'].includes(expectedField) &&
+          orderedF.includes(expectedField) &&
           !isIdleOrEmpty &&
           transcriptHasValue(userSaid) &&
           extractedUpdates &&
@@ -698,7 +689,7 @@ export class MediaStreamHandlerService {
 
         // Data validation: coverage = %, deductible/copay = $, validity = date (month and year). Polite correction if wrong type.
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
-          const validation = this.aiService.validateAndNormalizeBenefitExtracted(extractedUpdates, userSaid);
+          const validation = this.aiService.validateAndNormalizeBenefitExtracted(extractedUpdates, userSaid, orderedF);
           if (!validation.ok) {
             this.logger.log('[MediaStream] Benefit value validation failed for ' + validation.invalidField + ': ' + validation.correctionMessage);
             if (userSaid?.trim() && userSaid !== 'User did not respond or was inaudible.') state.conversationTranscript.push('User: ' + userSaid);
@@ -711,24 +702,19 @@ export class MediaStreamHandlerService {
         }
 
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
-          if (hasValue(extractedUpdates.coverage ?? null)) state.extractedData.coverage = extractedUpdates.coverage ?? null;
-          if (hasValue(extractedUpdates.deductible ?? null)) state.extractedData.deductible = extractedUpdates.deductible ?? null;
-          if (hasValue(extractedUpdates.copay ?? null)) state.extractedData.copay = extractedUpdates.copay ?? null;
-          if (hasValue(extractedUpdates.validity ?? null)) state.extractedData.validity = extractedUpdates.validity ?? null;
+          for (const [key, val] of Object.entries(extractedUpdates)) {
+            if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
+          }
         }
 
-        state.lastAskedField = getFirstMissingField(state.extractedData);
+        state.lastAskedField = getFirstMissingField(state.extractedData, orderedF);
         this.logger.log('[MediaStream] Extracted details after turn: ' + JSON.stringify(state.extractedData));
 
-        const allCollected =
-          hasValue(state.extractedData.coverage) &&
-          hasValue(state.extractedData.deductible) &&
-          hasValue(state.extractedData.copay) &&
-          hasValue(state.extractedData.validity);
-        // Only end when we have all four fields; never end with missing fields
+        const allCollected = orderedF.every((f) => hasValue(state.extractedData[f] ?? null));
         let shouldEndCall = allCollected;
         if (endCall && !allCollected) {
-          this.logger.warn('[MediaStream] AI returned endCall but not all fields collected; will not end. Missing: ' + ['coverage', 'deductible', 'copay', 'validity'].filter(f => !hasValue(state.extractedData[f as keyof ExtractedData] ?? null)).join(', '));
+          const missing = orderedF.filter((f) => !hasValue(state.extractedData[f] ?? null));
+          this.logger.warn('[MediaStream] AI returned endCall but not all fields collected; will not end. Missing: ' + missing.join(', '));
           shouldEndCall = false;
         }
         const goodbye = 'Thank you for confirming the details. That\'s all I have. Have a good day.';
@@ -740,7 +726,7 @@ export class MediaStreamHandlerService {
           if (toSpeak) this.logger.log('[MediaStream] Stripped coverage ask from DOB turn; will ask coverage only after user confirms');
         }
         // Recall: answer from stored extractedData so we always give the correct value (e.g. "what is the deductible provided?")
-        const recallReply = getRecallReply(userSaid, state.extractedData);
+        const recallReply = getRecallReply(userSaid, state.extractedData, orderedF);
         if (recallReply) {
           const confirmPhrases = ['Is it okay?', 'Is that all you have?', 'Are we good?', 'Are we clear?'];
           toSpeak = recallReply + ' ' + confirmPhrases[Math.floor(Math.random() * confirmPhrases.length)];
@@ -756,18 +742,14 @@ export class MediaStreamHandlerService {
             const corrected = extractValueForField(userSaid, state.lastAskedField);
             if (corrected) {
               const oneUpdate: Record<string, string> = { [state.lastAskedField]: corrected };
-              const validation = this.aiService.validateAndNormalizeBenefitExtracted(oneUpdate, userSaid);
+              const orderedF2 = state.orderedFields.length ? state.orderedFields : ['coverage', 'deductible', 'copay', 'validity'];
+              const validation = this.aiService.validateAndNormalizeBenefitExtracted(oneUpdate, userSaid, orderedF2);
               if (!validation.ok) {
                 toSpeak = validation.correctionMessage;
               } else {
                 const norm = validation.normalized[state.lastAskedField];
-                if (norm) {
-                  if (state.lastAskedField === 'coverage') state.extractedData.coverage = norm;
-                  else if (state.lastAskedField === 'deductible') state.extractedData.deductible = norm;
-                  else if (state.lastAskedField === 'copay') state.extractedData.copay = norm;
-                  else if (state.lastAskedField === 'validity') state.extractedData.validity = norm;
-                }
-                state.lastAskedField = getFirstMissingField(state.extractedData);
+                if (norm && state.lastAskedField) state.extractedData[state.lastAskedField] = norm;
+                state.lastAskedField = getFirstMissingField(state.extractedData, orderedF2);
                 if (!state.lastAskedField) {
                   toSpeak = goodbye;
                   shouldEndCall = true;
@@ -779,7 +761,8 @@ export class MediaStreamHandlerService {
               toSpeak = askForFieldPhrase(state.lastAskedField);
             }
           } else {
-            toSpeak = state.lastAskedField ? askForFieldPhrase(state.lastAskedField) : 'What is the coverage?';
+            const firstField = (state.orderedFields.length ? state.orderedFields[0] : 'coverage');
+            toSpeak = state.lastAskedField ? askForFieldPhrase(state.lastAskedField) : askForFieldPhrase(firstField);
           }
           this.logger.log('[MediaStream] Overriding AI repeat with proper reply (user said something substantive)');
         }
@@ -914,7 +897,8 @@ export class MediaStreamHandlerService {
           state.postGoodbyeTimeoutId = null;
         }
         this.logger.log('[MediaStream] Stop');
-        if (state.payeeId && (state.extractedData.coverage ?? state.extractedData.deductible ?? state.extractedData.copay ?? state.extractedData.validity)) {
+        const finalFields = state.orderedFields.length ? state.orderedFields : ['coverage', 'deductible', 'copay', 'validity'];
+        if (state.payeeId && finalFields.some((f) => state.extractedData[f] != null && String(state.extractedData[f]).trim())) {
           this.logger.log('[MediaStream] Call stopped with extracted data — pushing to verification DB.');
           pushToVerificationService();
         } else if (!state.payeeId) {
