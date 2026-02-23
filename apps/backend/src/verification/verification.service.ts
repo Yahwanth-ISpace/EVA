@@ -176,106 +176,29 @@ export class VerificationService {
 
   /**
    * Same as verifyFromAudio (find-or-create verification, merge fields) but takes extracted call
-   * fields directly instead of an audio file. No transcription or AI extraction — inserts the
-   * provided extracted fields into the verification record.
+   * fields directly instead of an audio file. When verificationRequirementId is set, extracted can be
+   * any record of field names → values and is stored in extractedData.
    */
   async verifyFromExtractedCall(
     payeeId: string,
-    extracted: {
+    extracted: Record<string, string | null | undefined> | {
       coverage?: string | null;
       deductible?: string | null;
       copay?: string | null;
       validity?: string | null;
     },
     transcriptToAppend?: string,
+    verificationRequirementId?: string | null,
   ) {
     if (!payeeId) {
       throw new BadRequestException('payeeId is required');
     }
-
-    const payee = await this.prisma.payee.findUnique({
-      where: { id: payeeId },
-    });
-    if (!payee) throw new NotFoundException('Payee not found');
-
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    const existingVerification = await this.prisma.verification.findFirst({
-      where: {
-        payeeId,
-        createdAt: { gte: oneHourAgo },
-      },
-      orderBy: { createdAt: 'desc' },
-      include: { payee: true },
-    });
-
-    const hasValue = (value: string | null | undefined): boolean => {
-      return value !== null && value !== undefined && String(value).trim().length > 0;
-    };
-
-    const updateData: {
-      transcript?: string;
-      coverage?: string | null;
-      deductible?: string | null;
-      copay?: string | null;
-      validity?: string | null;
-    } = {
-      transcript: existingVerification && transcriptToAppend?.trim()
-        ? `${existingVerification.transcript}\n\n---\n\n${transcriptToAppend}`
-        : (transcriptToAppend?.trim() ?? existingVerification?.transcript ?? ''),
-    };
-
-    if (hasValue(extracted.coverage)) {
-      updateData.coverage = extracted.coverage;
-    } else if (existingVerification?.coverage) {
-      updateData.coverage = existingVerification.coverage;
-    }
-    if (hasValue(extracted.deductible)) {
-      updateData.deductible = extracted.deductible;
-    } else if (existingVerification?.deductible) {
-      updateData.deductible = existingVerification.deductible;
-    }
-    if (hasValue(extracted.copay)) {
-      updateData.copay = extracted.copay;
-    } else if (existingVerification?.copay) {
-      updateData.copay = existingVerification.copay;
-    }
-    if (hasValue(extracted.validity)) {
-      updateData.validity = extracted.validity;
-    } else if (existingVerification?.validity) {
-      updateData.validity = existingVerification.validity;
-    }
-
-    this.logger.log('verifyFromExtractedCall: payeeId=' + payeeId + ' merged=' + JSON.stringify({
-      coverage: updateData.coverage,
-      deductible: updateData.deductible,
-      copay: updateData.copay,
-      validity: updateData.validity,
-      isUpdate: !!existingVerification,
-    }));
-
-    if (existingVerification) {
-      const updated = await this.prisma.verification.update({
-        where: { id: existingVerification.id },
-        data: updateData,
-        include: { payee: true },
-      });
-      this.logger.log('Verification DB updated: id=' + updated.id + ' payeeId=' + payeeId);
-      return updated;
-    }
-
-    const created = await this.prisma.verification.create({
-      data: {
-        payeeId,
-        coverage: extracted.coverage ?? null,
-        deductible: extracted.deductible ?? null,
-        copay: extracted.copay ?? null,
-        validity: extracted.validity ?? null,
-        transcript: updateData.transcript ?? '',
-      },
-      include: { payee: true },
-    });
-    this.logger.log('Verification DB created: id=' + created.id + ' payeeId=' + payeeId);
-    return created;
+    return this.mergeExtractedData(
+      payeeId,
+      extracted as Record<string, string | null | undefined>,
+      transcriptToAppend,
+      verificationRequirementId,
+    );
   }
 
   async findAll(user: { userId: string; role: string }) {
@@ -307,9 +230,13 @@ export class VerificationService {
     });
   }
 
+  /** Type for extracted verification fields (legacy 4 or dynamic from VerificationRequirement). */
+  static readonly LEGACY_KEYS = ['coverage', 'deductible', 'copay', 'validity'] as const;
+
   /**
    * Merge extracted insurance data into the current verification for a payee (used by media-stream flow).
    * Finds or creates a recent verification and updates only the provided fields; optionally appends transcript.
+   * When verificationRequirementId is set, stores full extracted in extractedData (Json); legacy keys are also set when present.
    */
   async mergeExtractedData(
     payeeId: string,
@@ -318,8 +245,9 @@ export class VerificationService {
       deductible: string | null;
       copay: string | null;
       validity: string | null;
-    }>,
+    }> | Record<string, string | null | undefined>,
     transcriptToAppend?: string,
+    verificationRequirementId?: string | null,
   ) {
     const payee = await this.prisma.payee.findUnique({
       where: { id: payeeId },
@@ -342,13 +270,23 @@ export class VerificationService {
         ? `${existing.transcript}\n\n---\n\n${transcriptToAppend}`
         : transcriptToAppend;
     }
-    for (const key of ['coverage', 'deductible', 'copay', 'validity'] as const) {
-      const val = extracted[key];
+    const legacyKeys = VerificationService.LEGACY_KEYS;
+    for (const key of legacyKeys) {
+      const val = (extracted as Record<string, string | null | undefined>)[key];
       if (hasValue(val)) {
         updateData[key] = val;
       } else if (existing && (existing[key] ?? '').toString().trim()) {
         updateData[key] = existing[key];
       }
+    }
+    if (verificationRequirementId) {
+      const existingData = (existing?.extractedData as Record<string, string | null>) ?? {};
+      const merged: Record<string, string | null> = { ...existingData };
+      for (const [k, v] of Object.entries(extracted)) {
+        if (v != null && String(v).trim().length > 0) merged[k] = String(v).trim();
+      }
+      updateData.verificationRequirementId = verificationRequirementId;
+      updateData.extractedData = merged;
     }
 
     if (existing) {
@@ -358,15 +296,24 @@ export class VerificationService {
         include: { payee: true },
       });
     }
+    const createData: any = {
+      payeeId,
+      coverage: updateData.coverage ?? null,
+      deductible: updateData.deductible ?? null,
+      copay: updateData.copay ?? null,
+      validity: updateData.validity ?? null,
+      transcript: updateData.transcript ?? transcriptToAppend ?? '',
+    };
+    if (verificationRequirementId) {
+      createData.verificationRequirementId = verificationRequirementId;
+      const merged: Record<string, string | null> = {};
+      for (const [k, v] of Object.entries(extracted)) {
+        if (v != null && String(v).trim().length > 0) merged[k] = String(v).trim();
+      }
+      createData.extractedData = merged;
+    }
     return this.prisma.verification.create({
-      data: {
-        payeeId,
-        coverage: updateData.coverage ?? null,
-        deductible: updateData.deductible ?? null,
-        copay: updateData.copay ?? null,
-        validity: updateData.validity ?? null,
-        transcript: updateData.transcript ?? transcriptToAppend ?? '',
-      },
+      data: createData,
       include: { payee: true },
     });
   }
@@ -419,21 +366,30 @@ export class VerificationService {
 
   /**
    * Start a verification record when a call begins (so extracted data can be pushed and updated).
+   * Optionally link to a VerificationRequirement (then extractedData will be used for dynamic fields).
    */
-  async startVerificationCall(payeeId: string): Promise<{ id: string } | null> {
+  async startVerificationCall(
+    payeeId: string,
+    verificationRequirementId?: string | null,
+  ): Promise<{ id: string } | null> {
     const payee = await this.prisma.payee.findUnique({
       where: { id: payeeId },
     });
     if (!payee) return null;
+    const data: any = {
+      payeeId,
+      transcript: 'Call started.',
+      coverage: null,
+      deductible: null,
+      copay: null,
+      validity: null,
+    };
+    if (verificationRequirementId) {
+      data.verificationRequirementId = verificationRequirementId;
+      data.extractedData = {};
+    }
     const record = await this.prisma.verification.create({
-      data: {
-        payeeId,
-        transcript: 'Call started.',
-        coverage: null,
-        deductible: null,
-        copay: null,
-        validity: null,
-      },
+      data,
       select: { id: true },
     });
     return { id: record.id };
@@ -442,18 +398,20 @@ export class VerificationService {
   /**
    * Push extracted data to the verification record (finds or creates recent verification for payeeId).
    * Used by media stream and by the push-extracted endpoint.
+   * When verificationRequirementId is set, extracted can be any record of field names → values.
    */
   async pushExtractedData(
     payeeId: string,
-    extracted: {
+    extracted: Record<string, string | null | undefined> | {
       coverage?: string | null;
       deductible?: string | null;
       copay?: string | null;
       validity?: string | null;
     },
     transcriptToAppend?: string,
+    verificationRequirementId?: string | null,
   ) {
     this.logger.log('pushExtractedData: payeeId=' + payeeId + ' data=' + JSON.stringify(extracted));
-    return this.mergeExtractedData(payeeId, extracted, transcriptToAppend);
+    return this.mergeExtractedData(payeeId, extracted, transcriptToAppend, verificationRequirementId);
   }
 }

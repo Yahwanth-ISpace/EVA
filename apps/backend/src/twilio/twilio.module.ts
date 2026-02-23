@@ -7,6 +7,7 @@ import { VoiceModule } from '../voice/voice.module';
 import { AiModule } from '../ai/ai.module';
 import { TranscriptionModule } from '../transcription/transcription.module';
 import { VerificationModule } from '../verification/verification.module';
+import { VerificationRequirementModule } from '../verification-requirement/verification-requirement.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { VerificationModule } from '../verification/verification.module';
     AiModule,
     TranscriptionModule,
     VerificationModule,
+    VerificationRequirementModule,
   ],
   controllers: [TwilioController],
   providers: [TwilioService, MediaStreamHandlerService],

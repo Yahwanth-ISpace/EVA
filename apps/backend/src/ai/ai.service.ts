@@ -71,25 +71,28 @@ ${patientBlock}
   /**
    * Persist extracted call verification details to the database when the call ends.
    * Called by the media-stream handler as soon as the call is ended.
+   * When verificationRequirementId is set, extracted can be any record of field names → values.
    */
   async saveCallVerification(
     payeeId: string,
-    extracted: {
+    extracted: Record<string, string | null | undefined> | {
       coverage?: string | null;
       deductible?: string | null;
       copay?: string | null;
       validity?: string | null;
     },
     transcriptToAppend?: string,
+    verificationRequirementId?: string | null,
   ) {
     return this.verificationService.verifyFromExtractedCall(
       payeeId,
       extracted,
       transcriptToAppend,
+      verificationRequirementId,
     );
   }
 
-  /** Insurance fields we collect during verification (order must be preserved) */
+  /** Default insurance fields when no VerificationRequirement is used (order preserved) */
   public static readonly INSURANCE_FIELDS = [
     'coverage',
     'deductible',
@@ -97,11 +100,16 @@ ${patientBlock}
     'validity',
   ] as const;
 
-  private hasValue(v: string | null): boolean {
+  /** Ordered field names to use for verification (from DB or default) */
+  public static getOrderedFields(orderedFields?: string[] | null): string[] {
+    return orderedFields?.length ? orderedFields : [...AiService.INSURANCE_FIELDS];
+  }
+
+  private hasValue(v: string | null | undefined): boolean {
     return v != null && String(v).trim().length > 0;
   }
 
-  /** Pick a random phrase for asking a benefit field (coverage, deductible, copay, validity) */
+  /** Pick a random phrase for asking a benefit field */
   private askForFieldPhrase(field: string): string {
     const templates = [
       `What is the ${field}?`,
@@ -112,28 +120,33 @@ ${patientBlock}
     return templates[Math.floor(Math.random() * templates.length)];
   }
 
-  /** Returns missing field names in required order (coverage → deductible → copay → validity) */
-  private getMissingFields(state: {
-    coverage: string | null;
-    deductible: string | null;
-    copay: string | null;
-    validity: string | null;
-  }): string[] {
+  /** Returns missing field names in required order (uses orderedFields or default four) */
+  private getMissingFields(
+    state: Record<string, string | null | undefined>,
+    orderedFields?: string[] | null,
+  ): string[] {
+    const fields = AiService.getOrderedFields(orderedFields);
     const missing: string[] = [];
-    if (!this.hasValue(state.coverage)) missing.push('coverage');
-    if (!this.hasValue(state.deductible)) missing.push('deductible');
-    if (!this.hasValue(state.copay)) missing.push('copay');
-    if (!this.hasValue(state.validity)) missing.push('validity');
+    for (const f of fields) {
+      if (!this.hasValue(state[f])) missing.push(f);
+    }
     return missing;
   }
 
-  private allFieldsCollected(state: {
-    coverage: string | null;
-    deductible: string | null;
-    copay: string | null;
-    validity: string | null;
-  }): boolean {
-    return this.getMissingFields(state).length === 0;
+  private allFieldsCollected(
+    state: Record<string, string | null | undefined>,
+    orderedFields?: string[] | null,
+  ): boolean {
+    return this.getMissingFields(state, orderedFields).length === 0;
+  }
+
+  /** First missing field in order; null if all collected */
+  private getNextFieldToAsk(
+    state: Record<string, string | null | undefined>,
+    orderedFields?: string[] | null,
+  ): string | null {
+    const missing = this.getMissingFields(state, orderedFields);
+    return missing.length > 0 ? missing[0] : null;
   }
 
   /**
@@ -253,7 +266,7 @@ Examples (use current data to fill [value] and next field):
    */
   public async getNextConversationTurn(
     transcript: string,
-    currentExtracted: {
+    currentExtracted: Record<string, string | null> | {
       coverage: string | null;
       deductible: string | null;
       copay: string | null;
@@ -268,32 +281,24 @@ Examples (use current data to fill [value] and next field):
     } | null,
     /** When set, the user may have just resumed from hold; we were asking for this field. Treat their reply as the value for this field, or if they ask "what do you need?" say "What is the [lastAskedField]?" only. */
     lastAskedField?: string | null,
+    /** Ordered list of verification field names (from VerificationRequirement or default). */
+    orderedFields?: string[] | null,
   ): Promise<{
     nextMessage: string;
-    extractedUpdates: Partial<{
-      coverage: string | null;
-      deductible: string | null;
-      copay: string | null;
-      validity: string | null;
-    }>;
+    extractedUpdates: Record<string, string | null>;
     endCall?: boolean;
   }> {
     const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
+    const fields = AiService.getOrderedFields(orderedFields);
     const current = JSON.stringify(currentExtracted);
 
-    const nextFieldToAsk = !this.hasValue(currentExtracted.coverage)
-      ? 'coverage'
-      : !this.hasValue(currentExtracted.deductible)
-        ? 'deductible'
-        : !this.hasValue(currentExtracted.copay)
-          ? 'copay'
-          : !this.hasValue(currentExtracted.validity)
-            ? 'validity'
-            : null;
+    const nextFieldToAsk = this.getNextFieldToAsk(currentExtracted, orderedFields);
+    const fieldsList = fields.join(', ');
+    const numFields = fields.length;
 
     const oneFieldRule =
       nextFieldToAsk === null
-        ? 'Only set endCall to true when all four fields are collected AND the user said thank you / that\'s all / we\'re done. Say a short closing, e.g. "That\'s everything I need. Thank you so much for your help." Do NOT repeat your name or company — that intro is for the start only. NEVER say "That\'s great to hear. I\'m calling to verify benefits for a patient, [name]." at the end.'
+        ? `Only set endCall to true when all ${numFields} fields (${fieldsList}) are collected AND the user said thank you / that's all / we're done. Say a short closing, e.g. "That's everything I need. Thank you so much for your help." Do NOT repeat your name or company — that intro is for the start only. NEVER say "That's great to hear. I'm calling to verify benefits for a patient, [name]." at the end.`
         : `Ask for ONE field only. VARY the phrase: "What is the ${nextFieldToAsk}?" / "Can I get the ${nextFieldToAsk}?" / "May I have the ${nextFieldToAsk}?" / "Can you provide the ${nextFieldToAsk}?" If you just got a value from them: acknowledge ("Got it, thanks." or "Thanks.") then IMMEDIATELY ask for the NEXT field. Do NOT say "Is that all you have?" or "Are we good?" after a normal value. Keep nextMessage under 25 words.`;
 
     const patientBlock = patientInfo
@@ -334,7 +339,7 @@ CONFIRMATION PHRASES — Use "Is it okay?" / "Is that all you have?" / "Are we g
 `;
 
     const afterResumeBlock =
-      lastAskedField && ['coverage', 'deductible', 'copay', 'validity'].includes(lastAskedField)
+      lastAskedField && fields.includes(lastAskedField)
         ? `
 AFTER-HOLD CONTEXT: They just came back from hold. We were asking for "${lastAskedField}" ONLY.
 - If they now gave a value (number, dollar, percent): put it in extractedUpdates for "${lastAskedField}" ONLY. Do NOT put it in any other field. Then VERIFY with acknowledgment: say "So the ${lastAskedField} is [value], right?" or "Just to confirm, the value for this field is [value], correct?" Do NOT ask for the next field in this turn. Wait for them to say "yes" in the next turn; only then ask for the next field.
@@ -399,7 +404,7 @@ CROSS-QUESTIONING — two-step: answer fully, then confirm only when it's recall
 - Recall or DOB: give full details, then ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" Patient name or identity: do NOT add a confirmation phrase. DOB: add one of those three and wait for yes / thank you before asking for fields.
 
 Data we have so far (use ONLY these values for recall — never invent or guess): ${current}
-Explicit values: coverage = ${currentExtracted.coverage ?? 'not collected'}, deductible = ${currentExtracted.deductible ?? 'not collected'}, copay = ${currentExtracted.copay ?? 'not collected'}, validity = ${currentExtracted.validity ?? 'not collected'}.
+Explicit values: ${fields.map((f) => `${f} = ${(currentExtracted as Record<string, string | null>)[f] ?? 'not collected'}`).join(', ')}.
 We are currently asking for: ${nextFieldToAsk ?? 'nothing (all done)'}.
 
 What they just said (respond only to this): "${transcript}"
@@ -477,10 +482,11 @@ Respond with ONLY a JSON object. No markdown. Format:
             currentExtracted,
             nextFieldToAsk,
             fallback,
+            orderedFields,
           );
           nextMessage = nextAfter
             ? `Thanks. ${this.askForFieldPhrase(nextAfter)}`
-            : `Thanks. ${this.askForFieldPhrase('validity')}`;
+            : 'Thanks. Is there anything else?';
         }
       } else if (looksLikeDidntGet && nextFieldToAsk && transcriptHasValue) {
         const fallback = this.tryExtractFieldFromTranscript(
@@ -493,21 +499,21 @@ Respond with ONLY a JSON object. No markdown. Format:
             currentExtracted,
             nextFieldToAsk,
             fallback,
+            orderedFields,
           );
           nextMessage = nextAfter
             ? `Thanks. ${this.askForFieldPhrase(nextAfter)}`
-            : `Thanks. ${this.askForFieldPhrase('validity')}`;
+            : 'Thanks. Is there anything else?';
         }
       }
 
-      const mergedState = {
-        coverage: extractedUpdates.coverage ?? currentExtracted.coverage,
-        deductible: extractedUpdates.deductible ?? currentExtracted.deductible,
-        copay: extractedUpdates.copay ?? currentExtracted.copay,
-        validity: extractedUpdates.validity ?? currentExtracted.validity,
-      };
+      const mergedState: Record<string, string | null> = { ...currentExtracted };
+      for (const [k, v] of Object.entries(extractedUpdates)) {
+        if (v !== undefined && v !== null && typeof v === 'string') mergedState[k] = v;
+        else if (v === null) mergedState[k] = null;
+      }
 
-      const missingFields = this.getMissingFields(mergedState);
+      const missingFields = this.getMissingFields(mergedState, orderedFields);
       if (endCall && missingFields.length > 0) {
         endCall = false;
         const firstMissing = missingFields[0];
@@ -531,22 +537,13 @@ Respond with ONLY a JSON object. No markdown. Format:
   }
 
   private getNextFieldAfter(
-    current: {
-      coverage: string | null;
-      deductible: string | null;
-      copay: string | null;
-      validity: string | null;
-    },
+    current: Record<string, string | null>,
     justFilled: string,
     value: string,
+    orderedFields?: string[] | null,
   ): string | null {
     const updated = { ...current, [justFilled]: value };
-    const has = (v: string | null) => v != null && String(v).trim().length > 0;
-    if (!has(updated.coverage)) return 'coverage';
-    if (!has(updated.deductible)) return 'deductible';
-    if (!has(updated.copay)) return 'copay';
-    if (!has(updated.validity)) return 'validity';
-    return null;
+    return this.getNextFieldToAsk(updated, orderedFields);
   }
 
   /** Benefit field validation: coverage = percentage, deductible/copay = dollars, validity = date (month and year). */
@@ -654,70 +651,68 @@ Respond with ONLY a JSON object. No markdown. Format:
    * Returns either normalized updates to merge, or a polite correction message for the user.
    */
   public validateAndNormalizeBenefitExtracted(
-    extracted: {
-      coverage?: string | null;
-      deductible?: string | null;
-      copay?: string | null;
-      validity?: string | null;
-    },
+    extracted: Record<string, string | null | undefined>,
     userSaid: string,
+    orderedFields?: string[] | null,
   ): { ok: true; normalized: Record<string, string> } | { ok: false; correctionMessage: string; invalidField: string } {
     const quote = (v: string) => (v && v.length > 25 ? v.slice(0, 22) + '...' : v) || 'that';
     const out: Record<string, string> = {};
+    const fields = AiService.getOrderedFields(orderedFields);
 
-    if (extracted.coverage != null && String(extracted.coverage).trim()) {
-      const v = String(extracted.coverage).trim();
-      if (!this.isPercentage(v)) {
-        return {
-          ok: false,
-          invalidField: 'coverage',
-          correctionMessage: `I noticed you said "${quote(v)}". For coverage, I need that as a percentage. Could you share it again?`,
-        };
-      }
-      const pct = v.match(/(\d+)\s*%|(\d+)\s*percent/i);
-      out.coverage = pct ? `${pct[1] || pct[2]}%` : v;
-    }
-    if (extracted.deductible != null && String(extracted.deductible).trim()) {
-      const v = String(extracted.deductible).trim();
-      if (!this.isDollars(v)) {
-        return {
-          ok: false,
-          invalidField: 'deductible',
-          correctionMessage: `I noticed you said "${quote(v)}". For the deductible, I need that in dollars. Could you share it again?`,
-        };
-      }
-      const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
-      out.deductible = dol ? `$${dol[1] || dol[2] || dol[3]}` : v;
-    }
-    if (extracted.copay != null && String(extracted.copay).trim()) {
-      const v = String(extracted.copay).trim();
-      const pct = v.match(/(\d+)\s*%|(\d+)\s*percent/i);
-      const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
-      if (pct) {
-        out.copay = `${pct[1] || pct[2]}%`;
-      } else if (this.isDollars(v) && dol) {
-        out.copay = `$${dol[1] || dol[2] || dol[3]}`;
-      } else if (!this.isDollars(v) && !this.isPercentage(v)) {
-        return {
-          ok: false,
-          invalidField: 'copay',
-          correctionMessage: `I noticed you said "${quote(v)}". For the copay, I need that in dollars or percentage. Could you share it again?`,
-        };
+    for (const field of fields) {
+      const raw = extracted[field];
+      if (raw == null || String(raw).trim() === '') continue;
+      const v = String(raw).trim();
+
+      if (field === 'coverage') {
+        if (!this.isPercentage(v)) {
+          return {
+            ok: false,
+            invalidField: 'coverage',
+            correctionMessage: `I noticed you said "${quote(v)}". For coverage, I need that as a percentage. Could you share it again?`,
+          };
+        }
+        const pct = v.match(/(\d+)\s*%|(\d+)\s*percent/i);
+        out.coverage = pct ? `${pct[1] || pct[2]}%` : v;
+      } else if (field === 'deductible') {
+        if (!this.isDollars(v)) {
+          return {
+            ok: false,
+            invalidField: 'deductible',
+            correctionMessage: `I noticed you said "${quote(v)}". For the deductible, I need that in dollars. Could you share it again?`,
+          };
+        }
+        const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
+        out.deductible = dol ? `$${dol[1] || dol[2] || dol[3]}` : v;
+      } else if (field === 'copay') {
+        const pct = v.match(/(\d+)\s*%|(\d+)\s*percent/i);
+        const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
+        if (pct) {
+          out.copay = `${pct[1] || pct[2]}%`;
+        } else if (this.isDollars(v) && dol) {
+          out.copay = `$${dol[1] || dol[2] || dol[3]}`;
+        } else if (!this.isDollars(v) && !this.isPercentage(v)) {
+          return {
+            ok: false,
+            invalidField: 'copay',
+            correctionMessage: `I noticed you said "${quote(v)}". For the copay, I need that in dollars or percentage. Could you share it again?`,
+          };
+        } else {
+          out.copay = v;
+        }
+      } else if (field === 'validity') {
+        const normalized = this.normalizeValidity(v);
+        if (!normalized || !this.looksLikeDate(v)) {
+          return {
+            ok: false,
+            invalidField: 'validity',
+            correctionMessage: `I noticed you said "${quote(v)}". For validity, I need a date with month and year. Could you share it again?`,
+          };
+        }
+        out.validity = normalized;
       } else {
-        out.copay = v;
+        out[field] = v;
       }
-    }
-    if (extracted.validity != null && String(extracted.validity).trim()) {
-      const v = String(extracted.validity).trim();
-      const normalized = this.normalizeValidity(v);
-      if (!normalized || !this.looksLikeDate(v)) {
-        return {
-          ok: false,
-          invalidField: 'validity',
-          correctionMessage: `I noticed you said "${quote(v)}". For validity, I need a date with month and year. Could you share it again?`,
-        };
-      }
-      out.validity = normalized;
     }
 
     return { ok: true, normalized: out };
@@ -755,26 +750,21 @@ Respond with ONLY a JSON object. No markdown. Format:
     return null;
   }
 
-  public async extractInsuranceDetails(text: string): Promise<{
-    coverage: string | null;
-    deductible: string | null;
-    copay: string | null;
-    validity: string | null;
-  }> {
+  public async extractInsuranceDetails(
+    text: string,
+    orderedFields?: string[] | null,
+  ): Promise<Record<string, string | null>> {
+    const fields = AiService.getOrderedFields(orderedFields);
     try {
+      const fieldList = fields.map((f) => `- ${f.charAt(0).toUpperCase() + f.slice(1)}`).join('\n      ');
+      const jsonKeys = fields.map((f) => `"${f}": "..."`).join(',\n        ');
       const prompt = `
       Extract the following details from the insurance text:
-      - Coverage
-      - Deductible
-      - Copay
-      - Validity
+      ${fieldList}
 
-      Return ONLY a valid JSON object in this format:
+      Return ONLY a valid JSON object with these keys (set to null if missing):
       {
-        "coverage": "...",
-        "deductible": "...",
-        "copay": "...",
-        "validity": "..."
+        ${jsonKeys}
       }
 
       If any field is missing in the text, set it to null.
@@ -783,16 +773,10 @@ Respond with ONLY a JSON object. No markdown. Format:
       ${text}
     `;
 
-      // Gemini model selection — adjust as needed
-      const model = this.gemini.getGenerativeModel({
-        model: GEMINI_MODEL,
-      });
-
+      const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
       const result = await model.generateContent(prompt);
       let jsonString = result.response.text().trim() || '{}';
-      jsonString;
 
-      // Remove code block markers if present
       if (jsonString.startsWith('```')) {
         jsonString = jsonString.replace(/```json|```/gi, '').trim();
       }
@@ -805,20 +789,18 @@ Respond with ONLY a JSON object. No markdown. Format:
         parsed = {};
       }
 
-      return {
-        coverage: parsed.coverage ?? null,
-        deductible: parsed.deductible ?? null,
-        copay: parsed.copay ?? null,
-        validity: parsed.validity ?? null,
-      };
+      const out: Record<string, string | null> = {};
+      for (const f of fields) {
+        out[f] = parsed[f] ?? null;
+      }
+      return out;
     } catch (err) {
       console.error('❌ Error extracting insurance details from Gemini:', err);
-      return {
-        coverage: null,
-        deductible: null,
-        copay: null,
-        validity: null,
-      };
+      const out: Record<string, string | null> = {};
+      for (const f of fields) {
+        out[f] = null;
+      }
+      return out;
     }
   }
 }
