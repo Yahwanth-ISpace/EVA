@@ -14,6 +14,22 @@ import { ElevenLabsService } from '../voice/elevenlabs.service';
 const backendBaseUrl = (process.env.BACKEND_URL || '').trim() || `http://localhost:${process.env.PORT ?? 3000}`;
 
 /**
+ * Base URL for Twilio Media Stream WebSocket. Twilio requires wss:// in production (1011 invalid url for ws://).
+ * - TWILIO_STREAM_BASE_URL: use as-is (e.g. wss://your-domain.com when behind SSL proxy).
+ * - BACKEND_URL https -> wss, http -> ws (use HTTPS in production so stream URL is wss).
+ */
+function getStreamBaseUrl(): string {
+  const base = (
+    process.env.TWILIO_STREAM_BASE_URL ||
+    process.env.BACKEND_URL ||
+    `http://localhost:${process.env.PORT ?? 3000}`
+  ).trim();
+  if (base.startsWith('wss://') || base.startsWith('ws://')) return base.replace(/\/+$/, '');
+  if (base.startsWith('https://')) return base.replace(/^https/, 'wss').replace(/\/+$/, '');
+  return base.replace(/^http/, 'ws').replace(/\/+$/, '');
+}
+
+/**
  * TwilioController handles phone call infrastructure via Twilio.
  * IVR: Press 1 complaints, 2 register insurance, 3 latest offers, 4 talk to agent (hold 10s then dial).
  */
@@ -134,12 +150,8 @@ export class TwilioController {
   }
 
   private sendStreamTwiML(payeeId: string, res: Response) {
-    const base = (
-      process.env.BACKEND_URL ||
-      `http://localhost:${process.env.PORT ?? 3000}`
-    ).trim();
     const streamUrl =
-      base.replace(/^http/, 'ws') + '/twilio/media-stream?payeeId=' + encodeURIComponent(payeeId);
+      getStreamBaseUrl() + '/twilio/media-stream?payeeId=' + encodeURIComponent(payeeId);
 
     res.type('text/xml').send(`
       <Response>
@@ -157,8 +169,7 @@ export class TwilioController {
   @Get('outbound-ivr-connect')
   @Post('outbound-ivr-connect')
   outboundIvrConnect(@Res() res: Response) {
-    const base = (process.env.BACKEND_URL || `http://localhost:${process.env.PORT ?? 3000}`).trim();
-    const streamUrl = base.replace(/^http/, 'ws') + '/twilio/media-stream?mode=ivr-bypass';
+    const streamUrl = getStreamBaseUrl() + '/twilio/media-stream?mode=ivr-bypass';
     res.type('text/xml').send(`
       <Response>
         <Connect>
