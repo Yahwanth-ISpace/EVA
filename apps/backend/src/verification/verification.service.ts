@@ -30,10 +30,12 @@ export class VerificationService {
     return this.prisma.verification.create({
       data: {
         payeeId,
-        coverage: extracted.coverage || null,
-        deductible: extracted.deductible,
-        copay: extracted.copay,
-        validity: extracted.validity,
+        extractedData: {
+          coverage: extracted.coverage || null,
+          deductible: extracted.deductible ?? null,
+          copay: extracted.copay ?? null,
+          validity: extracted.validity ?? null,
+        },
         transcript,
       },
       include: { payee: true },
@@ -87,47 +89,28 @@ export class VerificationService {
         return value !== null && value !== undefined && value.trim().length > 0;
       };
 
-      // Prepare update data - merge new values with existing ones
-      // Only update fields that have new meaningful values (don't null out existing values)
-      const updateData: any = {
+      const existingData = (existingVerification?.extractedData as Record<string, string | null> | null) ?? {};
+
+      // Merge extracted fields: use new value if provided and meaningful, otherwise keep existing
+      const mergedExtracted: Record<string, string | null> = { ...existingData };
+      if (hasValue(extracted.coverage)) mergedExtracted.coverage = extracted.coverage;
+      else if (existingData.coverage) mergedExtracted.coverage = existingData.coverage;
+      if (hasValue(extracted.deductible)) mergedExtracted.deductible = extracted.deductible;
+      else if (existingData.deductible) mergedExtracted.deductible = existingData.deductible;
+      if (hasValue(extracted.copay)) mergedExtracted.copay = extracted.copay;
+      else if (existingData.copay) mergedExtracted.copay = existingData.copay;
+      if (hasValue(extracted.validity)) mergedExtracted.validity = extracted.validity;
+      else if (existingData.validity) mergedExtracted.validity = existingData.validity;
+
+      const updateData: { transcript: string; extractedData: Record<string, string | null> } = {
         transcript: existingVerification
           ? `${existingVerification.transcript}\n\n---\n\n${transcript}`
           : transcript,
+        extractedData: mergedExtracted,
       };
 
-      // Merge coverage: use new value if provided and meaningful, otherwise keep existing
-      if (hasValue(extracted.coverage)) {
-        updateData.coverage = extracted.coverage;
-      } else if (existingVerification?.coverage) {
-        updateData.coverage = existingVerification.coverage;
-      }
-
-      // Merge deductible: use new value if provided and meaningful, otherwise keep existing
-      if (hasValue(extracted.deductible)) {
-        updateData.deductible = extracted.deductible;
-      } else if (existingVerification?.deductible) {
-        updateData.deductible = existingVerification.deductible;
-      }
-
-      // Merge copay: use new value if provided and meaningful, otherwise keep existing
-      if (hasValue(extracted.copay)) {
-        updateData.copay = extracted.copay;
-      } else if (existingVerification?.copay) {
-        updateData.copay = existingVerification.copay;
-      }
-
-      // Merge validity: use new value if provided and meaningful, otherwise keep existing
-      if (hasValue(extracted.validity)) {
-        updateData.validity = extracted.validity;
-      } else if (existingVerification?.validity) {
-        updateData.validity = existingVerification.validity;
-      }
-
       console.log('Merged data:', {
-        coverage: updateData.coverage,
-        deductible: updateData.deductible,
-        copay: updateData.copay,
-        validity: updateData.validity,
+        extractedData: updateData.extractedData,
         transcriptLength: updateData.transcript?.length,
         isUpdate: !!existingVerification,
       });
@@ -149,10 +132,12 @@ export class VerificationService {
         record = await this.prisma.verification.create({
           data: {
             payeeId,
-            coverage: extracted.coverage ?? null,
-            deductible: extracted.deductible ?? null,
-            copay: extracted.copay ?? null,
-            validity: extracted.validity ?? null,
+            extractedData: {
+              coverage: extracted.coverage ?? null,
+              deductible: extracted.deductible ?? null,
+              copay: extracted.copay ?? null,
+              validity: extracted.validity ?? null,
+            },
             transcript: transcript,
           },
           include: { payee: true },
@@ -264,54 +249,41 @@ export class VerificationService {
     const hasValue = (v: string | null | undefined) =>
       v !== null && v !== undefined && String(v).trim().length > 0;
 
-    const updateData: any = {};
+    const existingData = (existing?.extractedData as Record<string, string | null> | null) ?? {};
+    const merged: Record<string, string | null> = { ...existingData };
+    for (const [k, v] of Object.entries(extracted as Record<string, string | null | undefined>)) {
+      if (hasValue(v)) {
+        merged[k] = String(v).trim();
+      } else if (existingData[k] != null && String(existingData[k]).trim().length > 0) {
+        merged[k] = existingData[k];
+      }
+    }
+
+    const updatePayload: { transcript?: string; extractedData: Record<string, string | null>; verificationRequirementId?: string | null } = {
+      extractedData: merged,
+    };
     if (transcriptToAppend?.trim()) {
-      updateData.transcript = existing
+      updatePayload.transcript = existing
         ? `${existing.transcript}\n\n---\n\n${transcriptToAppend}`
         : transcriptToAppend;
     }
-    const legacyKeys = VerificationService.LEGACY_KEYS;
-    for (const key of legacyKeys) {
-      const val = (extracted as Record<string, string | null | undefined>)[key];
-      if (hasValue(val)) {
-        updateData[key] = val;
-      } else if (existing && (existing[key] ?? '').toString().trim()) {
-        updateData[key] = existing[key];
-      }
-    }
     if (verificationRequirementId) {
-      const existingData = (existing?.extractedData as Record<string, string | null>) ?? {};
-      const merged: Record<string, string | null> = { ...existingData };
-      for (const [k, v] of Object.entries(extracted)) {
-        if (v != null && String(v).trim().length > 0) merged[k] = String(v).trim();
-      }
-      updateData.verificationRequirementId = verificationRequirementId;
-      updateData.extractedData = merged;
+      updatePayload.verificationRequirementId = verificationRequirementId;
     }
 
     if (existing) {
       return this.prisma.verification.update({
         where: { id: existing.id },
-        data: updateData,
+        data: updatePayload,
         include: { payee: true },
       });
     }
-    const createData: any = {
+    const createData = {
       payeeId,
-      coverage: updateData.coverage ?? null,
-      deductible: updateData.deductible ?? null,
-      copay: updateData.copay ?? null,
-      validity: updateData.validity ?? null,
-      transcript: updateData.transcript ?? transcriptToAppend ?? '',
+      transcript: updatePayload.transcript ?? transcriptToAppend ?? '',
+      extractedData: merged,
+      ...(verificationRequirementId && { verificationRequirementId }),
     };
-    if (verificationRequirementId) {
-      createData.verificationRequirementId = verificationRequirementId;
-      const merged: Record<string, string | null> = {};
-      for (const [k, v] of Object.entries(extracted)) {
-        if (v != null && String(v).trim().length > 0) merged[k] = String(v).trim();
-      }
-      createData.extractedData = merged;
-    }
     return this.prisma.verification.create({
       data: createData,
       include: { payee: true },
@@ -399,17 +371,13 @@ export class VerificationService {
       where: { id: payeeId },
     });
     if (!payee) return null;
-    const data: any = {
+    const data: { payeeId: string; transcript: string; extractedData: Record<string, never>; verificationRequirementId?: string } = {
       payeeId,
       transcript: 'Call started.',
-      coverage: null,
-      deductible: null,
-      copay: null,
-      validity: null,
+      extractedData: {},
     };
     if (verificationRequirementId) {
       data.verificationRequirementId = verificationRequirementId;
-      data.extractedData = {};
     }
     const record = await this.prisma.verification.create({
       data,
