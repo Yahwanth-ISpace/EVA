@@ -106,10 +106,6 @@ model Verification {
   verificationRequirementId String?
   /// Dynamic field values (key = field name from VerificationRequirement.verificationFields). Used when verificationRequirementId is set.
   extractedData          Json?
-  coverage                String?  // legacy; kept for backward compatibility
-  deductible              String?
-  copay                   String?
-  validity                String?
   transcript              String
   createdAt               DateTime @default(now())
 }
