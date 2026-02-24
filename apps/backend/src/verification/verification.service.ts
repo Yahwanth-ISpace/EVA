@@ -321,12 +321,35 @@ export class VerificationService {
   async findById(id: string) {
     const verification = await this.prisma.verification.findUnique({
       where: { id },
-      include: { payee: true },
+      include: { payee: true, verificationRequirement: true },
     });
 
     if (!verification) throw new NotFoundException('Verification not found');
 
     return verification;
+  }
+
+  /**
+   * Get extracted data for API response. Uses verification's extractedData keyed by
+   * the verification requirement's field names when present; otherwise returns extractedData as-is.
+   */
+  async getExtractedForResponse(verificationId: string): Promise<Record<string, string | null>> {
+    const verification = await this.prisma.verification.findUnique({
+      where: { id: verificationId },
+      include: { verificationRequirement: true },
+    });
+    if (!verification) throw new NotFoundException('Verification not found');
+    const data = (verification.extractedData as Record<string, string | null>) ?? {};
+    const req = verification.verificationRequirement;
+    if (req && Array.isArray(req.verificationFields)) {
+      const entries = req.verificationFields as { field: string }[];
+      const result: Record<string, string | null> = {};
+      for (const { field } of entries) {
+        result[field] = data[field] ?? null;
+      }
+      return result;
+    }
+    return data;
   }
 
   /**

@@ -68,10 +68,7 @@ export class VerificationController {
     @Param('payeeId') payeeId: string,
     @Body()
     body: {
-      coverage?: string | null;
-      deductible?: string | null;
-      copay?: string | null;
-      validity?: string | null;
+      [key: string]: string | null | undefined;
       transcript?: string;
     },
   ) {
@@ -81,14 +78,10 @@ export class VerificationController {
       extracted,
       transcript,
     );
+    const extractedResponse = await this.verificationService.getExtractedForResponse(verification.id);
     return {
       saved: true,
-      extracted: {
-        coverage: verification.coverage,
-        deductible: verification.deductible,
-        copay: verification.copay,
-        validity: verification.validity,
-      },
+      extracted: extractedResponse,
     };
   }
 
@@ -122,14 +115,10 @@ export class VerificationController {
       file.path,
       finalPayeeId,
     );
+    const extractedResponse = await this.verificationService.getExtractedForResponse(verification.id);
     return {
       saved: true,
-      extracted: {
-        coverage: verification.coverage,
-        deductible: verification.deductible,
-        copay: verification.copay,
-        validity: verification.validity,
-      },
+      extracted: extractedResponse,
     };
   }
 
