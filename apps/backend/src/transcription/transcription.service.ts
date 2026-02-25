@@ -25,7 +25,7 @@ function isNonEnglish(text: string): boolean {
 
 /**
  * Common STT hallucinations when audio is silence, noise, or unclear. Return empty instead of passing these to the AI.
- * Does NOT filter plain "Thank you" / "Thanks" (user may say that). Filters only known false positives.
+ * Does NOT filter plain "Thank you" / "Thanks" here (media-stream handler treats thank-you-only + long audio as hallucination).
  */
 function isLikelyHallucination(text: string): boolean {
   const t = text.trim();

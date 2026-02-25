@@ -438,7 +438,14 @@ export class MediaStreamHandlerService {
           await speak(getRepeatOnlyPrompt()).catch(() => {});
           return;
         }
-        const userSaid = (transcript ?? '').trim();
+        let userSaid = (transcript ?? '').trim();
+
+        // --- Whisper hallucination: when we had substantial audio but transcript is only "thank you"/"thanks", treat as inaudible (re-ask)
+        const thankYouOnly = /^(\s*thank\s+you\s*\.?\s*|\s*thanks\s*\.?\s*)\s*$/i.test(userSaid);
+        if (thankYouOnly && combined.length >= MIN_BYTES_BEFORE_REPEAT) {
+          this.logger.log('[MediaStream] Treating transcript "' + userSaid + '" as Whisper hallucination (audio ' + combined.length + ' bytes), re-asking');
+          userSaid = '';
+        }
 
         // --- IVR bypass: listen for "customer agent" (or "press 4"), then send DTMF 4 so IVR runs option 4 (hold 10s, dial agent)
         if (state.mode === 'ivr-bypass') {
@@ -586,7 +593,7 @@ export class MediaStreamHandlerService {
               state.conversationTranscript.push('EVA: ' + randomConfirm);
               await speak(randomConfirm);
             } else {
-              const reply = await this.aiService.replyToUser(userSaid, state.patientInfo ?? undefined);
+              const reply = await this.aiService.replyToUser(userSaid, state.patientInfo ?? undefined, state.orderedFields.length ? state.orderedFields : null);
               if (reply?.trim()) state.conversationTranscript.push('EVA: ' + reply.trim());
               await speak(reply);
               state.conversationTranscript.push('EVA: ' + randomConfirm);
@@ -717,13 +724,21 @@ export class MediaStreamHandlerService {
           this.logger.warn('[MediaStream] AI returned endCall but not all fields collected; will not end. Missing: ' + missing.join(', '));
           shouldEndCall = false;
         }
-        const goodbye = 'Thank you for confirming the details. That\'s all I have. Have a good day.';
+        /** Short closings when ending the call — no introduction, no name or company. User said thank you / I'm good / got all details. */
+        const GOODBYE_PHRASES = [
+          'Got you. Have a good day.',
+          'Great, have a good day.',
+          'Thanks. Have a good day.',
+          'Have a good day.',
+        ];
+        const goodbye = GOODBYE_PHRASES[Math.floor(Math.random() * GOODBYE_PHRASES.length)];
         let toSpeak = (nextMessage ?? '').trim();
-        // Safeguard: if user asked for DOB, never include a coverage request in the same turn — wait for "yes we're good" first
+        // Safeguard: if user asked for DOB, never include a first-field request in the same turn — wait for "yes we're good" first
+        const firstField = orderedF[0];
         const userAskedForDob = /date of birth|DOB|what is the (patient )?date of birth/i.test(userSaid);
-        if (userAskedForDob && /(May I have the coverage|Can I get the coverage|Can you provide the coverage|What is the coverage)/i.test(toSpeak)) {
-          toSpeak = toSpeak.replace(/\s*[.\s]*(May I have the coverage\??|Can I get the coverage\??|Can you provide the coverage\??|What is the coverage\??)[^.]*\.?\s*$/i, '').trim();
-          if (toSpeak) this.logger.log('[MediaStream] Stripped coverage ask from DOB turn; will ask coverage only after user confirms');
+        if (firstField && userAskedForDob && new RegExp(`(May I have the ${firstField}|Can I get the ${firstField}|Can you provide the ${firstField}|What is the ${firstField})`, 'i').test(toSpeak)) {
+          toSpeak = toSpeak.replace(new RegExp(`\\s*[.\\s]*(May I have the ${firstField}\\??|Can I get the ${firstField}\\??|Can you provide the ${firstField}\\??|What is the ${firstField}\\??)[^.]*\\.?\\s*$`, 'i'), '').trim();
+          if (toSpeak) this.logger.log('[MediaStream] Stripped first-field ask from DOB turn; will ask only after user confirms');
         }
         // Recall: answer from stored extractedData so we always give the correct value (e.g. "what is the deductible provided?")
         const recallReply = getRecallReply(userSaid, state.extractedData, orderedF);
@@ -767,6 +782,7 @@ export class MediaStreamHandlerService {
           this.logger.log('[MediaStream] Overriding AI repeat with proper reply (user said something substantive)');
         }
         if (shouldEndCall) {
+          // Always use a short, no-intro closing — never repeat introduction at end of call.
           toSpeak = goodbye;
           // Will enter post-goodbye below: stay on line briefly in case user responds, then hang up
         } else         if (!toSpeak || (isGenericFallback && state.lastAskedField)) {
@@ -787,7 +803,7 @@ export class MediaStreamHandlerService {
         await speak(toSpeak);
 
         if (shouldEndCall) {
-          // Post-goodbye: already said "Thank you for confirming... Have a good day." — stay on line briefly in case user responds
+          // Post-goodbye: already said short closing (e.g. "Got you. Have a good day.") — stay on line briefly in case user responds
           state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
           state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
           startFallbackTimer(); // keep processing buffer so we hear if user says something or thank you
@@ -855,14 +871,14 @@ export class MediaStreamHandlerService {
                 };
                 this.logger.log('[MediaStream] Patient info loaded from DB for payeeId=' + state.payeeId);
               } else {
+                state.patientInfo = null;
                 this.logger.warn('[MediaStream] Payee not found in DB for payeeId=' + state.payeeId + ' — patient details will be unavailable on this call.');
               }
             }
-            if (!state.patientInfo) {
-              if (!state.payeeId) {
-                state.patientInfo = STATIC_PATIENT_INFO;
-                this.logger.warn('[MediaStream] Using static patient info (no payeeId on stream). Pass payeeId in the stream URL to use real patient details from the database.');
-              }
+            // Only use static patient info when there is no payeeId (e.g. generic inbound); never when payeeId is set but payee missing.
+            if (!state.patientInfo && !state.payeeId) {
+              state.patientInfo = STATIC_PATIENT_INFO;
+              this.logger.warn('[MediaStream] Using static patient info (no payeeId on stream). Pass payeeId in the stream URL to use real patient details from the database.');
             }
             state.lastSpeakTime = Date.now();
             state.conversationTranscript.push('EVA: ' + CONVERSATION_GREETING);
