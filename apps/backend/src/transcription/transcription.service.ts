@@ -6,9 +6,8 @@ import * as path from 'path';
 import mime from 'mime';
 
 const ai_server_url = process.env.AI_SERVER_URL;
-// ElevenLabs STT (commented out — Whisper is primary)
-// const ELEVENLABS_STT_URL = 'https://api.elevenlabs.io/v1/speech-to-text';
-// const ELEVENLABS_STT_MODEL = 'scribe_v2';
+const ELEVENLABS_STT_URL = 'https://api.elevenlabs.io/v1/speech-to-text';
+const ELEVENLABS_STT_MODEL = 'scribe_v2';
 
 /** Returns true if text looks like it's primarily not English (e.g. Devanagari, other scripts). We only accept English. */
 function isNonEnglish(text: string): boolean {
@@ -60,18 +59,75 @@ export class TranscriptionService {
       throw new Error('File not found');
     }
 
+    const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
     const skipWhisper = options?.skipWhisperFallback === true;
-    if (skipWhisper) return { transcript: '' };
+
+    // ElevenLabs often returns empty for very short audio (< ~0.5 sec). Skip it for tiny files to avoid "empty → Whisper" and delay.
+    const stat = fs.statSync(filePath);
+    const fileSizeBytes = stat.size;
+    const minBytesForElevenLabs = 6_000; // ~0.75 sec at 8kHz mulaw; below this use Whisper directly or return empty
+    const useElevenLabs = apiKey && fileSizeBytes >= minBytesForElevenLabs;
+
+    if (useElevenLabs) {
+      try {
+        const transcript = await this.transcribeWithElevenLabs(
+          filePath,
+          apiKey,
+        );
+        if (transcript != null && transcript.trim().length > 0) {
+          if (isLikelyHallucination(transcript)) {
+            this.logger.debug(
+              'ElevenLabs returned likely hallucination ("' +
+                transcript +
+                '"), returning empty',
+            );
+            return { transcript: '' };
+          }
+          this.logger.log('Transcription (ElevenLabs) successful');
+          return { transcript };
+        }
+        // ElevenLabs returned empty (silence/unclear). Do NOT fall back to Whisper—it often hallucinates e.g. "Thank you very much".
+        this.logger.debug(
+          'ElevenLabs returned empty, returning empty (no Whisper fallback to avoid hallucinations)',
+        );
+        return { transcript: '' };
+      } catch (err: any) {
+        if (skipWhisper) {
+          this.logger.debug(
+            'ElevenLabs failed during resume check, skipping Whisper',
+          );
+          return { transcript: '' };
+        }
+        this.logger.warn(
+          'ElevenLabs transcription failed, falling back to Whisper',
+          err?.message ?? err,
+        );
+      }
+    } else {
+      if (skipWhisper) return { transcript: '' };
+      if (apiKey && fileSizeBytes < minBytesForElevenLabs) {
+        this.logger.debug(
+          'Audio too short for ElevenLabs (' +
+            fileSizeBytes +
+            ' bytes), using Whisper',
+        );
+      } else if (!apiKey) {
+        this.logger.debug('ELEVENLABS_API_KEY not set, using Whisper');
+      }
+    }
 
     const result = await this.transcribeWithWhisper(filePath);
     if (result.transcript && isLikelyHallucination(result.transcript)) {
-      this.logger.debug('Whisper returned likely hallucination ("' + result.transcript + '"), returning empty');
+      this.logger.debug(
+        'Whisper returned likely hallucination ("' +
+          result.transcript +
+          '"), returning empty',
+      );
       return { transcript: '' };
     }
     return result;
   }
 
-  /* ——— ElevenLabs STT (commented out — Whisper is primary) ———
   private async transcribeWithElevenLabs(
     filePath: string,
     apiKey: string,
@@ -79,7 +135,9 @@ export class TranscriptionService {
     const fileStream = fs.createReadStream(filePath);
     const filename = path.basename(filePath);
     // Prefer explicit audio/wav so ElevenLabs receives correct format (8kHz telephony WAV from Twilio mulaw).
-    const contentType = filename.toLowerCase().endsWith('.wav') ? 'audio/wav' : (mime.getType(filePath) || 'audio/wav');
+    const contentType = filename.toLowerCase().endsWith('.wav')
+      ? 'audio/wav'
+      : mime.getType(filePath) || 'audio/wav';
 
     const form = new FormData();
     form.append('file', fileStream, {
@@ -110,18 +168,25 @@ export class TranscriptionService {
       const text = response.data?.text ?? response.data?.transcript;
       const result = typeof text === 'string' ? text.trim() : '';
       if (!result && response.data) {
-        this.logger.debug('ElevenLabs STT returned empty text; response keys: ' + Object.keys(response.data).join(', '));
+        this.logger.debug(
+          'ElevenLabs STT returned empty text; response keys: ' +
+            Object.keys(response.data).join(', '),
+        );
       }
       return result;
     } catch (err: any) {
-      const msg = err?.response?.data != null ? JSON.stringify(err.response.data) : (err?.message ?? err);
+      const msg =
+        err?.response?.data != null
+          ? JSON.stringify(err.response.data)
+          : (err?.message ?? err);
       this.logger.warn('ElevenLabs STT request failed: ' + msg);
       throw err;
     }
   }
-  ——— */
 
-  private async transcribeWithWhisper(filePath: string): Promise<{ transcript: string }> {
+  private async transcribeWithWhisper(
+    filePath: string,
+  ): Promise<{ transcript: string }> {
     if (!ai_server_url) {
       throw new Error(
         'AI server URL not configured. Set AI_SERVER_URL for Whisper (primary STT).',
@@ -139,7 +204,9 @@ export class TranscriptionService {
     });
     form.append('language', 'en');
 
-    this.logger.log(`Whisper (primary STT): sending to ${ai_server_url}/transcription/transcribe (language=en)`);
+    this.logger.log(
+      `Whisper (primary STT): sending to ${ai_server_url}/transcription/transcribe (language=en)`,
+    );
 
     const response = await axios.post(
       `${ai_server_url}/transcription/transcribe`,
@@ -157,7 +224,9 @@ export class TranscriptionService {
     this.logger.log('Transcription (Whisper) successful');
     let transcript = response.data.transcript ?? '';
     if (transcript && isNonEnglish(transcript)) {
-      this.logger.log('Transcription (Whisper) non-English detected, returning empty (English only)');
+      this.logger.log(
+        'Transcription (Whisper) non-English detected, returning empty (English only)',
+      );
       transcript = '';
     }
     return { transcript };
