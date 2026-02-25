@@ -327,6 +327,10 @@ export class MediaStreamHandlerService {
 
     const speak = async (text: string) => {
       if (!text?.trim()) return;
+      const ttsStartMs = Date.now();
+      this.logger.log(
+        `[CallTiming] Sending text to ElevenLabs TTS (chars=${text.length})`,
+      );
       try {
         // Prefer streaming TTS so playback starts as soon as first chunks arrive (faster response)
         try {
@@ -338,6 +342,9 @@ export class MediaStreamHandlerService {
           const mulawAudio = await this.elevenLabsAudioStack.synthesize(text);
           if (mulawAudio?.length) await playAudio(mulawAudio);
         }
+        this.logger.log(
+          `[CallTiming] ElevenLabs TTS completed in ${Date.now() - ttsStartMs}ms`,
+        );
         state.lastSpeakTime = Date.now();
         // Clear inbound buffer so the next process only uses audio *after* EVA finished (avoids one-turn delay and EVA repeating)
         state.buffer = [];
@@ -390,7 +397,12 @@ export class MediaStreamHandlerService {
       if (state.processing || state.callEnded || !state.streamSid) return;
       if (state.mode !== 'ivr-bypass' && state.onHold) return;
       const now = Date.now();
-      if (state.mode !== 'ivr-bypass' && state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) return;
+      if (state.mode !== 'ivr-bypass' && state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) {
+        this.logger.debug(
+          `[CallTiming] Skipping process: within ANSWER_WINDOW_MS (${now - state.lastSpeakTime}ms since EVA spoke, wait=${ANSWER_WINDOW_MS}ms)`,
+        );
+        return;
+      }
       const combined = Buffer.concat(state.buffer);
       const minBytes = state.mode === 'ivr-bypass' ? IVR_BYPASS_MIN_BYTES : MIN_SPEECH_BYTES;
       if (combined.length < minBytes) return;
@@ -416,14 +428,22 @@ export class MediaStreamHandlerService {
       if (state.processing || state.callEnded) return;
       state.processing = true;
       const resumeCheckOnly = opts?.resumeCheckOnly === true;
+      const processStartMs = Date.now();
+      this.logger.log(
+        `[CallTiming] Processing audio buffer started (bytes=${combined.length}, resumeCheckOnly=${resumeCheckOnly})`,
+      );
 
       const tmpDir = os.tmpdir();
       const rawPath = path.join(tmpDir, `stream_${Date.now()}_${Math.random().toString(36).slice(2)}.raw`);
       const wavPath = path.join(tmpDir, `stream_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
 
       try {
+        const writeStart = Date.now();
         fs.writeFileSync(rawPath, combined);
         this.mulawRawToWav(rawPath, wavPath);
+        this.logger.log(
+          `[CallTiming] Audio prepared for STT (write+mulawToWav) in ${Date.now() - writeStart}ms`,
+        );
 
         let transcript: string;
         try {
@@ -664,6 +684,9 @@ export class MediaStreamHandlerService {
         }
 
         const orderedF = state.orderedFields.length ? state.orderedFields : ['coverage', 'deductible', 'copay', 'validity'];
+        this.logger.log(
+          `[CallTiming] Calling Gemini getNextConversationTurn (effectiveTranscript length=${effectiveTranscript.length})`,
+        );
         let { nextMessage, extractedUpdates, endCall } =
           await this.aiService.getNextConversationTurn(
             effectiveTranscript,
@@ -813,6 +836,9 @@ export class MediaStreamHandlerService {
         // Only ask to repeat; do not ask for the field again (same as transcription failure).
         await speak(getRepeatOnlyPrompt()).catch(() => {});
       } finally {
+        this.logger.log(
+          `[CallTiming] Process buffer finished in ${Date.now() - processStartMs}ms`,
+        );
         try {
           fs.unlinkSync(rawPath);
         } catch { }
@@ -880,6 +906,7 @@ export class MediaStreamHandlerService {
               state.patientInfo = STATIC_PATIENT_INFO;
               this.logger.warn('[MediaStream] Using static patient info (no payeeId on stream). Pass payeeId in the stream URL to use real patient details from the database.');
             }
+            this.logger.log('[CallTiming] Call picked up, playing greeting');
             state.lastSpeakTime = Date.now();
             state.conversationTranscript.push('EVA: ' + CONVERSATION_GREETING);
             await speak(CONVERSATION_GREETING);
@@ -947,11 +974,22 @@ export class MediaStreamHandlerService {
       if (state.fallbackTimer) return;
       const intervalMs = state.mode === 'ivr-bypass' ? IVR_BYPASS_FALLBACK_MS : FALLBACK_PROCESS_INTERVAL_MS;
       const minBytes = state.mode === 'ivr-bypass' ? IVR_BYPASS_MIN_BYTES : MIN_SPEECH_BYTES;
+      this.logger.log(
+        `[CallTiming] Fallback process interval started (every ${intervalMs}ms, minBytes=${minBytes})`,
+      );
       state.fallbackTimer = setInterval(() => {
         const combined = Buffer.concat(state.buffer);
         if (combined.length < minBytes) return;
         const now = Date.now();
-        if (state.mode !== 'ivr-bypass' && state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) return;
+        if (state.mode !== 'ivr-bypass' && state.lastSpeakTime > 0 && now - state.lastSpeakTime < ANSWER_WINDOW_MS) {
+          this.logger.debug(
+            `[CallTiming] Fallback timer: skipping (within ANSWER_WINDOW_MS, ${now - state.lastSpeakTime}ms since EVA spoke)`,
+          );
+          return;
+        }
+        this.logger.log(
+          `[CallTiming] Processing triggered by fallback timer (bytes=${combined.length})`,
+        );
         state.buffer = [];
         clearInterval(state.fallbackTimer!);
         state.fallbackTimer = null;
