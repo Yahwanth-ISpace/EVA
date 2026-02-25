@@ -1,4 +1,4 @@
-import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { VerificationService } from '../verification/verification.service';
 
@@ -7,6 +7,7 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-pro';
 
 @Injectable()
 export class AiService {
+  private readonly logger = new Logger(AiService.name);
   private gemini: GoogleGenerativeAI;
 
   constructor(
@@ -65,11 +66,17 @@ ${patientBlock}
   User (person on the insurance side) said: ${userMessage}
   Reply:`;
 
-    const result = await model.generateContent(prompt);
-    return (
-      result.response.text()?.trim() ??
-      'I’m sorry, I missed that. What was that?'
+    this.logger.log(
+      `[CallTiming] Gemini replyToUser started (userMessage length=${userMessage.length})`,
     );
+    const startGemini = Date.now();
+    const result = await model.generateContent(prompt);
+    const geminiMs = Date.now() - startGemini;
+    const reply = result.response.text()?.trim() ?? 'I\'m sorry, I missed that. What was that?';
+    this.logger.log(
+      `[CallTiming] Gemini replyToUser completed in ${geminiMs}ms (reply length=${reply.length})`,
+    );
+    return reply;
   }
 
   /**
@@ -455,6 +462,10 @@ Set endCall to true ONLY when (1) all ${numFields} fields are present AND (2) th
 Respond with ONLY a JSON object. No markdown. Format:
 {"nextMessage": "Short sentence", "extractedUpdates": {} or {"deductible": "100 dollars"} etc., "endCall": true or false}`;
 
+    this.logger.log(
+      `[CallTiming] Gemini getNextConversationTurn started (transcript length=${transcript.length})`,
+    );
+    const startGemini = Date.now();
     const result = await model.generateContent(prompt);
     let jsonString = result.response.text()?.trim() ?? '{}';
     if (jsonString.startsWith('```')) {
@@ -540,6 +551,10 @@ Respond with ONLY a JSON object. No markdown. Format:
         const lastPeriod = nextMessage.lastIndexOf('.');
         if (lastPeriod > 80) nextMessage = nextMessage.slice(0, lastPeriod + 1);
       }
+      const geminiMs = Date.now() - startGemini;
+      this.logger.log(
+        `[CallTiming] Gemini getNextConversationTurn completed in ${geminiMs}ms, extracted=${JSON.stringify(extractedUpdates)}, nextMessage length=${nextMessage.length}, endCall=${endCall}`,
+      );
       return { nextMessage, extractedUpdates, endCall };
     } catch {
       return {
@@ -717,6 +732,7 @@ Respond with ONLY a JSON object. No markdown. Format:
   ):
     | { ok: true; normalized: Record<string, string> }
     | { ok: false; correctionMessage: string; invalidField: string } {
+    const startValidation = Date.now();
     const quote = (v: string) =>
       (v && v.length > 25 ? v.slice(0, 22) + '...' : v) || 'that';
     const out: Record<string, string> = {};
@@ -729,6 +745,9 @@ Respond with ONLY a JSON object. No markdown. Format:
 
       if (field === 'coverage') {
         if (!this.isPercentage(v)) {
+          this.logger.log(
+            `[CallTiming] Benefit validation completed in ${Date.now() - startValidation}ms (ok=false, invalidField=coverage)`,
+          );
           return {
             ok: false,
             invalidField: 'coverage',
@@ -739,6 +758,9 @@ Respond with ONLY a JSON object. No markdown. Format:
         out.coverage = pct ? `${pct[1] || pct[2]}%` : v;
       } else if (field === 'deductible') {
         if (!this.isDollars(v)) {
+          this.logger.log(
+            `[CallTiming] Benefit validation completed in ${Date.now() - startValidation}ms (ok=false, invalidField=deductible)`,
+          );
           return {
             ok: false,
             invalidField: 'deductible',
@@ -755,6 +777,9 @@ Respond with ONLY a JSON object. No markdown. Format:
         } else if (this.isDollars(v) && dol) {
           out.copay = `$${dol[1] || dol[2] || dol[3]}`;
         } else if (!this.isDollars(v) && !this.isPercentage(v)) {
+          this.logger.log(
+            `[CallTiming] Benefit validation completed in ${Date.now() - startValidation}ms (ok=false, invalidField=copay)`,
+          );
           return {
             ok: false,
             invalidField: 'copay',
@@ -766,6 +791,9 @@ Respond with ONLY a JSON object. No markdown. Format:
       } else if (field === 'validity') {
         const normalized = this.normalizeValidity(v);
         if (!normalized || !this.looksLikeDate(v)) {
+          this.logger.log(
+            `[CallTiming] Benefit validation completed in ${Date.now() - startValidation}ms (ok=false, invalidField=validity)`,
+          );
           return {
             ok: false,
             invalidField: 'validity',
@@ -778,6 +806,10 @@ Respond with ONLY a JSON object. No markdown. Format:
       }
     }
 
+    const validationMs = Date.now() - startValidation;
+    this.logger.log(
+      `[CallTiming] Benefit validation completed in ${validationMs}ms (ok=true, normalized keys=${Object.keys(out).length})`,
+    );
     return { ok: true, normalized: out };
   }
 
