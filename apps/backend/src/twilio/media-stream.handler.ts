@@ -651,43 +651,11 @@ export class MediaStreamHandlerService {
 
         const orderedF = state.orderedFields.length ? state.orderedFields : ['coverage', 'deductible', 'copay', 'validity'];
         const recallReply = getRecallReply(userSaid, state.extractedData, orderedF);
-        let usedStreaming = false;
         let nextMessage = '';
         let extractedUpdates: Record<string, string | null> = {};
         let endCall = false;
 
         if (!recallReply) {
-          try {
-            let pendingSpeak: Promise<void> | null = null;
-            const result = await this.aiService.getNextConversationTurnStream(
-              effectiveTranscript,
-              state.extractedData,
-              state.patientInfo ?? null,
-              state.lastAskedField,
-              orderedF,
-              (text) => {
-                if (text?.trim()) pendingSpeak = speak(text.trim());
-              },
-            );
-            nextMessage = result.nextMessage;
-            extractedUpdates = result.extractedUpdates;
-            endCall = result.endCall ?? false;
-            usedStreaming = true;
-            if (pendingSpeak) {
-              await pendingSpeak;
-            }
-            state.lastSpeakTime = Date.now();
-            state.buffer = [];
-          } catch (streamErr: any) {
-            const err = streamErr as Error;
-            this.logger.warn(
-              '[MediaStream] Gemini stream failed, using non-streaming: ' + (err?.message ?? String(streamErr)),
-            );
-            usedStreaming = false;
-          }
-        }
-
-        if (!usedStreaming) {
           const result = await this.aiService.getNextConversationTurn(
             effectiveTranscript,
             state.extractedData,
@@ -821,7 +789,7 @@ export class MediaStreamHandlerService {
         if (toSpeak?.trim()) {
           state.conversationTranscript.push('EVA: ' + toSpeak.trim());
         }
-        if (!usedStreaming) {
+        if (toSpeak?.trim()) {
           await speak(toSpeak);
         }
 
