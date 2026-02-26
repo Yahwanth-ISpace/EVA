@@ -103,7 +103,6 @@ export class VerificationController {
     @Query('payeeId') queryPayeeId: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    console.log('Received payeeId in route:', payeeId);
     const finalPayeeId = payeeId || queryPayeeId;
     if (!finalPayeeId) throw new BadRequestException('payeeId is required');
 
