@@ -15,8 +15,6 @@ export class AiService {
     private readonly verificationService: VerificationService,
   ) {
     const apiKey = process.env.GEMINI_API_KEY;
-    console.log('GEMINI_API_KEY loaded:', apiKey ? '✅ yes' : '❌ no');
-
     if (!apiKey) {
       throw new Error('❌ Missing GEMINI_API_KEY environment variable.');
     }
@@ -66,16 +64,8 @@ ${patientBlock}
   User (person on the insurance side) said: ${userMessage}
   Reply:`;
 
-    this.logger.log(
-      `[CallTiming] Gemini replyToUser started (userMessage length=${userMessage.length})`,
-    );
-    const startGemini = Date.now();
     const result = await model.generateContent(prompt);
-    const geminiMs = Date.now() - startGemini;
     const reply = result.response.text()?.trim() ?? 'I\'m sorry, I missed that. What was that?';
-    this.logger.log(
-      `[CallTiming] Gemini replyToUser completed in ${geminiMs}ms (reply length=${reply.length})`,
-    );
     return reply;
   }
 
@@ -328,8 +318,8 @@ Examples (use current data to fill [value] and next field):
       ? `
 Patient info (from database — use when they ask): Full name: ${patientInfo.fullName}. DOB: ${patientInfo.dobFormatted ?? 'not provided'}. First name: ${patientInfo.firstName}. Last name: ${patientInfo.lastName}.${patientInfo.ssn ? ` SSN/tax ID: available; only disclose when they specifically ask for SSN or tax ID.` : ' No SSN on file.'}
 - Give FULL value only when asked. After patient DOB (or SSN when asked), use ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" then only when user says yes / thank you, ask for benefit fields.
-- When they say "how can I help" / "how can I help you" / "how can I help you today" / "I'm doing good how can I help you" / "I'm doing great, how can I help": Say ONLY "I want to verify the patient details." or "I want to verify the benefits of a patient." Do NOT ask for any field. Do NOT say "sorry I didn't get you". extractedUpdates {}.
-- When they ask "identify yourself" / "who are you": Answer ONLY "I'm Reena from Went Dentals. I'm on the line to verify patient benefit details." Do NOT add "Are we good?" or ask for a field. extractedUpdates {}.
+- When they say "how can I help" / "how can I help you" / "how can I help you today" / "I'm doing good how can I help you" / "I'm doing great, how can I help": Say ONLY one short phrase like "I need a few benefit details for a patient." or "I need some benefit information for a patient." Do NOT say your name (Reena), company (Went Dentals), or "I want to verify the patient details." Do NOT ask for any field. extractedUpdates {}.
+- ONLY when they explicitly ask "who is this?" / "identify yourself" / "who are you" / "who is calling?": Answer "I'm Reena from Went Dentals. I'm on the line to get benefit details." Do NOT say this in any other situation (e.g. do not say it when they say "how can I help"). extractedUpdates {}.
 - When they ask "what is the patient name" / "patient name" / "patient full name" / "what is the patient full name": Answer ONLY "The patient is ${patientInfo.fullName}." or "The full name is ${patientInfo.fullName}." Do NOT add "Are we good?" or ask for a field in the same turn. extractedUpdates {}.
 - When they ask "what is the date of birth of the patient" / "patient date of birth" / "date of birth" / "DOB" / "what is the date of birth": Your nextMessage must be ONLY: "The patient date of birth is ${patientInfo.dobFormatted ?? 'not provided'}." followed by ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" / "Are we clear?" STOP there. Do NOT add "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any request for a benefit field in this turn. Only when they reply "yes" / "we're good" / "thank you" in the NEXT turn do you ask for the first benefit field (${firstFieldName}). extractedUpdates {}.
 - When they ask "what is the date of birth of the patient" / "patient date of birth" / "date of birth" / "DOB" / "what is the date of birth": Your nextMessage must be ONLY: "The patient date of birth is ${patientInfo.dobFormatted ?? 'not provided'}." followed by ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" / "Are we clear?" STOP there. Do NOT add "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any request for a benefit field in this turn. Only when they reply "yes" / "we're good" / "thank you" in the NEXT turn do you ask for the first benefit field (${firstFieldName}). extractedUpdates {}.
@@ -339,8 +329,8 @@ Patient info (from database — use when they ask): Full name: ${patientInfo.ful
 - When they ask for info you do NOT have (policy number, member ID, etc.): "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?" Then if a field still missing use varied phrase for that field. extractedUpdates {}.
 `
       : `
-- When they say "how can I help" / "how can I help you" / "how can I help you today": Say ONLY "I want to verify the patient details." or "I want to verify the benefits of a patient." extractedUpdates {}.
-- When they ask "identify yourself" / "who are you": "I'm Reena from Went Dentals. I'm calling to verify patient benefit details." Do NOT add acknowledgment. extractedUpdates {}.
+- When they say "how can I help" / "how can I help you" etc.: Say ONLY "I need a few benefit details for a patient." or "I need some benefit information for a patient." Do NOT say your name or company. extractedUpdates {}.
+- ONLY when they ask "who is this?" / "identify yourself" / "who are you": "I'm Reena from Went Dentals. I'm calling to get benefit details." Do NOT say this when they say "how can I help." extractedUpdates {}.
 - When they ask for information you do NOT have: "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?" extractedUpdates {}.
 `;
 
@@ -373,7 +363,7 @@ PACE & RESPONSIVENESS — Do not delay the conversation. When the user asks a qu
 
 CRITICAL — CONVERSATION FLOW (go with the flow; do NOT ask for any benefit field until the user has said "how can I help" and you have responded, and if they asked patient name/DOB you have given those and they said "we're good"):
 - If the user JUST asked for date of birth / DOB (e.g. "what is the date of birth?", "patient date of birth?", "what is the DOB?"): nextMessage must be ONLY the DOB answer plus one confirmation phrase ("Are we good?" / "Is that all you have?" / "Are we clear?"). Do NOT add "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any other sentence. Wait for their "yes" / "we're good" in the next turn before asking for the first benefit field.
-- When they say "How can I help you?" / "How can I help?": Say ONLY "I need some details to verify the patient benefits." or "I want to verify the benefits of a patient." Do NOT ask for any field yet. extractedUpdates {}.
+- When they say "How can I help you?" / "How can I help?": Say ONLY "I need a few benefit details for a patient." or "I need some benefit information for a patient." Do NOT say your name (Reena) or company (Went Dentals). Do NOT ask for any field yet. extractedUpdates {}.
 - When they ask "What is the patient name?" / "Patient name?": Give full name only. Do NOT ask "Are we good?" or any field. extractedUpdates {}.
 - When they ask "What is the date of birth?" / "DOB?" / "patient date of birth?" / "what is the date of birth?": Say ONLY the date of birth sentence then ONE of "Are we good?" / "Is that all you have?" / "Are we clear?" STOP. Do NOT say "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any benefit field in this turn. Only when they say "yes" / "we're good" in the NEXT turn do you ask for the first benefit field (${firstFieldName}).
 - When they say "What do you need?" / "What details do you need?" after you said you want to verify benefits: ask for the first missing benefit field (e.g. ${firstFieldName}). Do NOT repeat your purpose. extractedUpdates {}.
@@ -388,7 +378,7 @@ PACE & RESPONSIVENESS — Do not delay the conversation. When the user asks a qu
 
 CRITICAL — CONVERSATION FLOW (go with the flow; do NOT ask for any benefit field until the user has said "how can I help" and you have responded, and if they asked patient name/DOB you have given those and they said "we're good"):
 - If the user JUST asked for date of birth / DOB (e.g. "what is the date of birth?", "patient date of birth?", "what is the DOB?"): nextMessage must be ONLY the DOB answer plus one confirmation phrase ("Are we good?" / "Is that all you have?" / "Are we clear?"). Do NOT add "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any other sentence. Wait for their "yes" / "we're good" in the next turn before asking for the first benefit field.
-- When they say "How can I help you?" / "How can I help?": Say ONLY "I need some details to verify the patient benefits." or "I want to verify the benefits of a patient." Do NOT ask for any field yet. extractedUpdates {}.
+- When they say "How can I help you?" / "How can I help?": Say ONLY "I need a few benefit details for a patient." or "I need some benefit information for a patient." Do NOT say your name (Reena) or company (Went Dentals). Do NOT ask for any field yet. extractedUpdates {}.
 - When they ask "What is the patient name?" / "Patient name?": Give full name only. Do NOT ask "Are we good?" or any field. extractedUpdates {}.
 - When they ask "What is the date of birth?" / "DOB?" / "patient date of birth?" / "what is the date of birth?": Say ONLY the date of birth sentence then ONE of "Are we good?" / "Is that all you have?" / "Are we clear?" STOP. Do NOT say "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any benefit field in this turn. Only when they say "yes" / "we're good" in the NEXT turn do you ask for the first benefit field (${firstFieldName}).
 - When they say "What do you need?" / "What details do you need?" after you said you want to verify benefits: ask for the first missing benefit field (e.g. ${firstFieldName}). Do NOT repeat your purpose. extractedUpdates {}.
@@ -433,8 +423,10 @@ What they just said (respond only to this): "${transcript}"
 
 RECALL (what is the deductible / what did I say for X): When they ask what value we have for a field, reply with EXACTLY the value from "Data we have so far" above. E.g. if deductible is "500 dollars" say "I have the deductible as 500 dollars." Never use a different number or value. If we don't have that field yet, say "I don't have that one yet."
 
-EXTRACTION:
-- Any number, dollar amount ($), or percentage in their message that fits a benefit field → put it in extractedUpdates. If they give multiple values in one sentence (e.g. "deductible is 500 and copay is 25 percent"), extract ALL that apply into extractedUpdates. Examples: "deductible is 100$" → {"deductible": "100 dollars"}; "50 dollars" for copay → {"copay": "50 dollars"}; "thirty percent" → {"copay": "30 percent"}. When we are asking for "${nextFieldToAsk}", a number or amount is very likely the answer — extract it.
+EXTRACTION (CRITICAL — field assignment):
+- We are currently asking for "${nextFieldToAsk ?? 'none'}". When the user gives a single number, dollar amount, or percentage in response to our question, put it ONLY in "${nextFieldToAsk}". Do NOT put it in any other field (e.g. if we asked for deductible and they say "20 dollars", set ONLY {"deductible": "20 dollars"}, NOT copay). Your nextMessage must refer to the field WE asked for (e.g. "Got it, thanks. So the deductible is 20 dollars?" or "Thanks. Can I get the copay?") — NEVER say "the copay is 20 dollars" when we were asking for deductible.
+- If they explicitly name a field and a value (e.g. "deductible is 500 and copay is 25 percent"), extract each into the correct field. Otherwise, a single value goes ONLY into "${nextFieldToAsk}".
+- VALIDITY: Only set validity when the user explicitly says a date, month, or year (e.g. "December 31st 2024", "valid through Dec 2024"). Do NOT set validity to any default or assumed date (e.g. "31st Dec 2024"). If they did not say anything about validity or a date, leave validity empty. Never invent a date.
 - Only ask them to repeat when transcript is exactly "User did not respond or was inaudible". Do not ask to repeat if they gave a number or amount.
 - After extracting a value (or multiple): acknowledge once and ask for the NEXT missing field only.
 
@@ -450,7 +442,7 @@ WHAT TO SAY (check in this order). After the user has given a complete answer, a
 - If they ask for info you don't have: "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?" Then if a field still missing: "So can I get the [first missing field]?" extractedUpdates {}.
 - If they ask "what are the details you want to know" / "what do you need to know": Ask for first missing field with a VARIED phrase. Do NOT add a confirmation phrase here. Do NOT list all fields. extractedUpdates {}.
 - CRITICAL: NEVER say "I didn't get you" or "couldn't catch" when the user said something substantive. Only use a repeat phrase when transcript is EXACTLY "User did not respond or was inaudible." extractedUpdates as needed.
-- If they say "how can I help" / "how can I help you" etc.: "I want to verify the patient details." or "I want to verify the benefits of a patient." Only. extractedUpdates {}.
+- If they say "how can I help" / "how can I help you" etc.: "I need a few benefit details for a patient." or "I need some benefit information for a patient." Only. Do NOT say your name or company. extractedUpdates {}.
 - If transcript is EXACTLY "User did not respond or was inaudible" or silence: Say ONLY one short repeat request. Do NOT add a confirmation phrase or next field in this turn. extractedUpdates {}.
 - If they gave a value for the current field (number/amount): extract it, say "Got it, thanks." or "Thanks.", then ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" (pick at random). Do NOT ask for the next field in this turn. Wait for them to say yes or thank you in the next turn.
 - If they ask to update or correct a value: put new value in extractedUpdates, say "Updated. I've got that. Thanks." Then "So can I get the next field?" if more needed.
@@ -462,10 +454,6 @@ Set endCall to true ONLY when (1) all ${numFields} fields are present AND (2) th
 Respond with ONLY a JSON object. No markdown. Format:
 {"nextMessage": "Short sentence", "extractedUpdates": {} or {"deductible": "100 dollars"} etc., "endCall": true or false}`;
 
-    this.logger.log(
-      `[CallTiming] Gemini getNextConversationTurn started (transcript length=${transcript.length})`,
-    );
-    const startGemini = Date.now();
     const result = await model.generateContent(prompt);
     let jsonString = result.response.text()?.trim() ?? '{}';
     if (jsonString.startsWith('```')) {
@@ -480,15 +468,32 @@ Respond with ONLY a JSON object. No markdown. Format:
       let extractedUpdates = parsed.extractedUpdates ?? {};
       let endCall = parsed.endCall === true;
 
-      const looksLikeDidntGet =
-        /didn'?t\s+(get|catch|understand)|can you (repeat|share|say)/i.test(
-          nextMessage,
-        );
       const transcriptHasValue =
         transcript !== 'User did not respond or was inaudible.' &&
         transcript !== 'User did not respond or was inaudible' &&
         /\d+|dollar|percent|%\s*\$/.test(transcript);
 
+      // Safeguard: if we were asking for a specific field and AI put the value in a different field (e.g. copay when we asked deductible), reassign to the field we asked for
+      if (nextFieldToAsk && transcriptHasValue) {
+        const keys = Object.keys(extractedUpdates);
+        if (keys.length === 1 && keys[0] !== nextFieldToAsk) {
+          const wrongKey = keys[0];
+          const value = extractedUpdates[wrongKey];
+          if (value && typeof value === 'string' && this.valueFitsField(value, nextFieldToAsk)) {
+            extractedUpdates = { [nextFieldToAsk]: value };
+          }
+        }
+        // Never accept an extracted validity if the user didn't say anything that looks like a date
+        if (extractedUpdates.validity && !this.looksLikeDate(transcript)) {
+          const { validity, ...rest } = extractedUpdates;
+          extractedUpdates = rest;
+        }
+      }
+
+      const looksLikeDidntGet =
+        /didn'?t\s+(get|catch|understand)|can you (repeat|share|say)/i.test(
+          nextMessage,
+        );
       if (
         nextFieldToAsk &&
         transcriptHasValue &&
@@ -551,10 +556,6 @@ Respond with ONLY a JSON object. No markdown. Format:
         const lastPeriod = nextMessage.lastIndexOf('.');
         if (lastPeriod > 80) nextMessage = nextMessage.slice(0, lastPeriod + 1);
       }
-      const geminiMs = Date.now() - startGemini;
-      this.logger.log(
-        `[CallTiming] Gemini getNextConversationTurn completed in ${geminiMs}ms, extracted=${JSON.stringify(extractedUpdates)}, nextMessage length=${nextMessage.length}, endCall=${endCall}`,
-      );
       return { nextMessage, extractedUpdates, endCall };
     } catch {
       return {
@@ -718,6 +719,16 @@ Respond with ONLY a JSON object. No markdown. Format:
     );
   }
 
+  /** True if value format fits the benefit field (for reassigning misassigned extractions). */
+  private valueFitsField(value: string, field: string): boolean {
+    const v = value.trim().toLowerCase();
+    if (field === 'coverage') return this.isPercentage(v);
+    if (field === 'deductible') return this.isDollars(v);
+    if (field === 'copay') return this.isDollars(v) || this.isPercentage(v);
+    if (field === 'validity') return this.looksLikeDate(v);
+    return true;
+  }
+
   /**
    * Validates and normalizes extracted benefit values.
    * - coverage: must be percentage
@@ -732,7 +743,6 @@ Respond with ONLY a JSON object. No markdown. Format:
   ):
     | { ok: true; normalized: Record<string, string> }
     | { ok: false; correctionMessage: string; invalidField: string } {
-    const startValidation = Date.now();
     const quote = (v: string) =>
       (v && v.length > 25 ? v.slice(0, 22) + '...' : v) || 'that';
     const out: Record<string, string> = {};
@@ -745,9 +755,6 @@ Respond with ONLY a JSON object. No markdown. Format:
 
       if (field === 'coverage') {
         if (!this.isPercentage(v)) {
-          this.logger.log(
-            `[CallTiming] Benefit validation completed in ${Date.now() - startValidation}ms (ok=false, invalidField=coverage)`,
-          );
           return {
             ok: false,
             invalidField: 'coverage',
@@ -758,9 +765,6 @@ Respond with ONLY a JSON object. No markdown. Format:
         out.coverage = pct ? `${pct[1] || pct[2]}%` : v;
       } else if (field === 'deductible') {
         if (!this.isDollars(v)) {
-          this.logger.log(
-            `[CallTiming] Benefit validation completed in ${Date.now() - startValidation}ms (ok=false, invalidField=deductible)`,
-          );
           return {
             ok: false,
             invalidField: 'deductible',
@@ -777,9 +781,6 @@ Respond with ONLY a JSON object. No markdown. Format:
         } else if (this.isDollars(v) && dol) {
           out.copay = `$${dol[1] || dol[2] || dol[3]}`;
         } else if (!this.isDollars(v) && !this.isPercentage(v)) {
-          this.logger.log(
-            `[CallTiming] Benefit validation completed in ${Date.now() - startValidation}ms (ok=false, invalidField=copay)`,
-          );
           return {
             ok: false,
             invalidField: 'copay',
@@ -791,9 +792,6 @@ Respond with ONLY a JSON object. No markdown. Format:
       } else if (field === 'validity') {
         const normalized = this.normalizeValidity(v);
         if (!normalized || !this.looksLikeDate(v)) {
-          this.logger.log(
-            `[CallTiming] Benefit validation completed in ${Date.now() - startValidation}ms (ok=false, invalidField=validity)`,
-          );
           return {
             ok: false,
             invalidField: 'validity',
@@ -806,10 +804,6 @@ Respond with ONLY a JSON object. No markdown. Format:
       }
     }
 
-    const validationMs = Date.now() - startValidation;
-    this.logger.log(
-      `[CallTiming] Benefit validation completed in ${validationMs}ms (ok=true, normalized keys=${Object.keys(out).length})`,
-    );
     return { ok: true, normalized: out };
   }
 

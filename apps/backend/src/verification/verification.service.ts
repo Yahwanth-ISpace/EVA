@@ -109,26 +109,14 @@ export class VerificationService {
         extractedData: mergedExtracted,
       };
 
-      console.log('Merged data:', {
-        extractedData: updateData.extractedData,
-        transcriptLength: updateData.transcript?.length,
-        isUpdate: !!existingVerification,
-      });
-
       let record;
       if (existingVerification) {
-        // UPDATE existing record
-        console.log(
-          `Updating existing verification ${existingVerification.id} for payeeId: ${payeeId}`,
-        );
         record = await this.prisma.verification.update({
           where: { id: existingVerification.id },
           data: updateData,
           include: { payee: true },
         });
       } else {
-        // CREATE new record
-        console.log(`Creating new verification for payeeId: ${payeeId}`);
         record = await this.prisma.verification.create({
           data: {
             payeeId,
@@ -152,7 +140,6 @@ export class VerificationService {
       // 4. DELETE TEMP FILE
       try {
         await fs.promises.unlink(filePath);
-        console.log('Deleted temp audio file:', filePath);
       } catch (deleteErr) {
         console.error('Failed to delete file:', deleteErr.message);
       }
@@ -402,7 +389,6 @@ export class VerificationService {
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
   ) {
-    this.logger.log('pushExtractedData: payeeId=' + payeeId + ' data=' + JSON.stringify(extracted));
     return this.mergeExtractedData(payeeId, extracted, transcriptToAppend, verificationRequirementId);
   }
 }
