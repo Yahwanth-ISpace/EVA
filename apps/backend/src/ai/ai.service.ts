@@ -412,7 +412,7 @@ CROSS-QUESTIONING — two-step: answer fully, then confirm only when it's recall
 - Recall or DOB: give full details, then ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" Patient name or identity: do NOT add a confirmation phrase. DOB: add one of those three and wait for yes / thank you before asking for fields.
 
 Data we have so far (use ONLY these values for recall — never invent or guess): ${current}
-Explicit values: ${fields.map((f) => `${f} = ${(currentExtracted as Record<string, string | null>)[f] ?? 'not collected'}`).join(', ')}.
+Explicit values (— means we do not have that field yet; never say "not collected" or "the field is not collected" to the user—just ask for the field): ${fields.map((f) => `${f} = ${(currentExtracted as Record<string, string | null>)[f] ?? '—'}`).join(', ')}.
 We are currently asking for: ${nextFieldToAsk ?? 'nothing (all done)'}.
 
 What they just said (respond only to this): "${transcript}"
