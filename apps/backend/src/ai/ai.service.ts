@@ -64,8 +64,10 @@ ${patientBlock}
   User (person on the insurance side) said: ${userMessage}
   Reply:`;
 
+    const replyStart = Date.now();
     const result = await model.generateContent(prompt);
     const reply = result.response.text()?.trim() ?? 'I\'m sorry, I missed that. What was that?';
+    this.logger.log(`[Gemini] replyToUser completed in ${Date.now() - replyStart}ms`);
     return reply;
   }
 
@@ -179,8 +181,10 @@ Are they:
 
 Reply with ONLY one word: answer OR interruption`;
 
+    const start = Date.now();
     const result = await model.generateContent(prompt);
     const text = (result.response.text()?.trim() ?? '').toLowerCase();
+    this.logger.log(`[Gemini] classifySegment completed in ${Date.now() - start}ms`);
     return text.includes('interruption') ? 'interruption' : 'answer';
   }
 
@@ -246,7 +250,9 @@ Examples (use current data to fill [value] and next field):
 - "Actually copay is 25% not 60%" → {"updates": {"copay": "25%"}, "reply": "Got it. So the copay is 25%, right?"} (do NOT ask for next field in same turn; wait for yes)
 - "Why do you need that?" → {"updates": {}, "reply": "We're verifying benefit details for our patient."} (do NOT add "Are we good?")`;
 
+    const start = Date.now();
     const result = await model.generateContent(prompt);
+    this.logger.log(`[Gemini] handleInterruption completed in ${Date.now() - start}ms`);
     let jsonString = result.response.text()?.trim() ?? '{}';
     if (jsonString.startsWith('```')) {
       jsonString = jsonString.replace(/```json|```/gi, '').trim();
@@ -454,7 +460,10 @@ Set endCall to true ONLY when (1) all ${numFields} fields are present AND (2) th
 Respond with ONLY a JSON object. No markdown. Format:
 {"nextMessage": "Short sentence", "extractedUpdates": {} or {"deductible": "100 dollars"} etc., "endCall": true or false}`;
 
+    const geminiStart = Date.now();
     const result = await model.generateContent(prompt);
+    const geminiMs = Date.now() - geminiStart;
+    this.logger.log(`[Gemini] getNextConversationTurn API call completed in ${geminiMs}ms`);
     let jsonString = result.response.text()?.trim() ?? '{}';
     if (jsonString.startsWith('```')) {
       jsonString = jsonString.replace(/```json|```/gi, '').trim();
@@ -556,6 +565,8 @@ Respond with ONLY a JSON object. No markdown. Format:
         const lastPeriod = nextMessage.lastIndexOf('.');
         if (lastPeriod > 80) nextMessage = nextMessage.slice(0, lastPeriod + 1);
       }
+      const totalMs = Date.now() - geminiStart;
+      this.logger.log(`[Gemini] getNextConversationTurn whole process done in ${totalMs}ms (API: ${geminiMs}ms)`);
       return { nextMessage, extractedUpdates, endCall };
     } catch {
       return {
@@ -724,7 +735,7 @@ Respond with ONLY a JSON object. No markdown. Format:
     const v = value.trim().toLowerCase();
     if (field === 'coverage') return this.isPercentage(v);
     if (field === 'deductible') return this.isDollars(v);
-    if (field === 'copay') return this.isDollars(v) || this.isPercentage(v);
+    if (field === 'copay') return this.isDollars(v);
     if (field === 'validity') return this.looksLikeDate(v);
     return true;
   }
@@ -865,7 +876,9 @@ Respond with ONLY a JSON object. No markdown. Format:
     `;
 
       const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
+      const start = Date.now();
       const result = await model.generateContent(prompt);
+      this.logger.log(`[Gemini] extractInsuranceDetails completed in ${Date.now() - start}ms`);
       let jsonString = result.response.text().trim() || '{}';
 
       if (jsonString.startsWith('```')) {
