@@ -77,12 +77,14 @@ const EVA_RESUME_ACK = 'No problem, thank you for getting back. I\'m on the call
 /** Duration (ms) to stay on the line after saying goodbye (in case user responds); then hang up if no input */
 const POST_GOODBYE_LISTEN_MS = 10_000;
 
-/** Detect if user is saying thank you / no more questions / goodbye / confirmation (used in post-goodbye phase). End call when they say e.g. "yeah I'm good", "yeah thank you". */
+/** Detect if user is saying thank you / no more questions / goodbye / confirmation (used in post-goodbye phase). End call when they say e.g. "yeah I'm good", "yes thank you". */
 function isThankYouOrGoodbye(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (!t || t.length < 2) return false;
   return (
     /^(thank you|thanks|thank you so much|thanks a lot)/i.test(t) ||
+    /^(yes|yeah|yep),?\s*(thank you|thanks)/i.test(t) ||
+    /^(thank you|thanks),?\s*(yes|yeah)?/i.test(t) ||
     /^(yeah,?\s*)?(thank you|thanks)(\.?\s*)$/i.test(t) ||
     /^(no,?\s*)?(that'?s\s+all|nothing else|we'?re\s+done|goodbye|bye)$/i.test(t) ||
     /^(that'?s\s+all|nothing else|we'?re\s+done|goodbye|bye)(\s|$)/i.test(t) ||
@@ -550,7 +552,7 @@ export class MediaStreamHandlerService {
           return;
         }
 
-        // --- Post-goodbye: we said closing line and are waiting briefly; if user says something, answer or end ---
+        // --- Post-goodbye: we already said closing; if user says anything, say a brief closing and end — never repeat intro or ask "Are we clear?" ---
         if (state.postGoodbyeUntil != null) {
           if (state.postGoodbyeTimeoutId) {
             clearTimeout(state.postGoodbyeTimeoutId);
@@ -566,38 +568,17 @@ export class MediaStreamHandlerService {
             state.processing = false;
             return;
           }
+          // User said something after we said goodbye: if it's thank you/yes we're good, hang up immediately; otherwise say one closing line and hang up (no intro, no "Are we clear?")
           if (isThankYouOrGoodbye(userSaid)) {
             doPostGoodbyeHangUp();
             state.processing = false;
             return;
           }
           if (userSaid?.trim()) state.conversationTranscript.push('User: ' + userSaid.trim());
-          const postGoodbyeConfirmPhrases = ['Is that all you have?', 'Are we good?', 'Are we clear?'];
-          const randomConfirm = postGoodbyeConfirmPhrases[Math.floor(Math.random() * postGoodbyeConfirmPhrases.length)];
-          try {
-            const postOrderedF = state.orderedFields.length ? state.orderedFields : ['coverage', 'deductible', 'copay', 'validity'];
-            const recallReply = getRecallReply(userSaid, state.extractedData, postOrderedF);
-            if (recallReply) {
-              state.conversationTranscript.push('EVA: ' + recallReply);
-              await speak(recallReply);
-              state.conversationTranscript.push('EVA: ' + randomConfirm);
-              await speak(randomConfirm);
-            } else {
-              const reply = await this.aiService.replyToUser(userSaid, state.patientInfo ?? undefined, state.orderedFields.length ? state.orderedFields : null);
-              if (reply?.trim()) state.conversationTranscript.push('EVA: ' + reply.trim());
-              await speak(reply);
-              state.conversationTranscript.push('EVA: ' + randomConfirm);
-              await speak(randomConfirm);
-            }
-          } catch (e) {
-            const sorry = 'Sorry, I didn\'t catch that.';
-            state.conversationTranscript.push('EVA: ' + sorry);
-            await speak(sorry);
-            state.conversationTranscript.push('EVA: ' + randomConfirm);
-            await speak(randomConfirm);
-          }
-          state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
-          state.postGoodbyeTimeoutId = setTimeout(doPostGoodbyeHangUp, POST_GOODBYE_LISTEN_MS);
+          const postGoodbyeClosing = "You're most welcome. Have a wonderful day.";
+          state.conversationTranscript.push('EVA: ' + postGoodbyeClosing);
+          await speak(postGoodbyeClosing);
+          doPostGoodbyeHangUp();
           state.processing = false;
           return;
         }
@@ -718,6 +699,7 @@ export class MediaStreamHandlerService {
         }
         /** Short closings when ending the call — no introduction, no name or company. User said thank you / I'm good / got all details. */
         const GOODBYE_PHRASES = [
+          "You're most welcome. Have a wonderful day.",
           'Got you. Have a good day.',
           'Great, have a good day.',
           'Thanks. Have a good day.',
@@ -725,6 +707,12 @@ export class MediaStreamHandlerService {
         ];
         const goodbye = GOODBYE_PHRASES[Math.floor(Math.random() * GOODBYE_PHRASES.length)];
         let toSpeak = (nextMessage ?? '').trim();
+        // Never confirm a validity date the user didn't say: if we were asking for validity and they didn't give a date, only ask for validity (no "is it July 17 2025 right?")
+        const userSaidDate = /\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}/i.test(userSaid);
+        const toSpeakLooksLikeConfirmingDate = /(validity|valid)\s+is\s+.*\?|is it\s+.*\s+right\?|july|january|december|2024|2025/i.test(toSpeak);
+        if (state.lastAskedField === 'validity' && !hasValue(state.extractedData.validity ?? null) && !hasValue(extractedUpdates.validity ?? null) && !userSaidDate && toSpeakLooksLikeConfirmingDate) {
+          toSpeak = askForFieldPhrase('validity');
+        }
         // Safeguard: if user asked for DOB, never include a first-field request in the same turn — wait for "yes we're good" first
         const firstField = orderedF[0];
         const userAskedForDob = /date of birth|DOB|what is the (patient )?date of birth/i.test(userSaid);
