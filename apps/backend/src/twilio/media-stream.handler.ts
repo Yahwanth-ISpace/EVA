@@ -5,12 +5,11 @@
  * end-call only when all four fields collected (never end with missing fields).
  * On any failure we ask the user to repeat only the current field; we never go back or re-ask earlier questions.
  *
- * PERFORMANCE / CHUNKING:
- * - TTS streaming: first audio plays as soon as first chunks arrive from ElevenLabs (faster time-to-first-word).
- * - STT: MIN_SPEECH_BYTES, SILENCE_TAIL_BYTES, MAX_BUFFER_BYTES, FALLBACK_PROCESS_INTERVAL_MS are tuned so we
- *   process user speech sooner (smaller buffers = less wait before sending to transcription). Before chunking
- *   we used ~4k min, 120k max, 6s fallback; now ~2k min, 64k max, 4s fallback for faster turnaround.
- * - Most latency is usually from external APIs (ElevenLabs STT/TTS, Gemini). Chunking reduces wait on our side.
+ * TURN-TAKING (clear flow: EVA asks → wait for user to finish → process → respond):
+ * - We only process when we detect clear end-of-speech (silence at end of buffer) or buffer is full (long monologue).
+ * - Silence and fallback are tuned so we do NOT process mid-sentence: longer silence tail, stricter ratio,
+ *   and fallback interval long enough that we don't fire every few seconds and interrupt the user.
+ * - ANSWER_WINDOW_MS ensures we never process audio from right after EVA spoke (avoids echo / double response).
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { spawnSync } from 'child_process';
@@ -26,20 +25,20 @@ import { VerificationRequirementService } from '../verification-requirement/veri
 import { TwilioService } from './twilio.service';
 import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
-/** Minimum speech bytes before we consider processing (~0.75 sec at 8kHz mulaw). Kept low so short answers and details reach EVA quickly. */
-const MIN_SPEECH_BYTES = 6_000;
-/** Tail bytes to check for silence (~0.5 sec). Slightly larger so we wait for user to finish (e.g. "it is 24 dollars") before responding. */
-const SILENCE_TAIL_BYTES = 4_000;
+/** Minimum speech bytes before we consider processing (~1 sec at 8kHz mulaw). Ensures we have a real utterance, not a brief noise. */
+const MIN_SPEECH_BYTES = 8_000;
+/** Tail bytes to check for silence (~0.75 sec). Wait for a clear pause so user has finished speaking before we respond. */
+const SILENCE_TAIL_BYTES = 6_000;
 /** When transcript is empty, only say "please repeat" if we had at least this much audio (~4 sec). Otherwise skip speaking to avoid cutting off the user. */
 const MIN_BYTES_BEFORE_REPEAT = 32_000;
-/** Fraction of tail bytes that must be "silent" to trigger end-of-speech (0–1). 0.82 = detect end of speech slightly sooner, less delay. */
-const SILENCE_RATIO_THRESHOLD = 0.82;
-/** Max buffer before we process anyway (~8 sec). */
-const MAX_BUFFER_BYTES = 64_000;
-/** Fallback: process at most every N ms when silence not detected. Lower = user's details reach EVA sooner when they talk without a long pause. */
-const FALLBACK_PROCESS_INTERVAL_MS = 3_200;
-/** Minimum ms to wait after EVA speaks before we process user audio (avoid capturing EVA's voice). Slightly higher so we don't respond before the user finishes (e.g. "it is 24 dollars"). */
-const ANSWER_WINDOW_MS = 1_600;
+/** Fraction of tail bytes that must be "silent" to trigger end-of-speech (0–1). Stricter so we don't process on brief mid-sentence pauses. */
+const SILENCE_RATIO_THRESHOLD = 0.88;
+/** Max buffer before we process anyway (~10 sec). Long monologues get processed so we don't wait forever. */
+const MAX_BUFFER_BYTES = 80_000;
+/** Fallback: process at most every N ms when silence not detected. Kept high (5.5s) so we don't interrupt the user mid-sentence; prefer silence-based turn end. */
+const FALLBACK_PROCESS_INTERVAL_MS = 5_500;
+/** Minimum ms to wait after EVA speaks before we process user audio (avoid capturing EVA's voice and instant double-response). */
+const ANSWER_WINDOW_MS = 2_200;
 /** Max time allowed on hold before ending the call (9 minutes) */
 const HOLD_MAX_MS = 9 * 60 * 1000;
 /** Chunk size to send back to Twilio (20ms = 160 bytes at 8kHz mulaw). Smaller chunks = playback starts faster. */
@@ -735,7 +734,11 @@ export class MediaStreamHandlerService {
         const userAskedForDob = /date of birth|DOB|what is the (patient )?date of birth/i.test(userSaid);
         if (firstField && userAskedForDob && new RegExp(`(May I have the ${firstField}|Can I get the ${firstField}|Can you provide the ${firstField}|What is the ${firstField})`, 'i').test(toSpeak)) {
           toSpeak = toSpeak.replace(new RegExp(`\\s*[.\\s]*(May I have the ${firstField}\\??|Can I get the ${firstField}\\??|Can you provide the ${firstField}\\??|What is the ${firstField}\\??)[^.]*\\.?\\s*$`, 'i'), '').trim();
-          if (toSpeak) { /* stripped first-field ask from DOB turn */ }
+          if (!toSpeak?.trim()) toSpeak = 'Is it okay?'; // DOB-only turn: avoid blank after strip
+        }
+        // Never leave toSpeak blank — ensures we always have a clear response after processing
+        if (!toSpeak?.trim()) {
+          toSpeak = state.lastAskedField ? askForFieldPhrase(state.lastAskedField) : (orderedF[0] ? askForFieldPhrase(orderedF[0]) : 'Can you repeat that?');
         }
         // Recall: answer from stored extractedData so we always give the correct value (e.g. "what is the deductible provided?")
         if (recallReply) {
@@ -792,13 +795,19 @@ export class MediaStreamHandlerService {
           // Always use a short, no-intro closing — never repeat introduction at end of call.
           toSpeak = goodbye;
           // Will enter post-goodbye below: stay on line briefly in case user responds, then hang up
-        } else         if (!toSpeak || (isGenericFallback && state.lastAskedField)) {
+        } else if (!toSpeak?.trim() || (isGenericFallback && state.lastAskedField)) {
           toSpeak = state.lastAskedField
             ? askForFieldPhrase(state.lastAskedField)
-            : (toSpeak || 'Is there anything else you can share?');
+            : (toSpeak?.trim() || 'Is there anything else you can share?');
           if (!(nextMessage ?? '').trim() || isGenericFallback) {
             this.logger.warn('[MediaStream] AI returned empty or generic nextMessage, using fallback');
           }
+        }
+        // Final safeguard: never speak blank (eliminates silent/blank responses)
+        if (!(toSpeak ?? '').trim()) {
+          toSpeak = state.lastAskedField ? askForFieldPhrase(state.lastAskedField) : getRepeatOnlyPrompt();
+        } else {
+          toSpeak = (toSpeak ?? '').trim();
         }
         // Append conversation transcript (user and EVA values / important exchange) for verification
         if (userSaid && userSaid !== 'User did not respond or was inaudible.' && !/^\[?inaudible\]?\.?$/i.test(userSaid) && !/^\.{2,}$/.test(userSaid)) {
