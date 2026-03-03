@@ -298,7 +298,7 @@ export class MediaStreamHandlerService {
     private readonly verificationService: VerificationService,
     private readonly verificationRequirementService: VerificationRequirementService,
     private readonly twilioService: TwilioService,
-  ) {}
+  ) { }
 
   handleConnection(ws: WebSocket, payeeId?: string | null, mode?: string | null): void {
     const isIvrBypass = mode === 'ivr-bypass';
@@ -451,7 +451,7 @@ export class MediaStreamHandlerService {
         } catch (transcribeErr: any) {
           this.logger.warn('[MediaStream] Transcription failed', transcribeErr?.message);
           state.processing = false;
-          await speak(getRepeatOnlyPrompt()).catch(() => {});
+          await speak(getRepeatOnlyPrompt()).catch(() => { });
           return;
         }
         let userSaid = (transcript ?? '').trim();
@@ -591,7 +591,7 @@ export class MediaStreamHandlerService {
             return;
           }
           if (userSaid?.trim()) state.conversationTranscript.push('User: ' + userSaid.trim());
-          const postGoodbyeClosing = "You're most welcome. Have a wonderful day.";
+          const postGoodbyeClosing = 'You are most welcome. Have a great day.';
           state.conversationTranscript.push('EVA: ' + postGoodbyeClosing);
           await speak(postGoodbyeClosing);
           doPostGoodbyeHangUp();
@@ -707,21 +707,19 @@ export class MediaStreamHandlerService {
         state.lastAskedField = getFirstMissingField(state.extractedData, orderedF);
 
         const allCollected = orderedF.every((f) => hasValue(state.extractedData[f] ?? null));
-        let shouldEndCall = allCollected;
-        if (endCall && !allCollected) {
+        // Only end when AI explicitly set endCall true (e.g. after user said thank you). When AI said "That's all I need, thank you" it sets endCall false — do not end yet.
+        let shouldEndCall = endCall === true;
+        if (shouldEndCall && !allCollected) {
           const missing = orderedF.filter((f) => !hasValue(state.extractedData[f] ?? null));
           this.logger.warn('[MediaStream] AI returned endCall but not all fields collected; will not end. Missing: ' + missing.join(', '));
           shouldEndCall = false;
         }
-        /** Short closings when ending the call — no introduction, no name or company. User said thank you / I'm good / got all details. */
-        const GOODBYE_PHRASES = [
-          "You're most welcome. Have a wonderful day.",
-          'Got you. Have a good day.',
-          'Great, have a good day.',
-          'Thanks. Have a good day.',
-          'Have a good day.',
+        /** Closing when ending the call after user said thank you / yes / that's all. */
+        const CLOSING_PHRASES = [
+          'Thank you for helping me with the verification. Have a great day.',
+          'Thanks for helping with the verification. Have a great day.',
         ];
-        const goodbye = GOODBYE_PHRASES[Math.floor(Math.random() * GOODBYE_PHRASES.length)];
+        const goodbye = CLOSING_PHRASES[Math.floor(Math.random() * CLOSING_PHRASES.length)];
         let toSpeak = (nextMessage ?? '').trim();
         // Never confirm a validity date the user didn't say: if we were asking for validity and they didn't give a date, only ask for validity (no "is it July 17 2025 right?")
         const userSaidDate = /\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}/i.test(userSaid);
@@ -769,8 +767,8 @@ export class MediaStreamHandlerService {
                 if (norm && state.lastAskedField) state.extractedData[state.lastAskedField] = norm;
                 state.lastAskedField = getFirstMissingField(state.extractedData, orderedF2);
                 if (!state.lastAskedField) {
-                  toSpeak = goodbye;
-                  shouldEndCall = true;
+                  toSpeak = "That's all I need, thank you.";
+                  shouldEndCall = false;
                 } else {
                   const ack = ['Got it, thanks.', 'Thanks.', 'Okay, thank you.', 'Noted.'][Math.floor(Math.random() * 4)];
                   toSpeak = ack + ' ' + askForFieldPhrase(state.lastAskedField);
@@ -829,7 +827,7 @@ export class MediaStreamHandlerService {
       } catch (err: any) {
         this.logger.warn('[MediaStream] Process buffer failed', err?.message);
         // Only ask to repeat; do not ask for the field again (same as transcription failure).
-        await speak(getRepeatOnlyPrompt()).catch(() => {});
+        await speak(getRepeatOnlyPrompt()).catch(() => { });
       } finally {
         try {
           fs.unlinkSync(rawPath);
