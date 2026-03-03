@@ -24,9 +24,7 @@ export class AiService {
     }
 
     this.gemini = new GoogleGenerativeAI(apiKey);
-    this.logger.log(
-      `Generating reply to GEMINI_MODEL::::::::::::: "${GEMINI_MODEL}"`,
-    );
+    this.logger.log('[Gemini-Model]::::::::::', GEMINI_MODEL);
     this.model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
   }
 
