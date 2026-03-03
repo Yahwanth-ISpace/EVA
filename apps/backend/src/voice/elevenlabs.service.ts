@@ -11,6 +11,7 @@ export class ElevenLabsService {
   private readonly apiKey = process.env.ELEVENLABS_API_KEY?.trim();
   private readonly voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
   // English-only for clearer speech; use ELEVENLABS_MODEL_ID=eleven_flash_v2_5 for multilingual
+  private readonly ttsCache = new Map<string, Buffer>();
   private readonly modelId =
     process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2';
 
@@ -31,6 +32,11 @@ export class ElevenLabsService {
    * Synthesize text to speech and return raw MP3 bytes (e.g. for streaming/conversion).
    */
   async synthesizeToBuffer(text: string): Promise<Buffer> {
+    if (this.ttsCache.has(text)) {
+      this.logger.debug(`[ElevenLabs] TTS cache hit for: "${text}"`);
+      return this.ttsCache.get(text)!;
+    }
+
     if (!this.apiKey || !this.voiceId) {
       throw new HttpException(
         'ElevenLabs API key or Voice ID not configured',
@@ -61,7 +67,9 @@ export class ElevenLabsService {
         responseType: 'arraybuffer',
       },
     );
-    return Buffer.from(response.data);
+    const buffer = Buffer.from(response.data);
+    this.ttsCache.set(text, buffer);
+    return buffer;
   }
 
   /**

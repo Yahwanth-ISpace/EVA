@@ -12,7 +12,7 @@
  * - ANSWER_WINDOW_MS ensures we never process audio from right after EVA spoke (avoids echo / double response).
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -500,9 +500,11 @@ export class MediaStreamHandlerService {
       combined: Buffer,
       opts?: { resumeCheckOnly?: boolean },
     ) => {
+      const turnStartTime = Date.now();
       if (state.processing || state.callEnded) return;
       state.processing = true;
       const resumeCheckOnly = opts?.resumeCheckOnly === true;
+      this.logger.log(`[CallTiming] processBuffer started for ${combined.length} bytes.`);
 
       const tmpDir = os.tmpdir();
       const rawPath = path.join(
@@ -516,15 +518,21 @@ export class MediaStreamHandlerService {
 
       try {
         fs.writeFileSync(rawPath, combined);
-        this.mulawRawToWav(rawPath, wavPath);
+        const wavStart = Date.now();
+        await this.mulawRawToWav(rawPath, wavPath);
+        this.logger.log(`[CallTiming] mulawRawToWav completed in ${Date.now() - wavStart}ms.`);
 
         let transcript: string;
         try {
+          const sttStart = Date.now();
           const result = await this.transcriptionService.transcribeAudio(
             wavPath,
             resumeCheckOnly ? { skipWhisperFallback: true } : undefined,
           );
           transcript = result?.transcript ?? '';
+          this.logger.log(
+            `[CallTiming] Transcription completed in ${Date.now() - sttStart}ms. Transcript: "${transcript}"`,
+          );
         } catch (transcribeErr: any) {
           this.logger.warn(
             '[MediaStream] Transcription failed',
@@ -532,6 +540,9 @@ export class MediaStreamHandlerService {
           );
           state.processing = false;
           await speak(getRepeatOnlyPrompt()).catch(() => {});
+          this.logger.log(
+            `[CallTiming] processBuffer (transcription failed) finished in ${Date.now() - turnStartTime}ms`,
+          );
           return;
         }
         let userSaid = (transcript ?? '').trim();
@@ -565,6 +576,9 @@ export class MediaStreamHandlerService {
             }
             state.ivrDigitSent = true;
             state.callEnded = true;
+            this.logger.log(
+              `[CallTiming] processBuffer (IVR bypass) finished in ${Date.now() - turnStartTime}ms`,
+            );
           }
           state.processing = false;
           return;
@@ -615,6 +629,9 @@ export class MediaStreamHandlerService {
             try {
               await speak(EVA_RESUME_ACK);
             } catch (e) {
+            this.logger.log(
+              `[CallTiming] processBuffer (resume) finished in ${Date.now() - turnStartTime}ms`,
+            );
               this.logger.warn(
                 '[MediaStream] Resume ack TTS failed',
                 (e as Error)?.message,
@@ -622,6 +639,9 @@ export class MediaStreamHandlerService {
             }
             state.processing = false;
             startFallbackTimer();
+            this.logger.log(
+              `[CallTiming] processBuffer (resume) finished in ${Date.now() - turnStartTime}ms`,
+            );
             return;
           } else if (
             state.holdStartedAt &&
@@ -727,6 +747,9 @@ export class MediaStreamHandlerService {
             state.conversationTranscript.push('User: ' + userSaid.trim());
           state.conversationTranscript.push('EVA: ' + EVA_HOLD_ACK);
           await speak(EVA_HOLD_ACK);
+          this.logger.log(
+            `[CallTiming] processBuffer (on hold) finished in ${Date.now() - turnStartTime}ms`,
+          );
           state.processing = false;
           return;
         }
@@ -748,6 +771,9 @@ export class MediaStreamHandlerService {
               POST_GOODBYE_LISTEN_MS,
             );
             state.processing = false;
+            this.logger.log(
+              `[CallTiming] processBuffer (post-goodbye no-op) finished in ${Date.now() - turnStartTime}ms`,
+            );
             return;
           }
           // User said something after we said goodbye: if it's thank you/yes we're good, hang up immediately; otherwise say one closing line and hang up (no intro, no "Are we clear?")
@@ -762,6 +788,9 @@ export class MediaStreamHandlerService {
           state.conversationTranscript.push('EVA: ' + postGoodbyeClosing);
           await speak(postGoodbyeClosing);
           doPostGoodbyeHangUp();
+          this.logger.log(
+            `[CallTiming] processBuffer (post-goodbye final) finished in ${Date.now() - turnStartTime}ms`,
+          );
           state.processing = false;
           return;
         }
@@ -826,6 +855,9 @@ export class MediaStreamHandlerService {
           state.conversationTranscript.push('EVA: ' + reaskSame);
           await speak(reaskSame);
           state.processing = false;
+          this.logger.log(
+            `[CallTiming] processBuffer (inaudible) finished in ${Date.now() - turnStartTime}ms`,
+          );
           startFallbackTimer();
           return;
         }
@@ -847,12 +879,16 @@ export class MediaStreamHandlerService {
         let endCall = false;
 
         if (!recallReply) {
+          const aiStart = Date.now();
           const result = await this.aiService.getNextConversationTurn(
             effectiveTranscript,
             state.extractedData,
             state.patientInfo,
             state.lastAskedField,
             orderedF,
+          );
+          this.logger.log(
+            `[CallTiming] AI getNextConversationTurn completed in ${Date.now() - aiStart}ms`,
           );
           nextMessage = result.nextMessage;
           extractedUpdates = result.extractedUpdates;
@@ -903,6 +939,9 @@ export class MediaStreamHandlerService {
               );
             await speak(validation.correctionMessage);
             state.processing = false;
+            this.logger.log(
+              `[CallTiming] processBuffer (validation failed) finished in ${Date.now() - turnStartTime}ms`,
+            );
             return;
           }
           extractedUpdates = validation.normalized;
@@ -1128,6 +1167,8 @@ export class MediaStreamHandlerService {
           await speak(toSpeak);
         }
 
+        this.logger.log(`[CallTiming] processBuffer finished in ${Date.now() - turnStartTime}ms`);
+
         if (shouldEndCall) {
           // Post-goodbye: already said short closing (e.g. "Got you. Have a good day.") — stay on line briefly in case user responds
           state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
@@ -1141,6 +1182,9 @@ export class MediaStreamHandlerService {
         this.logger.warn('[MediaStream] Process buffer failed', err?.message);
         // Only ask to repeat; do not ask for the field again (same as transcription failure).
         await speak(getRepeatOnlyPrompt()).catch(() => {});
+        this.logger.log(
+          `[CallTiming] processBuffer (error) finished in ${Date.now() - turnStartTime}ms`,
+        );
       } finally {
         try {
           fs.unlinkSync(rawPath);
@@ -1319,16 +1363,32 @@ export class MediaStreamHandlerService {
   }
 
   /** Convert raw mulaw (8kHz mono) file to wav for transcription API */
-  private mulawRawToWav(rawPath: string, wavPath: string): void {
-    const result = spawnSync(
-      'ffmpeg',
-      ['-f', 'mulaw', '-ar', '8000', '-ac', '1', '-i', rawPath, '-y', wavPath],
-      { encoding: 'buffer', timeout: 10_000 },
-    );
-    if (result.status !== 0 || result.error) {
-      const stderr = (result.stderr ?? Buffer.alloc(0)).toString('utf-8');
-      const errMsg = getFfmpegErrorMessage(result.error, stderr);
-      throw new Error(errMsg);
-    }
+  private mulawRawToWav(rawPath: string, wavPath: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const ffmpeg = spawn(
+        'ffmpeg',
+        ['-f', 'mulaw', '-ar', '8000', '-ac', '1', '-i', rawPath, '-y', wavPath],
+        { timeout: 10_000 },
+      );
+
+      let stderr = '';
+      ffmpeg.stderr.on('data', (data) => {
+        stderr += data.toString('utf-8');
+      });
+
+      ffmpeg.on('close', (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          const errMsg = getFfmpegErrorMessage(null, stderr);
+          reject(new Error(errMsg));
+        }
+      });
+
+      ffmpeg.on('error', (err) => {
+        const errMsg = getFfmpegErrorMessage(err, stderr);
+        reject(new Error(errMsg));
+      });
+    });
   }
 }

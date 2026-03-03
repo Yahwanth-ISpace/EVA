@@ -1,14 +1,18 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
 import { VerificationService } from '../verification/verification.service';
 
-/** Stable Pro model for conversation, extraction, and classification. */
-const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-pro';
+/**
+ * Gemini model for conversation, extraction, and classification.
+ * Use `gemini-1.5-flash` for lower latency/cost, or `gemini-1.5-pro` for higher accuracy.
+ */
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-1.5-pro';
 
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private gemini: GoogleGenerativeAI;
+  private model: GenerativeModel;
 
   constructor(
     @Inject(forwardRef(() => VerificationService))
@@ -20,6 +24,10 @@ export class AiService {
     }
 
     this.gemini = new GoogleGenerativeAI(apiKey);
+    this.logger.log(
+      `Generating reply to GEMINI_MODEL::::::::::::: "${GEMINI_MODEL}"`,
+    );
+    this.model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
   }
 
   /**
@@ -40,7 +48,6 @@ export class AiService {
     } | null,
     orderedFields?: string[] | null,
   ): Promise<string> {
-    const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
     const fieldsList = (
       orderedFields?.length ? orderedFields : AiService.INSURANCE_FIELDS
     ).join(', ');
@@ -64,7 +71,7 @@ ${patientBlock}
   Reply:`;
 
     const replyStart = Date.now();
-    const result = await model.generateContent(prompt);
+    const result = await this.model.generateContent(prompt);
     const reply =
       result.response.text()?.trim() ??
       "I'm sorry, I missed that. What was that?";
@@ -171,7 +178,6 @@ ${patientBlock}
     currentQuestion: string,
     orderedFields?: string[] | null,
   ): Promise<'answer' | 'interruption'> {
-    const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
     const fieldsList = (
       orderedFields?.length ? orderedFields : AiService.INSURANCE_FIELDS
     ).join(', ');
@@ -188,7 +194,7 @@ Are they:
 Reply with ONLY one word: answer OR interruption`;
 
     const start = Date.now();
-    const result = await model.generateContent(prompt);
+    const result = await this.model.generateContent(prompt);
     const text = (result.response.text()?.trim() ?? '').toLowerCase();
     this.logger.log(
       `[Gemini] classifySegment completed in ${Date.now() - start}ms`,
@@ -221,7 +227,6 @@ Reply with ONLY one word: answer OR interruption`;
     } | null,
     orderedFields?: string[] | null,
   ): Promise<{ updates: Record<string, string | null>; reply: string }> {
-    const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
     const fieldsList = (
       orderedFields?.length ? orderedFields : AiService.INSURANCE_FIELDS
     ).join(', ');
@@ -259,7 +264,7 @@ Examples (use current data to fill [value] and next field):
 - "Why do you need that?" → {"updates": {}, "reply": "We're verifying benefit details for our patient."} (do NOT add "Are we good?")`;
 
     const start = Date.now();
-    const result = await model.generateContent(prompt);
+    const result = await this.model.generateContent(prompt);
     this.logger.log(
       `[Gemini] handleInterruption completed in ${Date.now() - start}ms`,
     );
@@ -313,7 +318,6 @@ Examples (use current data to fill [value] and next field):
     extractedUpdates: Record<string, string | null>;
     endCall?: boolean;
   }> {
-    const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
     const fields = AiService.getOrderedFields(orderedFields);
     const current = JSON.stringify(currentExtracted);
 
@@ -392,20 +396,6 @@ CRITICAL — CONVERSATION FLOW (go with the flow; do NOT ask for any benefit fie
 - NEVER say "That's great to hear. I'm calling to verify benefits for a patient, [name]." at the end of the call or in closing unless the user just asked "How can I help you?".
 STAY IN SYNC — Your reply must directly address what the user JUST said in this turn. Do not skip ahead (e.g. if they asked a question, answer it first; do not ask for a field until you have answered). Do not refer to something they did not say. One turn = one exchange: they said X, you respond to X. Keep the conversation in phase so it never feels like you are ahead or behind.
 
-PACE & RESPONSIVENESS — Do not delay the conversation. When the user asks a question, answer it directly and concisely in one short sentence. When they share a value (number, amount, date), acknowledge immediately ("Got it, thanks." or "Thanks.") and ask for the next field right away. Keep replies brief so the call moves smoothly.
-
-CRITICAL — CONVERSATION FLOW (go with the flow; do NOT ask for any benefit field until the user has said "how can I help" and you have responded, and if they asked patient name/DOB you have given those and they said "we're good"):
-- If the user JUST asked for date of birth / DOB (e.g. "what is the date of birth?", "patient date of birth?", "what is the DOB?"): nextMessage must be ONLY the DOB answer plus one confirmation phrase ("Are we good?" / "Is that all you have?" / "Are we clear?"). Do NOT add "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any other sentence. Wait for their "yes" / "we're good" in the next turn before asking for the first benefit field.
-- When they say "How can I help you?" / "How can I help?": Say your purpose ONLY ONCE per call: "I need a few benefit details for a patient." Do NOT say your name or company. Do NOT ask for any field yet. If we are already collecting fields (we have data or lastAskedField), do NOT say your purpose again — ask for the current missing field instead. extractedUpdates {}.
-- When they ask "What is the patient name?" / "Patient name?": Give full name only. Do NOT ask "Are we good?" or any field. extractedUpdates {}.
-- When they ask "What is the date of birth?" / "DOB?" / "patient date of birth?" / "what is the date of birth?": Say ONLY the date of birth sentence then ONE of "Are we good?" / "Is that all you have?" / "Are we clear?" STOP. Do NOT say "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any benefit field in this turn. Only when they say "yes" / "we're good" in the NEXT turn do you ask for the first benefit field (${firstFieldName}).
-- When they say "What do you need?" / "What details do you need?" after you said you want to verify benefits: ask for the first missing benefit field (e.g. ${firstFieldName}). Do NOT repeat your purpose. extractedUpdates {}.
-- When they GIVE a value for a field (${fieldsList}): extract it, say "Got it, thanks." or "Thanks." or "Okay, thank you." or "Noted.", then IMMEDIATELY ask for the NEXT field with a varied phrase. Do NOT re-ask the same field. Do NOT say "Is that all you have?" or "Are we good?" after a normal value.
-- Use "Is that all you have?" / "Are we good?" / "Are we clear?" ONLY after (1) patient DOB, (2) when they ask for recall ("what is the [field]?" etc.) and you gave the value, (3) when they correct a value, or (4) when all fields collected and waiting for thank you. Never after a normal benefit value.
-- When all fields collected and user JUST GAVE the last value: say "That's all I need, thank you." endCall FALSE.
-- END-OF-CALL: When all fields collected AND user said thank you / yes / that's all / goodbye: say "Thank you for helping me with the verification. Have a great day." endCall TRUE.
-- When all fields collected and user asked a question: answer fully, then "Is that all you have?" endCall FALSE; when they say yes/thank you next, say the closing and endCall TRUE.
-
 ROLE & TONE:
 - Professional, polite, patient. One thing per turn. Answer the user's questions properly and directly—do not deflect or give a generic "didn't catch" when they asked something specific.
 - If they ask a question (e.g. "What is that for?", "Why do you need it?", "Can you explain?"): answer in one clear, short sentence. Then continue with the flow (e.g. ask for the next field if needed). extractedUpdates {}.
@@ -434,9 +424,6 @@ Explicit values (— means we do not have that field yet; never say "not collect
 We are currently asking for: ${nextFieldToAsk ?? 'nothing (all done)'}.
 
 CRITICAL — SOURCE OF TRUTH: The "Data we have so far" and "Explicit values" above are what we have already collected. If a field shows a value (not —), we HAVE it. NEVER ask for that field again. ONLY ask for fields that show —. When asking for a missing benefit field (${fieldsList}), use ONLY phrases like "Can I get the [field]?" / "May I have the [field]?" / "What's the [field]?" — NEVER say "I don't have that on my end" or "I don't have these noted" or "please provide the details" for benefit fields. Reserve "I don't have that on my end" ONLY for things like policy number or member ID that we truly do not have.
-
-What they just said (respond only to this): "${transcript}"
-→ If they asked a question: answer it, then continue (e.g. ask for next field if needed). If they gave a value: extract it, acknowledge, ask for next field. If they confirmed (yes/thanks): say Thanks and ask for next field. If unclear/inaudible: ask to repeat for the current field only. Do not skip or answer something they did not say.
 
 What they just said (respond only to this): "${transcript}"
 → If they asked a question: answer it, then continue (e.g. ask for next field if needed). If they gave a value: extract it, acknowledge, ask for next field. If they confirmed (yes/thanks): say Thanks and ask for next field. If unclear/inaudible: ask to repeat for the current field only. Do not skip or answer something they did not say.
@@ -476,7 +463,7 @@ Respond with ONLY a JSON object. No markdown. Format:
 {"nextMessage": "Short sentence", "extractedUpdates": {} or {"deductible": "100 dollars"} etc., "endCall": true or false}`;
 
     const geminiStart = Date.now();
-    const result = await model.generateContent(prompt);
+    const result = await this.model.generateContent(prompt);
     const geminiMs = Date.now() - geminiStart;
     this.logger.log('[Gemini-Model]:', GEMINI_MODEL);
     this.logger.log(
@@ -899,9 +886,8 @@ Respond with ONLY a JSON object. No markdown. Format:
       ${text}
     `;
 
-      const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
       const start = Date.now();
-      const result = await model.generateContent(prompt);
+      const result = await this.model.generateContent(prompt);
       this.logger.log(
         `[Gemini] extractInsuranceDetails completed in ${Date.now() - start}ms`,
       );
