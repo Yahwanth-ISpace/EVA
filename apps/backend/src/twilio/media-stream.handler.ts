@@ -158,6 +158,17 @@ function transcriptHasValue(transcript: string): boolean {
   return /\d+|dollar|percent|%\s*\$/.test(transcript);
 }
 
+/** True if the reply is the intro/purpose phrase we only say once (e.g. "I need a few benefit details", "here to verify patient details"). */
+function isIntroPurposePhrase(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  return (
+    /i'?m\s+here\s+to\s+verify/i.test(t) ||
+    /verify\s+(a\s+)?(couple\s+of\s+)?patient\s+details/i.test(t) ||
+    /i\s+need\s+(a\s+few|some)\s+benefit\s+(details|information)/i.test(t) ||
+    /i\s+want\s+to\s+verify\s+(the\s+)?patient/i.test(t)
+  );
+}
+
 /** Detect if user is asking to put the call on hold */
 function isHoldPhrase(text: string): boolean {
   const t = text.trim().toLowerCase();
@@ -270,6 +281,8 @@ interface StreamState {
   conversationTranscript: string[];
   mode: 'eva' | 'ivr-bypass';
   ivrDigitSent: boolean;
+  /** True after we've already said our purpose (e.g. "I need a few benefit details") — avoid repeating it while user is speaking. */
+  purposeSaid: boolean;
 }
 
 @Injectable()
@@ -310,6 +323,7 @@ export class MediaStreamHandlerService {
       conversationTranscript: [],
       mode: isIvrBypass ? 'ivr-bypass' : 'eva',
       ivrDigitSent: false,
+      purposeSaid: false,
     };
 
     const send = (obj: object) => {
@@ -730,7 +744,12 @@ export class MediaStreamHandlerService {
         // Never say "I didn't catch you" when user clearly said something (e.g. "how can I help", "it is 80$") — keep conversation in sync.
         if (looksLikeRealResponse(userSaid) && soundsLikeRepeat) {
           if (/how can I help|how are you|doing good|doing great|how can i help/i.test(userSaid.trim())) {
-            toSpeak = 'I need a few benefit details for a patient.';
+            if (!state.purposeSaid) {
+              toSpeak = 'I need a few benefit details for a patient.';
+              state.purposeSaid = true;
+            } else {
+              toSpeak = state.lastAskedField ? askForFieldPhrase(state.lastAskedField) : askForFieldPhrase(orderedF[0]);
+            }
           } else if (transcriptHasValue(userSaid) && state.lastAskedField) {
             const corrected = extractValueForField(userSaid, state.lastAskedField);
             if (corrected) {
@@ -757,6 +776,13 @@ export class MediaStreamHandlerService {
             const firstField = (state.orderedFields.length ? state.orderedFields[0] : 'coverage');
             toSpeak = state.lastAskedField ? askForFieldPhrase(state.lastAskedField) : askForFieldPhrase(firstField);
           }
+        }
+        // Never repeat the intro/purpose phrase ("I'm here to verify...", "I need a few benefit details") — say it only once per call; if we already said it, ask for the field or repeat instead.
+        if (toSpeak && state.purposeSaid && isIntroPurposePhrase(toSpeak)) {
+          toSpeak = state.lastAskedField ? askForFieldPhrase(state.lastAskedField) : getRepeatOnlyPrompt();
+        }
+        if (toSpeak && isIntroPurposePhrase(toSpeak)) {
+          state.purposeSaid = true;
         }
         if (shouldEndCall) {
           // Always use a short, no-intro closing — never repeat introduction at end of call.
