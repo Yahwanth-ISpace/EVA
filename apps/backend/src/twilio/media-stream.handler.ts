@@ -28,8 +28,8 @@ import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
 /** Minimum speech bytes before we consider processing (~0.75 sec at 8kHz mulaw). Kept low so short answers and details reach EVA quickly. */
 const MIN_SPEECH_BYTES = 6_000;
-/** Tail bytes to check for silence (~0.4 sec). Smaller = less delay after user stops; details reach EVA sooner. */
-const SILENCE_TAIL_BYTES = 3_200;
+/** Tail bytes to check for silence (~0.5 sec). Slightly larger so we wait for user to finish (e.g. "it is 24 dollars") before responding. */
+const SILENCE_TAIL_BYTES = 4_000;
 /** When transcript is empty, only say "please repeat" if we had at least this much audio (~4 sec). Otherwise skip speaking to avoid cutting off the user. */
 const MIN_BYTES_BEFORE_REPEAT = 32_000;
 /** Fraction of tail bytes that must be "silent" to trigger end-of-speech (0–1). 0.82 = detect end of speech slightly sooner, less delay. */
@@ -38,8 +38,8 @@ const SILENCE_RATIO_THRESHOLD = 0.82;
 const MAX_BUFFER_BYTES = 64_000;
 /** Fallback: process at most every N ms when silence not detected. Lower = user's details reach EVA sooner when they talk without a long pause. */
 const FALLBACK_PROCESS_INTERVAL_MS = 3_200;
-/** Minimum ms to wait after EVA speaks before we process user audio (avoid capturing EVA's voice). Lower = quicker turn-around so details don't lag. */
-const ANSWER_WINDOW_MS = 1_200;
+/** Minimum ms to wait after EVA speaks before we process user audio (avoid capturing EVA's voice). Slightly higher so we don't respond before the user finishes (e.g. "it is 24 dollars"). */
+const ANSWER_WINDOW_MS = 1_600;
 /** Max time allowed on hold before ending the call (9 minutes) */
 const HOLD_MAX_MS = 9 * 60 * 1000;
 /** Chunk size to send back to Twilio (20ms = 160 bytes at 8kHz mulaw). Smaller chunks = playback starts faster. */
@@ -114,13 +114,16 @@ function getRepeatOnlyPrompt(): string {
   return options[Math.floor(Math.random() * options.length)];
 }
 
-/** Varied phrase for asking a benefit field (used when AI returns empty/generic). */
+/** Varied phrase for asking a benefit field (used when AI returns empty/generic). Use different phrasing each time. */
 function askForFieldPhrase(field: string): string {
   const templates = [
     `What is the ${field}?`,
     `Can I get the ${field}?`,
     `May I have the ${field}?`,
     `Can you provide the ${field}?`,
+    `Can I have the ${field}?`,
+    `Could you share the ${field}?`,
+    `What's the ${field}?`,
   ];
   return templates[Math.floor(Math.random() * templates.length)];
 }
@@ -766,7 +769,8 @@ export class MediaStreamHandlerService {
                   toSpeak = goodbye;
                   shouldEndCall = true;
                 } else {
-                  toSpeak = 'Got it, thanks. ' + askForFieldPhrase(state.lastAskedField);
+                  const ack = ['Got it, thanks.', 'Thanks.', 'Okay, thank you.', 'Noted.'][Math.floor(Math.random() * 4)];
+                  toSpeak = ack + ' ' + askForFieldPhrase(state.lastAskedField);
                 }
               }
             } else {
