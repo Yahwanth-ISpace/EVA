@@ -474,7 +474,7 @@ Respond with ONLY a JSON object. No markdown. Format:
     const geminiStart = Date.now();
     const result = await model.generateContent(prompt);
     const geminiMs = Date.now() - geminiStart;
-    this.logger.log(`[Gemini-Model]: ${GEMINI_MODEL}`);
+    this.logger.log('[Gemini-Model]:', GEMINI_MODEL);
     this.logger.log(
       `[Gemini] getNextConversationTurn API call completed in ${geminiMs}ms`,
     );
