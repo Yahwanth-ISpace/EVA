@@ -504,7 +504,9 @@ export class MediaStreamHandlerService {
       if (state.processing || state.callEnded) return;
       state.processing = true;
       const resumeCheckOnly = opts?.resumeCheckOnly === true;
-      this.logger.log(`[CallTiming] processBuffer started for ${combined.length} bytes.`);
+      this.logger.log(
+        `[CallTiming] processBuffer started for ${combined.length} bytes.`,
+      );
 
       const tmpDir = os.tmpdir();
       const rawPath = path.join(
@@ -520,7 +522,9 @@ export class MediaStreamHandlerService {
         fs.writeFileSync(rawPath, combined);
         const wavStart = Date.now();
         await this.mulawRawToWav(rawPath, wavPath);
-        this.logger.log(`[CallTiming] mulawRawToWav completed in ${Date.now() - wavStart}ms.`);
+        this.logger.log(
+          `[CallTiming] mulawRawToWav completed in ${Date.now() - wavStart}ms.`,
+        );
 
         let transcript: string;
         try {
@@ -629,9 +633,9 @@ export class MediaStreamHandlerService {
             try {
               await speak(EVA_RESUME_ACK);
             } catch (e) {
-            this.logger.log(
-              `[CallTiming] processBuffer (resume) finished in ${Date.now() - turnStartTime}ms`,
-            );
+              this.logger.log(
+                `[CallTiming] processBuffer (resume) finished in ${Date.now() - turnStartTime}ms`,
+              );
               this.logger.warn(
                 '[MediaStream] Resume ack TTS failed',
                 (e as Error)?.message,
@@ -1167,7 +1171,9 @@ export class MediaStreamHandlerService {
           await speak(toSpeak);
         }
 
-        this.logger.log(`[CallTiming] processBuffer finished in ${Date.now() - turnStartTime}ms`);
+        this.logger.log(
+          `[CallTiming] processBuffer finished in ${Date.now() - turnStartTime}ms`,
+        );
 
         if (shouldEndCall) {
           // Post-goodbye: already said short closing (e.g. "Got you. Have a good day.") — stay on line briefly in case user responds
@@ -1367,7 +1373,18 @@ export class MediaStreamHandlerService {
     return new Promise((resolve, reject) => {
       const ffmpeg = spawn(
         'ffmpeg',
-        ['-f', 'mulaw', '-ar', '8000', '-ac', '1', '-i', rawPath, '-y', wavPath],
+        [
+          '-f',
+          'mulaw',
+          '-ar',
+          '8000',
+          '-ac',
+          '1',
+          '-i',
+          rawPath,
+          '-y',
+          wavPath,
+        ],
         { timeout: 10_000 },
       );
 
@@ -1380,7 +1397,10 @@ export class MediaStreamHandlerService {
         if (code === 0) {
           resolve();
         } else {
-          const errMsg = getFfmpegErrorMessage(null, stderr);
+          const errMsg = getFfmpegErrorMessage(
+            new Error('FFmpeg error'),
+            stderr,
+          );
           reject(new Error(errMsg));
         }
       });
