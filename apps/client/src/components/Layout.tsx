@@ -41,8 +41,8 @@ export default function Layout() {
   }, [open]);
 
   return (
-    <div className="main-container min-h-screen w-screen bg-[#F7F8FA]">
-      <div className="min-h-screen text-gray-900 px-6 pt-4 max-w-7xl mx-auto">
+    <div className="main-container min-h-screen w-full max-w-full overflow-x-hidden bg-[#F7F8FA]">
+      <div className="min-h-screen w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <Outlet />
       </div>
 

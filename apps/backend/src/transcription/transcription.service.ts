@@ -9,40 +9,139 @@ const ai_server_url = process.env.AI_SERVER_URL;
 const ELEVENLABS_STT_URL = 'https://api.elevenlabs.io/v1/speech-to-text';
 const ELEVENLABS_STT_MODEL = 'scribe_v2';
 
+/** Returns true if text looks like it's primarily not English (e.g. Devanagari, other scripts). We only accept English. */
+function isNonEnglish(text: string): boolean {
+  const t = text.trim();
+  if (!t.length) return false;
+  // Devanagari (Hindi etc.), other common non-Latin scripts
+  if (/[\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F]/.test(t)) return true;
+  // If most of the string is non-ASCII letters, treat as non-English (allow digits, $, %)
+  const letters = t.replace(/\s/g, '').replace(/[\d$%.,?!\-'"]/g, '');
+  const nonLatin = letters.replace(/[a-zA-Z]/g, '');
+  if (letters.length > 0 && nonLatin.length / letters.length > 0.3) return true;
+  return false;
+}
+
+/**
+ * Common STT hallucinations when audio is silence, noise, or unclear. Return empty instead of passing these to the AI.
+ * Does NOT filter plain "Thank you" / "Thanks" here (media-stream handler treats thank-you-only + long audio as hallucination).
+ */
+function isLikelyHallucination(text: string): boolean {
+  const t = text.trim();
+  if (!t.length) return false;
+  const hallucinationPatterns = [
+    /^thank\s+you\s+very\s+much\.?$/i,
+    /^thanks\s+very\s+much\.?$/i,
+    /^thank\s+you\s+so\s+much\.?$/i,
+    /^\[?\s*phone\s+hanging\s+up\s*\]?\.?$/i,
+    /^\[?\s*pause\s*\]?\.?$/i,
+    /^\[?\s*silence\s*\]?\.?$/i,
+    /^\[?\s*inaudible\s*\]?\.?$/i,
+    /^\[?\s*background\s+noise\s*\]?\.?$/i,
+    /^\.{2,}$/,
+  ];
+  return hallucinationPatterns.some((re) => re.test(t));
+}
+
 @Injectable()
 export class TranscriptionService {
   private readonly logger = new Logger(TranscriptionService.name);
 
   /**
-   * Transcribe audio file to text. Uses ElevenLabs speech-to-text first (fast, clear).
-   * Falls back to Whisper (AI server) if ElevenLabs fails or is not configured.
+   * Transcribe audio file to text. Uses Whisper (AI server) as primary STT.
+   * @param options.skipWhisperFallback - When true (e.g. during hold resume check), do not call Whisper; return empty transcript instead.
    */
-  async transcribeAudio(filePath: string): Promise<{ transcript: string }> {
+  async transcribeAudio(
+    filePath: string,
+    options?: { skipWhisperFallback?: boolean },
+  ): Promise<{ transcript: string }> {
     if (!fs.existsSync(filePath)) {
       throw new Error('File not found');
     }
 
     const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
+    const skipWhisper = options?.skipWhisperFallback === true;
 
-    if (apiKey) {
+    // ElevenLabs often returns empty for very short audio (< ~0.5 sec). Skip it for tiny files to avoid "empty → Whisper" and delay.
+    const stat = fs.statSync(filePath);
+    const fileSizeBytes = stat.size;
+    const minBytesForElevenLabs = 6_000; // ~0.75 sec at 8kHz mulaw; below this use Whisper directly or return empty
+    const useElevenLabs = apiKey && fileSizeBytes >= minBytesForElevenLabs;
+
+    if (useElevenLabs) {
       try {
-        const transcript = await this.transcribeWithElevenLabs(filePath, apiKey);
+        this.logger.log(
+          `[CallTiming] Sending audio to ElevenLabs STT (bytes=${fileSizeBytes})`,
+        );
+        const startStt = Date.now();
+        const transcript = await this.transcribeWithElevenLabs(
+          filePath,
+          apiKey,
+        );
+        const sttMs = Date.now() - startStt;
+        this.logger.log(
+          `[CallTiming] ElevenLabs STT completed in ${sttMs}ms, transcript length=${transcript?.length ?? 0}`,
+        );
         if (transcript != null && transcript.trim().length > 0) {
+          if (isLikelyHallucination(transcript)) {
+            this.logger.debug(
+              'ElevenLabs returned likely hallucination ("' +
+                transcript +
+                '"), returning empty',
+            );
+            return { transcript: '' };
+          }
           this.logger.log('Transcription (ElevenLabs) successful');
           return { transcript };
         }
-        this.logger.debug('ElevenLabs returned empty, using Whisper');
+        // ElevenLabs returned empty (silence/unclear). Do NOT fall back to Whisper—it often hallucinates e.g. "Thank you very much".
+        this.logger.debug(
+          'ElevenLabs returned empty, returning empty (no Whisper fallback to avoid hallucinations)',
+        );
+        return { transcript: '' };
       } catch (err: any) {
+        if (skipWhisper) {
+          this.logger.debug(
+            'ElevenLabs failed during resume check, skipping Whisper',
+          );
+          return { transcript: '' };
+        }
         this.logger.warn(
           'ElevenLabs transcription failed, falling back to Whisper',
           err?.message ?? err,
         );
       }
     } else {
-      this.logger.debug('ELEVENLABS_API_KEY not set, using Whisper');
+      if (skipWhisper) return { transcript: '' };
+      if (apiKey && fileSizeBytes < minBytesForElevenLabs) {
+        this.logger.debug(
+          'Audio too short for ElevenLabs (' +
+            fileSizeBytes +
+            ' bytes), using Whisper',
+        );
+      } else if (!apiKey) {
+        this.logger.debug('ELEVENLABS_API_KEY not set, using Whisper');
+      }
     }
 
-    return this.transcribeWithWhisper(filePath);
+    this.logger.log(
+      `[CallTiming] Sending audio to Whisper fallback (bytes=${fileSizeBytes})`,
+    );
+    const startWhisper = Date.now();
+    const result = await this.transcribeWithWhisper(filePath);
+    const whisperMs = Date.now() - startWhisper;
+    this.logger.log(
+      `[CallTiming] Whisper STT completed in ${whisperMs}ms, transcript length=${result.transcript?.length ?? 0}`,
+    );
+    if (result.transcript && isLikelyHallucination(result.transcript)) {
+      this.logger.debug(
+        'Whisper returned likely hallucination ("' +
+          result.transcript +
+          '"), returning empty',
+      );
+      return { transcript: '' };
+    }
+    return result;
   }
 
   private async transcribeWithElevenLabs(
@@ -51,32 +150,62 @@ export class TranscriptionService {
   ): Promise<string> {
     const fileStream = fs.createReadStream(filePath);
     const filename = path.basename(filePath);
+    // Prefer explicit audio/wav so ElevenLabs receives correct format (8kHz telephony WAV from Twilio mulaw).
+    const contentType = filename.toLowerCase().endsWith('.wav')
+      ? 'audio/wav'
+      : mime.getType(filePath) || 'audio/wav';
 
     const form = new FormData();
     form.append('file', fileStream, {
       filename,
-      contentType: mime.getType(filePath) || 'audio/wav',
+      contentType,
     });
     form.append('model_id', ELEVENLABS_STT_MODEL);
 
-    const response = await axios.post(ELEVENLABS_STT_URL, form, {
-      headers: {
-        'xi-api-key': apiKey,
-        ...form.getHeaders(),
-      },
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-      timeout: 60000,
-    });
+    try {
+      const response = await axios.post(ELEVENLABS_STT_URL, form, {
+        headers: {
+          'xi-api-key': apiKey,
+          ...form.getHeaders(),
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        timeout: 60000,
+        validateStatus: () => true,
+      });
 
-    const text = response.data?.text ?? response.data?.transcript;
-    return typeof text === 'string' ? text : '';
+      if (response.status !== 200) {
+        this.logger.warn(
+          `ElevenLabs STT returned ${response.status}: ${JSON.stringify(response.data ?? response.statusText)}`,
+        );
+        throw new Error(`ElevenLabs STT failed: ${response.status}`);
+      }
+
+      const text = response.data?.text ?? response.data?.transcript;
+      const result = typeof text === 'string' ? text.trim() : '';
+      if (!result && response.data) {
+        this.logger.debug(
+          'ElevenLabs STT returned empty text; response keys: ' +
+            Object.keys(response.data).join(', '),
+        );
+      }
+      return result;
+    } catch (err: any) {
+      const msg =
+        err?.response?.data != null
+          ? JSON.stringify(err.response.data)
+          : (err?.message ?? err);
+      this.logger.warn('ElevenLabs STT request failed: ' + msg);
+      throw err;
+    }
   }
 
-  private async transcribeWithWhisper(filePath: string): Promise<{ transcript: string }> {
+  private async transcribeWithWhisper(
+    filePath: string,
+  ): Promise<{ transcript: string }> {
     if (!ai_server_url) {
       throw new Error(
-        'AI server URL not configured. Set AI_SERVER_URL for Whisper fallback.',
+        'AI server URL not configured. Set AI_SERVER_URL for Whisper (primary STT).',
       );
     }
 
@@ -89,8 +218,11 @@ export class TranscriptionService {
       filename,
       contentType: mimeType,
     });
+    form.append('language', 'en');
 
-    this.logger.log(`Whisper fallback: sending to ${ai_server_url}/transcription/transcribe`);
+    this.logger.log(
+      `Whisper (primary STT): sending to ${ai_server_url}/transcription/transcribe (language=en)`,
+    );
 
     const response = await axios.post(
       `${ai_server_url}/transcription/transcribe`,
@@ -106,6 +238,13 @@ export class TranscriptionService {
     );
 
     this.logger.log('Transcription (Whisper) successful');
-    return { transcript: response.data.transcript ?? '' };
+    let transcript = response.data.transcript ?? '';
+    if (transcript && isNonEnglish(transcript)) {
+      this.logger.log(
+        'Transcription (Whisper) non-English detected, returning empty (English only)',
+      );
+      transcript = '';
+    }
+    return { transcript };
   }
 }

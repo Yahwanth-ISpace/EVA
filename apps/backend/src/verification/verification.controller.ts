@@ -61,6 +61,30 @@ export class VerificationController {
     return this.verificationService.pushExtractedData(payeeId, extracted, transcript);
   }
 
+  /** Same as verifyFromAudio but accepts extracted call fields in the body (no audio file). */
+  @UseGuards(ApiTokenGuard)
+  @Post('from-extracted-call/:payeeId')
+  async verifyFromExtractedCall(
+    @Param('payeeId') payeeId: string,
+    @Body()
+    body: {
+      [key: string]: string | null | undefined;
+      transcript?: string;
+    },
+  ) {
+    const { transcript, ...extracted } = body;
+    const verification = await this.verificationService.verifyFromExtractedCall(
+      payeeId,
+      extracted,
+      transcript,
+    );
+    const extractedResponse = await this.verificationService.getExtractedForResponse(verification.id);
+    return {
+      saved: true,
+      extracted: extractedResponse,
+    };
+  }
+
   @Post('from-audio/:payeeId')
   @UseGuards(ApiTokenGuard)
   @UseInterceptors(
@@ -79,7 +103,6 @@ export class VerificationController {
     @Query('payeeId') queryPayeeId: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    console.log('Received payeeId in route:', payeeId);
     const finalPayeeId = payeeId || queryPayeeId;
     if (!finalPayeeId) throw new BadRequestException('payeeId is required');
 
@@ -91,14 +114,10 @@ export class VerificationController {
       file.path,
       finalPayeeId,
     );
+    const extractedResponse = await this.verificationService.getExtractedForResponse(verification.id);
     return {
       saved: true,
-      extracted: {
-        coverage: verification.coverage,
-        deductible: verification.deductible,
-        copay: verification.copay,
-        validity: verification.validity,
-      },
+      extracted: extractedResponse,
     };
   }
 

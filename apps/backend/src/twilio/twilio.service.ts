@@ -15,20 +15,34 @@ const apiToken = process.env.VERIFICATIONS_API_TOKEN?.trim();
 
 const client = twilio(accountSid, authToken);
 
+/** In-memory map: call SID → payeeId, so the media stream can resolve payeeId when the WebSocket URL omits query params (e.g. some Twilio flows). */
+const callSidToPayeeId = new Map<string, string>();
+
 @Injectable()
 export class TwilioService {
-  // STEP PROMPTS (text only; ElevenLabs will convert to speech)
+  /**
+   * Resolve payeeId for an outbound call from its Twilio call SID.
+   * Used by the media stream when the stream URL does not include payeeId (e.g. query params not passed through).
+   */
+  getPayeeIdForCall(callSid: string | null): string | null {
+    if (!callSid?.trim()) return null;
+    const payeeId = callSidToPayeeId.get(callSid) ?? null;
+    if (payeeId) callSidToPayeeId.delete(callSid); // one-time use
+    return payeeId;
+  }
+
+  /**
+   * Legacy step prompts (TwiML /twilio/step flow only). Main EVA flow uses media-stream + getNextConversationTurn.
+   * Reena from Went Dentals; collects coverage, deductible, copay, validity. Values stored as $ for dollars, % for percent.
+   */
   steps: string[] = [
-    'Hi, how are you doing today?',
-    'Sure, I am Jennifer from Went Dentals.',
-    'Yes, the patient name is John Merick. Date of birth is March thirty-first, nineteen ninety-two.',
-    'Sure, the tax ID is one seven zero one zero one.',
-    'The address is eight sixteen West Main Street, Danville, Virginia, two four five four one.',
-    'I would like the coverage details of the patient.',
-    'Can you please provide the deductible amount?',
+    'Hi, I am Reena from Went Dentals. How are you doing today?',
+    'I want to verify the benefits of a patient.',
+    'Can I get the coverage?',
+    'Can you provide the deductible?',
     'What is the copay?',
     'What is the validity of the insurance?',
-    'Thank you. I am done here.',
+    'Thank you for confirming the details. That\'s all I have. Have a good day.',
   ];
 
   /**
@@ -40,20 +54,60 @@ export class TwilioService {
   }
 
   /**
-   * Make outbound call using Twilio telephony infrastructure
-   * Note: All voice generation is handled by ElevenLabs via the webhook
+   * Redirect an in-progress call to a new TwiML URL (e.g. to send DTMF then let IVR continue).
+   * Used by IVR bypass: when we hear "customer agent", redirect to /twilio/play-dtmf-4 to send digit 4.
+   */
+  async redirectCall(callSid: string, twimlUrl: string): Promise<void> {
+    if (!callSid?.trim() || !twimlUrl?.trim()) return;
+    await client.calls(callSid).update({ url: twimlUrl, method: 'POST' });
+  }
+
+  /**
+   * Start an outbound call from EVA's number to the IVR number and connect to the media stream
+   * in ivr-bypass mode (listen for "customer agent", then send DTMF 4).
+   * Uses TWILIO_IVR_PHONE_NUMBER or optional `to` override.
+   */
+  async callIvrAndBypass(to?: string) {
+    const ivrNumber = (to || process.env.TWILIO_IVR_PHONE_NUMBER || '').trim();
+    if (!ivrNumber) {
+      throw new Error('TWILIO_IVR_PHONE_NUMBER environment variable is not set (or pass `to` in the request body).');
+    }
+    if (!fromNumber) {
+      throw new Error('TWILIO_PHONE_NUMBER environment variable is not set.');
+    }
+    if (!backendBaseUrl) {
+      throw new Error('BACKEND_URL environment variable is not set.');
+    }
+    const connectUrl = `${backendBaseUrl}/twilio/outbound-ivr-connect`;
+    const call = await client.calls.create({
+      to: ivrNumber,
+      from: fromNumber,
+      url: connectUrl,
+      method: 'POST',
+    });
+    return call;
+  }
+
+  /**
+   * Make outbound call using Twilio telephony infrastructure.
+   * Stores payeeId by call SID so the media stream can load patient details even if the stream URL omits query params.
    */
   async makeCall(to: string, payeeId: string) {
     if (!fromNumber) {
       throw new Error('TWILIO_PHONE_NUMBER environment variable is not set.');
     }
 
-    return client.calls.create({
+    const call = await client.calls.create({
       to,
       from: fromNumber,
-      url: `${backendBaseUrl}/twilio/inbound-stream?payeeId=${payeeId}`,
+      url: `${backendBaseUrl}/twilio/inbound-stream?payeeId=${encodeURIComponent(payeeId)}`,
       record: true,
     });
+
+    if (call?.sid && payeeId) {
+      callSidToPayeeId.set(call.sid, payeeId);
+    }
+    return call;
   }
 
   /**

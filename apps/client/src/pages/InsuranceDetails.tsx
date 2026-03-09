@@ -25,7 +25,7 @@ export default function InsuranceDetails() {
   if (!verification) return <p className="p-6">Record not found</p>;
 
   return (
-    <div className="p-6 max-w-3xl mx-auto bg-white rounded-lg shadow">
+    <div className="p-6 max-w-3xl mx-auto bg-white rounded-lg shadow pt-5">
       <h1 className="text-2xl font-bold mb-4">
         {verification.payee.firstName} {verification.payee.lastName}
       </h1>

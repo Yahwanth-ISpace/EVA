@@ -11,10 +11,9 @@ export default function Container({
 }: ContainerProps) {
   return (
     <div
-      className={`bg-white rounded-xl shadow-md max-w-7xl mx-auto px-6 p-4 w-full h-[590px] flex flex-col ${className}`}
+      className={`bg-white rounded-2xl shadow-sm border border-slate-100 w-full px-4 sm:px-6 py-5 min-h-[550px] max-h-[calc(100vh-12rem)] flex flex-col overflow-hidden ${className}`}
     >
-      <div>{children}</div>
-      
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">{children}</div>
     </div>
   );
 }
