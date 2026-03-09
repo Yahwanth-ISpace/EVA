@@ -126,7 +126,7 @@ export class TwilioController {
 
   /**
    * Inbound/outbound call with Media Stream: Twilio connects the call to our WebSocket.
-   * We speak with ElevenLabs, stream user audio to Whisper, LLM extracts or handles
+   * We speak with ElevenLabs TTS, stream user audio to Whisper for STT, LLM extracts or handles
    * interruptions, update backend, respond with TTS. Accepts GET (outbound) and POST (inbound).
    */
   @Post('inbound-stream')

@@ -44,7 +44,7 @@ const HOLD_MAX_MS = 9 * 60 * 1000;
 /** Chunk size to send back to Twilio (20ms = 160 bytes at 8kHz mulaw). Smaller chunks = playback starts faster. */
 const OUTBOUND_CHUNK_BYTES = 160;
 
-/** IVR bypass: process audio every N ms to detect "customer agent" quickly (ElevenLabs STT + Whisper fallback). */
+/** IVR bypass: process audio every N ms to detect "customer agent" quickly (Whisper STT). */
 const IVR_BYPASS_FALLBACK_MS = 2500;
 /** IVR bypass: minimum audio bytes before running STT (~0.5 s). */
 const IVR_BYPASS_MIN_BYTES = 4_000;
