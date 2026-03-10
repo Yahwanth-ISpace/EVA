@@ -21,11 +21,14 @@ export class VerificationRequirementService {
     if (
       !verificationFields?.length ||
       verificationFields.some(
-        (f) => !f.field || typeof f.required !== 'boolean' || typeof f.order !== 'number',
+        (f) =>
+          !f.field ||
+          typeof f.required !== 'boolean' ||
+          typeof f.order !== 'number',
       )
     ) {
       throw new BadRequestException(
-        'verificationFields must be a non-empty array of { field, required, order }',
+        'verificationFields must be a non-empty array of { field, required, order } (optional: question)',
       );
     }
     return this.prisma.verificationRequirement.create({
@@ -121,12 +124,22 @@ export class VerificationRequirementService {
   }
 
   /**
-   * Returns ordered field names and the requirement id used (when payee has a requirement).
-   * Used by media-stream to know which requirement to attach to the verification record.
+   * Returns ordered field names, ordered entries (with optional question), and the requirement id used (when payee has a requirement).
+   * Used by media-stream to know which requirement to attach and which question to ask per field.
    */
   async getOrderedFieldsAndRequirementId(
     payeeId: string,
-  ): Promise<{ orderedFields: string[]; requirementId: string | null }> {
+  ): Promise<{
+    orderedFields: string[];
+    orderedEntries: VerificationFieldEntry[];
+    requirementId: string | null;
+  }> {
+    const defaultEntries: VerificationFieldEntry[] = [
+      { field: 'coverage', required: true, order: 1 },
+      { field: 'deductible', required: true, order: 2 },
+      { field: 'copay', required: true, order: 3 },
+      { field: 'validity', required: true, order: 4 },
+    ];
     const req = await this.prisma.verificationRequirement.findFirst({
       where: { payeeId },
       orderBy: { createdAt: 'asc' },
@@ -137,11 +150,13 @@ export class VerificationRequirementService {
       );
       return {
         orderedFields: entries.map((e) => e.field),
+        orderedEntries: entries,
         requirementId: req.id,
       };
     }
     return {
-      orderedFields: ['coverage', 'deductible', 'copay', 'validity'],
+      orderedFields: defaultEntries.map((e) => e.field),
+      orderedEntries: defaultEntries,
       requirementId: null,
     };
   }

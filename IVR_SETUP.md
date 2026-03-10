@@ -11,7 +11,7 @@ You have:
 - **Twilio EVA** (call trigger): number **+14847598215**, Account SID `AC57e2f9f7957037e3bbd666b074b8eb4d`. Used to **place the call** to the IVR and to **send DTMF 4**.
 - **Twilio IVR**: number **+15158825548**, Account SID `AC772fedd62d65d0e08dd81d4696bd64f5`. This number **plays the IVR menu** when someone calls it.
 
-**Flow:** Trigger a call from EVA → backend uses **EVA credentials** to dial **+15158825548** → IVR account answers with the IVR menu → backend **streams** that audio, runs **ElevenLabs STT (Whisper fallback)** → when it hears “customer agent” it **sends DTMF 4** → IVR runs option 4 (10s hold, then dial **IVR_AGENT_PHONE_NUMBER**).
+**Flow:** Trigger a call from EVA → backend uses **EVA credentials** to dial **+15158825548** → IVR account answers with the IVR menu → backend **streams** that audio, runs **Whisper STT** → when it hears “customer agent” it **sends DTMF 4** → IVR runs option 4 (10s hold, then dial **IVR_AGENT_PHONE_NUMBER**).
 
 ### Backend `.env` (EVA account only)
 
@@ -92,7 +92,7 @@ Set these in `apps/backend/.env` (or your deployment environment).
 
 | Variable | Description | Example |
 |----------|-------------|--------|
-| `TWILIO_IVR_PHONE_NUMBER` | The **IVR number** that EVA (your Twilio account) will **call**. When EVA calls this number, the backend streams the call audio, uses **ElevenLabs STT with Whisper fallback** to transcribe the IVR menu, and when it hears “customer agent” (or “press 4 to talk”), it sends **DTMF 4** so the IVR runs option 4 (10s hold, then dial 9515663123). | `+15551234567` (the number that has the IVR on the other account) |
+| `TWILIO_IVR_PHONE_NUMBER` | The **IVR number** that EVA (your Twilio account) will **call**. When EVA calls this number, the backend streams the call audio, uses **Whisper STT** to transcribe the IVR menu, and when it hears “customer agent” (or “press 4 to talk”), it sends **DTMF 4** so the IVR runs option 4 (10s hold, then dial 9515663123). | `+15551234567` (the number that has the IVR on the other account) |
 
 ### Optional
 
@@ -204,7 +204,7 @@ After this, calling **either** Twilio number will play the IVR; pressing **4** w
 
 ## 6. EVA calls IVR and bypasses to customer agent
 
-Use this when **EVA’s Twilio account** should **call the IVR number** (e.g. the other account’s number), have the backend **listen** to the IVR menu via the media stream, and **automatically press 4** when it hears “customer agent” (using ElevenLabs STT with Whisper fallback). The IVR then runs option 4 (10s hold, dial to 9515663123).
+Use this when **EVA’s Twilio account** should **call the IVR number** (e.g. the other account’s number), have the backend **listen** to the IVR menu via the media stream, and **automatically press 4** when it hears “customer agent” (using Whisper STT). The IVR then runs option 4 (10s hold, dial to 9515663123).
 
 1. **Set** `TWILIO_IVR_PHONE_NUMBER` to the IVR number (E.164). This is the number that plays the IVR menu (e.g. the number on your second Twilio account).
 2. **Trigger the call** from your app by calling:
@@ -213,7 +213,7 @@ Use this when **EVA’s Twilio account** should **call the IVR number** (e.g. th
 3. **Flow:**
    - EVA’s Twilio places an outbound call to `TWILIO_IVR_PHONE_NUMBER`.
    - The call is connected to the media stream with `mode=ivr-bypass`.
-   - The backend receives the IVR’s audio, runs **ElevenLabs STT** (with **Whisper fallback** if needed) on chunks every ~2.5 s.
+   - The backend receives the IVR’s audio, runs **Whisper STT** on chunks every ~2.5 s.
    - When the transcript contains **“customer agent”**, **“press 4 to talk”**, **“talk to our customer agent”**, or **“option 4”**, the backend **redirects the call** to `{{BACKEND_URL}}/twilio/play-dtmf-4`, which returns TwiML `<Play digits="4"/>`.
    - The IVR receives DTMF 4, runs option 4: “Please hold”, 10s pause, then dials 9515663123 (or your agent number).
    - The call is then connected to the customer agent.

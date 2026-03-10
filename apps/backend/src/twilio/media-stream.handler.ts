@@ -21,6 +21,7 @@ import { AiService } from '../ai/ai.service';
 import { TranscriptionService } from '../transcription/transcription.service';
 import { ElevenLabsAudioStackService } from '../voice/elevenlabs-audio-stack.service';
 import { VerificationService } from '../verification/verification.service';
+import type { VerificationFieldEntry } from '../verification-requirement/dto/verification-field.dto';
 import { VerificationRequirementService } from '../verification-requirement/verification-requirement.service';
 import { TwilioService } from './twilio.service';
 import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
@@ -135,6 +136,18 @@ function askForFieldPhrase(field: string): string {
     `What's the ${field}?`,
   ];
   return templates[Math.floor(Math.random() * templates.length)];
+}
+
+/** Use custom question for the field when present in orderedEntries; otherwise use field-based phrasing. */
+function getAskPhraseForField(
+  field: string,
+  orderedEntries: { field: string; question?: string }[],
+): string {
+  const entry = orderedEntries.find((e) => e.field === field);
+  if (entry?.question != null && String(entry.question).trim()) {
+    return String(entry.question).trim();
+  }
+  return askForFieldPhrase(field);
 }
 
 /** Extract a single value for a benefit field from transcript (e.g. "28 dollars" -> "28 dollars"). Used to correct after-hold when AI puts value in wrong field. */
@@ -295,6 +308,8 @@ interface StreamState {
   extractedData: Record<string, string | null>;
   /** Ordered list of field names to collect (from VerificationRequirement or default). Loaded when payeeId is set. */
   orderedFields: string[];
+  /** Ordered entries with optional question per field; when question is set, use it when asking instead of field-based phrasing. */
+  orderedEntries: VerificationFieldEntry[];
   /** When set, verification is linked to this requirement and extractedData is stored in Verification.extractedData. */
   verificationRequirementId: string | null;
   callEnded: boolean;
@@ -342,6 +357,7 @@ export class MediaStreamHandlerService {
       patientInfo: null,
       extractedData: {},
       orderedFields: [],
+      orderedEntries: [],
       verificationRequirementId: null,
       callEnded: false,
       lastSpeakTime: 0,
@@ -573,11 +589,12 @@ export class MediaStreamHandlerService {
         // --- Lazy-load verification requirement fields for this payee (once per call) ---
         if (state.payeeId && state.orderedFields.length === 0) {
           try {
-            const { orderedFields, requirementId } =
+            const { orderedFields, orderedEntries, requirementId } =
               await this.verificationRequirementService.getOrderedFieldsAndRequirementId(
                 state.payeeId,
               );
             state.orderedFields = orderedFields;
+            state.orderedEntries = orderedEntries;
             state.verificationRequirementId = requirementId;
           } catch (e: any) {
             this.logger.warn(
@@ -589,6 +606,12 @@ export class MediaStreamHandlerService {
               'deductible',
               'copay',
               'validity',
+            ];
+            state.orderedEntries = [
+              { field: 'coverage', required: true, order: 1 },
+              { field: 'deductible', required: true, order: 2 },
+              { field: 'copay', required: true, order: 3 },
+              { field: 'validity', required: true, order: 4 },
             ];
             state.verificationRequirementId = null;
           }
@@ -816,7 +839,12 @@ export class MediaStreamHandlerService {
         if (wasInaudibleTurn) {
           const repeatPhrase = getRepeatOnlyPrompt();
           const reaskSame = state.lastAskedField
-            ? repeatPhrase + ' ' + askForFieldPhrase(state.lastAskedField)
+            ? repeatPhrase +
+              ' ' +
+              getAskPhraseForField(
+                state.lastAskedField,
+                state.orderedEntries.length ? state.orderedEntries : [],
+              )
             : repeatPhrase;
           if (
             userSaid?.trim() &&
@@ -853,6 +881,7 @@ export class MediaStreamHandlerService {
             state.patientInfo,
             state.lastAskedField,
             orderedF,
+            state.orderedEntries.length ? state.orderedEntries : undefined,
           );
           nextMessage = result.nextMessage;
           extractedUpdates = result.extractedUpdates;
@@ -955,7 +984,10 @@ export class MediaStreamHandlerService {
           !userSaidDate &&
           toSpeakLooksLikeConfirmingDate
         ) {
-          toSpeak = askForFieldPhrase('validity');
+          toSpeak = getAskPhraseForField(
+            'validity',
+            state.orderedEntries.length ? state.orderedEntries : [],
+          );
         }
         // Safeguard: if user asked for DOB, never include a first-field request in the same turn — wait for "yes we're good" first
         const firstField = orderedF[0];
@@ -984,10 +1016,12 @@ export class MediaStreamHandlerService {
         }
         // Never leave toSpeak blank — ensures we always have a clear response after processing
         if (!toSpeak?.trim()) {
+          const entries =
+            state.orderedEntries.length ? state.orderedEntries : [];
           toSpeak = state.lastAskedField
-            ? askForFieldPhrase(state.lastAskedField)
+            ? getAskPhraseForField(state.lastAskedField, entries)
             : orderedF[0]
-              ? askForFieldPhrase(orderedF[0])
+              ? getAskPhraseForField(orderedF[0], entries)
               : 'Can you repeat that?';
         }
         // Recall: answer from stored extractedData so we always give the correct value (e.g. "what is the deductible provided?")
@@ -1021,9 +1055,11 @@ export class MediaStreamHandlerService {
               toSpeak = 'I need a few benefit details for a patient.';
               state.purposeSaid = true;
             } else {
+              const entries =
+                state.orderedEntries.length ? state.orderedEntries : [];
               toSpeak = state.lastAskedField
-                ? askForFieldPhrase(state.lastAskedField)
-                : askForFieldPhrase(orderedF[0]);
+                ? getAskPhraseForField(state.lastAskedField, entries)
+                : getAskPhraseForField(orderedF[0], entries);
             }
           } else if (transcriptHasValue(userSaid) && state.lastAskedField) {
             const corrected = extractValueForField(
@@ -1063,25 +1099,38 @@ export class MediaStreamHandlerService {
                     'Okay, thank you.',
                     'Noted.',
                   ][Math.floor(Math.random() * 4)];
-                  toSpeak = ack + ' ' + askForFieldPhrase(state.lastAskedField);
+                  toSpeak =
+                    ack +
+                    ' ' +
+                    getAskPhraseForField(
+                      state.lastAskedField,
+                      state.orderedEntries.length ? state.orderedEntries : [],
+                    );
                 }
               }
             } else {
-              toSpeak = askForFieldPhrase(state.lastAskedField);
+              toSpeak = getAskPhraseForField(
+                state.lastAskedField,
+                state.orderedEntries.length ? state.orderedEntries : [],
+              );
             }
           } else {
             const firstField = state.orderedFields.length
               ? state.orderedFields[0]
               : 'coverage';
+            const entries =
+              state.orderedEntries.length ? state.orderedEntries : [];
             toSpeak = state.lastAskedField
-              ? askForFieldPhrase(state.lastAskedField)
-              : askForFieldPhrase(firstField);
+              ? getAskPhraseForField(state.lastAskedField, entries)
+              : getAskPhraseForField(firstField, entries);
           }
         }
         // Never repeat the intro/purpose phrase ("I'm here to verify...", "I need a few benefit details") — say it only once per call; if we already said it, ask for the field or repeat instead.
         if (toSpeak && state.purposeSaid && isIntroPurposePhrase(toSpeak)) {
+          const entries =
+            state.orderedEntries.length ? state.orderedEntries : [];
           toSpeak = state.lastAskedField
-            ? askForFieldPhrase(state.lastAskedField)
+            ? getAskPhraseForField(state.lastAskedField, entries)
             : getRepeatOnlyPrompt();
         }
         if (toSpeak && isIntroPurposePhrase(toSpeak)) {
@@ -1095,8 +1144,10 @@ export class MediaStreamHandlerService {
           !toSpeak?.trim() ||
           (isGenericFallback && state.lastAskedField)
         ) {
+          const entries =
+            state.orderedEntries.length ? state.orderedEntries : [];
           toSpeak = state.lastAskedField
-            ? askForFieldPhrase(state.lastAskedField)
+            ? getAskPhraseForField(state.lastAskedField, entries)
             : toSpeak?.trim() || 'Is there anything else you can share?';
           if (!(nextMessage ?? '').trim() || isGenericFallback) {
             this.logger.warn(
@@ -1106,8 +1157,10 @@ export class MediaStreamHandlerService {
         }
         // Final safeguard: never speak blank (eliminates silent/blank responses)
         if (!(toSpeak ?? '').trim()) {
+          const entries =
+            state.orderedEntries.length ? state.orderedEntries : [];
           toSpeak = state.lastAskedField
-            ? askForFieldPhrase(state.lastAskedField)
+            ? getAskPhraseForField(state.lastAskedField, entries)
             : getRepeatOnlyPrompt();
         } else {
           toSpeak = (toSpeak ?? '').trim();

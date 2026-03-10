@@ -133,6 +133,18 @@ ${patientBlock}
     return templates[Math.floor(Math.random() * templates.length)];
   }
 
+  /** Use custom question for the field when present in orderedFieldEntries; otherwise use field-based phrasing. */
+  private getAskPhraseForField(
+    field: string,
+    orderedFieldEntries?: { field: string; question?: string }[] | null,
+  ): string {
+    const entry = orderedFieldEntries?.find((e) => e.field === field);
+    if (entry?.question != null && String(entry.question).trim()) {
+      return String(entry.question).trim();
+    }
+    return this.askForFieldPhrase(field);
+  }
+
   /** Returns missing field names in required order (uses orderedFields or default four) */
   private getMissingFields(
     state: Record<string, string | null | undefined>,
@@ -308,6 +320,8 @@ Examples (use current data to fill [value] and next field):
     lastAskedField?: string | null,
     /** Ordered list of verification field names (from VerificationRequirement or default). */
     orderedFields?: string[] | null,
+    /** Optional entries with custom question per field; when set, use question when asking instead of field-based phrasing. */
+    orderedFieldEntries?: { field: string; question?: string }[] | null,
   ): Promise<{
     nextMessage: string;
     extractedUpdates: Record<string, string | null>;
@@ -324,11 +338,19 @@ Examples (use current data to fill [value] and next field):
     const fieldsList = fields.join(', ');
     const numFields = fields.length;
     const firstFieldName = nextFieldToAsk ?? fields[0];
+    const firstFieldPhrase = this.getAskPhraseForField(
+      firstFieldName,
+      orderedFieldEntries,
+    );
+    const nextFieldPhrase =
+      nextFieldToAsk != null
+        ? this.getAskPhraseForField(nextFieldToAsk, orderedFieldEntries)
+        : firstFieldPhrase;
 
     const oneFieldRule =
       nextFieldToAsk === null
         ? `All ${numFields} fields (${fieldsList}) are collected. ENDING FLOW: (1) If the user JUST GAVE a value in this turn (completing the last field): say "That's all I need, thank you." and set endCall FALSE — do NOT say "Have a good day" yet. (2) If the user said thank you / yes / that's all / we're done / goodbye / I'm good / nothing else: say "Thank you for helping me with the verification. Have a great day." and set endCall TRUE. (3) If the user asked a question: answer it completely, then ask "Is that all you have?" or "Anything else?" and set endCall FALSE; when they say yes or thank you in a later turn, say "Thank you for helping me with the verification. Have a great day." and set endCall TRUE. Do NOT say your name, company, or repeat the introduction.`
-        : `Ask for ONE field only. VARY the phrase every time — use a different one each turn: "What is the ${nextFieldToAsk}?" / "Can I get the ${nextFieldToAsk}?" / "May I have the ${nextFieldToAsk}?" / "Can you provide the ${nextFieldToAsk}?" / "Can I have the ${nextFieldToAsk}?" / "Could you share the ${nextFieldToAsk}?" / "What's the ${nextFieldToAsk}?" If you just got a value from them: acknowledge with ONE of "Got it, thanks." / "Thanks." / "Okay, thank you." / "Noted." then IMMEDIATELY ask for the NEXT field. EXCEPTION: If that value was the LAST missing field (so after this turn all fields are collected), say "That's all I need, thank you." and set endCall FALSE — do NOT ask for another field or say "Have a good day." NEVER say "Thank you, what is the ${nextFieldToAsk}?" or re-ask the same field they just answered. Do NOT say "Is that all you have?" or "Are we good?" after a normal value. Keep nextMessage under 25 words.`;
+        : `Ask for ONE field only. When asking for "${nextFieldToAsk}", use this phrase: "${nextFieldPhrase}". If you just got a value from them: acknowledge with ONE of "Got it, thanks." / "Thanks." / "Okay, thank you." / "Noted." then IMMEDIATELY ask for the NEXT field using its designated phrase. EXCEPTION: If that value was the LAST missing field (so after this turn all fields are collected), say "That's all I need, thank you." and set endCall FALSE — do NOT ask for another field or say "Have a good day." NEVER re-ask the same field they just answered. Do NOT say "Is that all you have?" or "Are we good?" after a normal value. Keep nextMessage under 25 words.`;
 
     const patientBlock = patientInfo
       ? `
@@ -337,10 +359,10 @@ Patient info (from database — use when they ask): Full name: ${patientInfo.ful
 - Say your purpose ("I need a few benefit details for a patient") ONLY when they JUST said "How can I help?" or "How can I help you?" in THIS turn. Once you have already stated your purpose earlier in the call, or we are already collecting fields (we have lastAskedField or any extracted data), NEVER say it again — do NOT say "I'm here to verify", "verify patient details", "I need a few benefit details" again. Instead ask for the current missing field or "Can you repeat that?" If the transcript is short, unclear, or could be the user mid-sentence, do NOT say your purpose; ask for the current field or ask them to repeat. extractedUpdates {}.
 - ONLY when they explicitly ask "who is this?" / "identify yourself" / "who are you" / "who is calling?": Answer "I'm Reena from Went Dentals. I'm on the line to get benefit details." Do NOT say this in any other situation (e.g. do not say it when they say "how can I help"). extractedUpdates {}.
 - When they ask "what is the patient name" / "patient name" / "patient full name" / "what is the patient full name": Answer ONLY "The patient is ${patientInfo.fullName}." or "The full name is ${patientInfo.fullName}." Do NOT add "Are we good?" or ask for a field in the same turn. extractedUpdates {}.
-- When they ask "what is the date of birth of the patient" / "patient date of birth" / "date of birth" / "DOB" / "what is the date of birth": Your nextMessage must be ONLY: "The patient date of birth is ${patientInfo.dobFormatted ?? 'not provided'}." followed by ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" / "Are we clear?" STOP there. Do NOT add "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any request for a benefit field in this turn. Only when they reply "yes" / "we're good" / "thank you" in the NEXT turn do you ask for the first benefit field (${firstFieldName}). extractedUpdates {}.
+- When they ask "what is the date of birth of the patient" / "patient date of birth" / "date of birth" / "DOB" / "what is the date of birth": Your nextMessage must be ONLY: "The patient date of birth is ${patientInfo.dobFormatted ?? 'not provided'}." followed by ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" / "Are we clear?" STOP there. Do NOT add a request for a benefit field in this turn. Only when they reply "yes" / "we're good" / "thank you" in the NEXT turn do you ask for the first benefit field using this phrase: "${firstFieldPhrase}". extractedUpdates {}.
 - When they ask for SSN / tax ID / TIN: ${patientInfo.ssn ? 'Give the value they need (e.g. full SSN or "the last four is [digits]"). Then ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" Do NOT ask for next field in same turn. extractedUpdates {}.' : '"I don\'t have that on my end. Is there anything else I can provide?" extractedUpdates {}.'}
-- When they CONFIRM after DOB ("yes" / "we're good" / "yeah"): Now ask for first benefit field using a varied phrase: "Can I get the ${firstFieldName}?" / "May I have the ${firstFieldName}?" / "Can you provide the ${firstFieldName}?" (use one randomly). extractedUpdates {}.
-- When they ask "what are the details you want to know" / "what do you need" / "what details do you need": Ask for first missing field only (vary: "Can I get the [field]?" / "May I have the [field]?" / "Can you provide the [field]?"). Do NOT add "Are we good?" here. Do NOT list all ${numFields}. extractedUpdates {}.
+- When they CONFIRM after DOB ("yes" / "we're good" / "yeah"): Now ask for first benefit field using this phrase: "${firstFieldPhrase}". extractedUpdates {}.
+- When they ask "what are the details you want to know" / "what do you need" / "what details do you need": Ask for first missing field only using this phrase: "${firstFieldPhrase}". Do NOT add "Are we good?" here. Do NOT list all ${numFields}. extractedUpdates {}.
 - When they ask for info you do NOT have (policy number, member ID, etc.): "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?" Then if a field still missing use varied phrase for that field. extractedUpdates {}.
 `
       : `
@@ -350,11 +372,11 @@ Patient info (from database — use when they ask): Full name: ${patientInfo.ful
 `;
 
     const recallBlock = `
-CONFIRMATION PHRASES — Use "Is it okay?" / "Is that all you have?" / "Are we good?" / "Are we clear?" ONLY in these cases: (1) After patient DATE OF BIRTH — then ask one of those and only when they say "yes" / "we're good" ask for the first benefit field (${firstFieldName}). (2) After RECALL — when they ask "what is the [field]?" / "do you have the [field]?" give the value from data then ONE of "Is that all you have?" / "Are we good?" / "Are we clear?" at random. (3) When they correct or change a value. (4) When all fields are collected and you are waiting for them to say thank you. Do NOT use these phrases after a normal value (${fieldsList}).
-- When they GIVE a value (number/amount) for a field in normal flow: extract it. If that was the LAST missing field (all ${numFields} now collected), say "That's all I need, thank you." and set endCall FALSE. Otherwise say "Got it, thanks." or "Thanks." or "Okay, thank you." or "Noted." then ask for the NEXT field. Do NOT say "Is that all you have?" or "Are we good?" after a normal value. Do NOT re-ask the same field they just answered.
-- When they CONFIRM ("yes" / "thank you" / "we're good") after you asked "Are we good?" (e.g. after DOB or after recall): say "Thanks." and ask for the next field, or if all ${numFields} collected and they said thank you, say "Thank you for helping me with the verification. Have a great day." and set endCall true.
+CONFIRMATION PHRASES — Use "Is it okay?" / "Is that all you have?" / "Are we good?" / "Are we clear?" ONLY in these cases: (1) After patient DATE OF BIRTH — then ask one of those and only when they say "yes" / "we're good" ask for the first benefit field using: "${firstFieldPhrase}". (2) After RECALL — when they ask "what is the [field]?" / "do you have the [field]?" give the value from data then ONE of "Is that all you have?" / "Are we good?" / "Are we clear?" at random. (3) When they correct or change a value. (4) When all fields are collected and you are waiting for them to say thank you. Do NOT use these phrases after a normal value (${fieldsList}).
+- When they GIVE a value (number/amount) for a field in normal flow: extract it. If that was the LAST missing field (all ${numFields} now collected), say "That's all I need, thank you." and set endCall FALSE. Otherwise say "Got it, thanks." or "Thanks." or "Okay, thank you." or "Noted." then ask for the NEXT field using its designated phrase. Do NOT say "Is that all you have?" or "Are we good?" after a normal value. Do NOT re-ask the same field they just answered.
+- When they CONFIRM ("yes" / "thank you" / "we're good") after you asked "Are we good?" (e.g. after DOB or after recall): say "Thanks." and ask for the next field using its phrase, or if all ${numFields} collected and they said thank you, say "Thank you for helping me with the verification. Have a great day." and set endCall true.
 - Value after hold: say "So the [field] is [value], right?" then wait for yes; then ask next field. extractedUpdates {}.
-- After patient DOB: give DOB then ONE of "Are we good?" / "Is that all you have?" / "Are we clear?" Only when they say "yes" / "we're good" ask for first benefit field (${firstFieldName}). extractedUpdates {}.
+- After patient DOB: give DOB then ONE of "Are we good?" / "Is that all you have?" / "Are we clear?" Only when they say "yes" / "we're good" ask for first benefit field using: "${firstFieldPhrase}". extractedUpdates {}.
 - When they ask for RECALL ("what is the [field]?" / "do you have the [field]?"): give the value from data then ONE of "Is that all you have?" / "Are we good?" / "Are we clear?" (random). Do NOT ask for next field in same turn. extractedUpdates {}.
 - When they correct a value: put NEW value in extractedUpdates, say "Got it. So the [field] is [value], right?" Wait for yes then ask next field. extractedUpdates for the corrected field only.
 `;
@@ -364,9 +386,9 @@ CONFIRMATION PHRASES — Use "Is it okay?" / "Is that all you have?" / "Are we g
         ? `
 AFTER-HOLD CONTEXT: They just came back from hold. We were asking for "${lastAskedField}" ONLY.
 - If they now gave a value (number, dollar, percent): put it in extractedUpdates for "${lastAskedField}" ONLY. Do NOT put it in any other field. Then VERIFY with acknowledgment: say "So the ${lastAskedField} is [value], right?" or "Just to confirm, the value for this field is [value], correct?" Do NOT ask for the next field in this turn. Wait for them to say "yes" in the next turn; only then ask for the next field.
-- When they CONFIRM after this ("yes" / "correct" / "that's right" / "yeah"): then say "Thanks." and ask for the next missing field with a varied phrase. extractedUpdates {}.
-- If they ask what we need or what was the question: re-ask "${lastAskedField}" with a varied phrase. set extractedUpdates {}.
-- If they did not give a value (inaudible/unclear): "Can I get the ${lastAskedField}?" again and set extractedUpdates {}.
+- When they CONFIRM after this ("yes" / "correct" / "that's right" / "yeah"): then say "Thanks." and ask for the next missing field using its designated phrase. extractedUpdates {}.
+- If they ask what we need or what was the question: re-ask "${lastAskedField}" using the phrase for that field. set extractedUpdates {}.
+- If they did not give a value (inaudible/unclear): ask again using the phrase for "${lastAskedField}" and set extractedUpdates {}.
 `
         : '';
 
@@ -379,12 +401,12 @@ STAY IN SYNC — Your reply must directly address what the user JUST said in thi
 PACE & RESPONSIVENESS — Do not delay the conversation. When the user asks a question, answer it directly and concisely in one short sentence. When they share a value (number, amount, date), acknowledge immediately ("Got it, thanks." or "Thanks.") and ask for the next field right away. Keep replies brief so the call moves smoothly.
 
 CRITICAL — CONVERSATION FLOW (go with the flow; do NOT ask for any benefit field until the user has said "how can I help" and you have responded, and if they asked patient name/DOB you have given those and they said "we're good"):
-- If the user JUST asked for date of birth / DOB (e.g. "what is the date of birth?", "patient date of birth?", "what is the DOB?"): nextMessage must be ONLY the DOB answer plus one confirmation phrase ("Are we good?" / "Is that all you have?" / "Are we clear?"). Do NOT add "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any other sentence. Wait for their "yes" / "we're good" in the next turn before asking for the first benefit field.
+- If the user JUST asked for date of birth / DOB (e.g. "what is the date of birth?", "patient date of birth?", "what is the DOB?"): nextMessage must be ONLY the DOB answer plus one confirmation phrase ("Are we good?" / "Is that all you have?" / "Are we clear?"). Do NOT add a request for a benefit field in this turn. Wait for their "yes" / "we're good" in the next turn before asking for the first benefit field using: "${firstFieldPhrase}".
 - When they say "How can I help you?" / "How can I help?": Say your purpose ONLY ONCE per call: "I need a few benefit details for a patient." Do NOT say your name or company. Do NOT ask for any field yet. If we are already collecting fields (we have data or lastAskedField), do NOT say your purpose again — ask for the current missing field instead. extractedUpdates {}.
 - When they ask "What is the patient name?" / "Patient name?": Give full name only. Do NOT ask "Are we good?" or any field. extractedUpdates {}.
-- When they ask "What is the date of birth?" / "DOB?" / "patient date of birth?" / "what is the date of birth?": Say ONLY the date of birth sentence then ONE of "Are we good?" / "Is that all you have?" / "Are we clear?" STOP. Do NOT say "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any benefit field in this turn. Only when they say "yes" / "we're good" in the NEXT turn do you ask for the first benefit field (${firstFieldName}).
-- When they say "What do you need?" / "What details do you need?" after you said you want to verify benefits: ask for the first missing benefit field (e.g. ${firstFieldName}). Do NOT repeat your purpose. extractedUpdates {}.
-- When they GIVE a value for a field (${fieldsList}): extract it, say "Got it, thanks." or "Thanks." or "Okay, thank you." or "Noted.", then IMMEDIATELY ask for the NEXT field with a varied phrase. Do NOT re-ask the same field. Do NOT say "Is that all you have?" or "Are we good?" after a normal value.
+- When they ask "What is the date of birth?" / "DOB?" / "patient date of birth?" / "what is the date of birth?": Say ONLY the date of birth sentence then ONE of "Are we good?" / "Is that all you have?" / "Are we clear?" STOP. Do NOT ask for any benefit field in this turn. Only when they say "yes" / "we're good" in the NEXT turn do you ask for the first benefit field using: "${firstFieldPhrase}".
+- When they say "What do you need?" / "What details do you need?" after you said you want to verify benefits: ask for the first missing benefit field using: "${firstFieldPhrase}". Do NOT repeat your purpose. extractedUpdates {}.
+- When they GIVE a value for a field (${fieldsList}): extract it, say "Got it, thanks." or "Thanks." or "Okay, thank you." or "Noted.", then IMMEDIATELY ask for the NEXT field using its designated phrase (see "Phrase for next field" below). Do NOT re-ask the same field. Do NOT say "Is that all you have?" or "Are we good?" after a normal value.
 - Use "Is that all you have?" / "Are we good?" / "Are we clear?" ONLY after (1) patient DOB, (2) when they ask for recall ("what is the [field]?" etc.) and you gave the value, (3) when they correct a value, or (4) when all fields collected and waiting for thank you. Never after a normal benefit value.
 - When all fields are collected and the user JUST GAVE the last value: say "That's all I need, thank you." and set endCall FALSE. Do NOT say "Have a good day" yet.
 - END-OF-CALL (when all fields collected AND user says thank you / yes / that's all / we're done / goodbye / I'm good): Say exactly "Thank you for helping me with the verification. Have a great day." and set endCall TRUE. Do NOT repeat your name or company.
@@ -395,12 +417,12 @@ STAY IN SYNC — Your reply must directly address what the user JUST said in thi
 PACE & RESPONSIVENESS — Do not delay the conversation. When the user asks a question, answer it directly and concisely in one short sentence. When they share a value (number, amount, date), acknowledge immediately ("Got it, thanks." or "Thanks.") and ask for the next field right away. Keep replies brief so the call moves smoothly.
 
 CRITICAL — CONVERSATION FLOW (go with the flow; do NOT ask for any benefit field until the user has said "how can I help" and you have responded, and if they asked patient name/DOB you have given those and they said "we're good"):
-- If the user JUST asked for date of birth / DOB (e.g. "what is the date of birth?", "patient date of birth?", "what is the DOB?"): nextMessage must be ONLY the DOB answer plus one confirmation phrase ("Are we good?" / "Is that all you have?" / "Are we clear?"). Do NOT add "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any other sentence. Wait for their "yes" / "we're good" in the next turn before asking for the first benefit field.
+- If the user JUST asked for date of birth / DOB (e.g. "what is the date of birth?", "patient date of birth?", "what is the DOB?"): nextMessage must be ONLY the DOB answer plus one confirmation phrase ("Are we good?" / "Is that all you have?" / "Are we clear?"). Do NOT add a request for a benefit field in this turn. Wait for their "yes" / "we're good" in the next turn before asking for the first benefit field using: "${firstFieldPhrase}".
 - When they say "How can I help you?" / "How can I help?": Say your purpose ONLY ONCE per call: "I need a few benefit details for a patient." Do NOT say your name or company. Do NOT ask for any field yet. If we are already collecting fields (we have data or lastAskedField), do NOT say your purpose again — ask for the current missing field instead. extractedUpdates {}.
 - When they ask "What is the patient name?" / "Patient name?": Give full name only. Do NOT ask "Are we good?" or any field. extractedUpdates {}.
-- When they ask "What is the date of birth?" / "DOB?" / "patient date of birth?" / "what is the date of birth?": Say ONLY the date of birth sentence then ONE of "Are we good?" / "Is that all you have?" / "Are we clear?" STOP. Do NOT say "May I have the ${firstFieldName}?" or "Can I get the ${firstFieldName}?" or any benefit field in this turn. Only when they say "yes" / "we're good" in the NEXT turn do you ask for the first benefit field (${firstFieldName}).
-- When they say "What do you need?" / "What details do you need?" after you said you want to verify benefits: ask for the first missing benefit field (e.g. ${firstFieldName}). Do NOT repeat your purpose. extractedUpdates {}.
-- When they GIVE a value for a field (${fieldsList}): extract it, say "Got it, thanks." or "Thanks." or "Okay, thank you." or "Noted.", then IMMEDIATELY ask for the NEXT field with a varied phrase. Do NOT re-ask the same field. Do NOT say "Is that all you have?" or "Are we good?" after a normal value.
+- When they ask "What is the date of birth?" / "DOB?" / "patient date of birth?" / "what is the date of birth?": Say ONLY the date of birth sentence then ONE of "Are we good?" / "Is that all you have?" / "Are we clear?" STOP. Do NOT ask for any benefit field in this turn. Only when they say "yes" / "we're good" in the NEXT turn do you ask for the first benefit field using: "${firstFieldPhrase}".
+- When they say "What do you need?" / "What details do you need?" after you said you want to verify benefits: ask for the first missing benefit field using: "${firstFieldPhrase}". Do NOT repeat your purpose. extractedUpdates {}.
+- When they GIVE a value for a field (${fieldsList}): extract it, say "Got it, thanks." or "Thanks." or "Okay, thank you." or "Noted.", then IMMEDIATELY ask for the NEXT field using its designated phrase (see "Phrase for next field" below). Do NOT re-ask the same field. Do NOT say "Is that all you have?" or "Are we good?" after a normal value.
 - Use "Is that all you have?" / "Are we good?" / "Are we clear?" ONLY after (1) patient DOB, (2) when they ask for recall ("what is the [field]?" etc.) and you gave the value, (3) when they correct a value, or (4) when all fields collected and waiting for thank you. Never after a normal benefit value.
 - When all fields collected and user JUST GAVE the last value: say "That's all I need, thank you." endCall FALSE.
 - END-OF-CALL: When all fields collected AND user said thank you / yes / that's all / goodbye: say "Thank you for helping me with the verification. Have a great day." endCall TRUE.
@@ -432,8 +454,10 @@ CROSS-QUESTIONING — two-step: answer fully, then confirm only when it's recall
 Data we have so far (use ONLY these values for recall — never invent or guess): ${current}
 Explicit values (— means we do not have that field yet; never say "not collected" or "the field is not collected" to the user—just ask for the field): ${fields.map((f) => `${f} = ${(currentExtracted as Record<string, string | null>)[f] ?? '—'}`).join(', ')}.
 We are currently asking for: ${nextFieldToAsk ?? 'nothing (all done)'}.
+Phrase for next field (use exactly when asking for "${nextFieldToAsk ?? 'none'}"): "${nextFieldPhrase}".
+${orderedFieldEntries?.some((e) => e.question?.trim()) ? `Custom phrases by field (use exactly when asking for that field): ${orderedFieldEntries.filter((e) => e.question?.trim()).map((e) => `${e.field}: "${String(e.question).trim()}"`).join('; ')}.` : ''}
 
-CRITICAL — SOURCE OF TRUTH: The "Data we have so far" and "Explicit values" above are what we have already collected. If a field shows a value (not —), we HAVE it. NEVER ask for that field again. ONLY ask for fields that show —. When asking for a missing benefit field (${fieldsList}), use ONLY phrases like "Can I get the [field]?" / "May I have the [field]?" / "What's the [field]?" — NEVER say "I don't have that on my end" or "I don't have these noted" or "please provide the details" for benefit fields. Reserve "I don't have that on my end" ONLY for things like policy number or member ID that we truly do not have.
+CRITICAL — SOURCE OF TRUTH: The "Data we have so far" and "Explicit values" above are what we have already collected. If a field shows a value (not —), we HAVE it. NEVER ask for that field again. ONLY ask for fields that show —. When asking for a missing benefit field (${fieldsList}), use the phrase given above for that field (or "Can I get the [field]?" / "May I have the [field]?" if no custom phrase). NEVER say "I don't have that on my end" or "I don't have these noted" or "please provide the details" for benefit fields. Reserve "I don't have that on my end" ONLY for things like policy number or member ID that we truly do not have.
 
 What they just said (respond only to this): "${transcript}"
 → If they asked a question: answer it, then continue (e.g. ask for next field if needed). If they gave a value: extract it, acknowledge, ask for next field. If they confirmed (yes/thanks): say Thanks and ask for next field. If unclear/inaudible: ask to repeat for the current field only. Do not skip or answer something they did not say.
@@ -543,7 +567,7 @@ Respond with ONLY a JSON object. No markdown. Format:
             orderedFields,
           );
           nextMessage = nextAfter
-            ? `Thanks. ${this.askForFieldPhrase(nextAfter)}`
+            ? `Thanks. ${this.getAskPhraseForField(nextAfter, orderedFieldEntries)}`
             : 'Thanks. Is there anything else?';
         }
       } else if (looksLikeDidntGet && nextFieldToAsk && transcriptHasValue) {
@@ -560,7 +584,7 @@ Respond with ONLY a JSON object. No markdown. Format:
             orderedFields,
           );
           nextMessage = nextAfter
-            ? `Thanks. ${this.askForFieldPhrase(nextAfter)}`
+            ? `Thanks. ${this.getAskPhraseForField(nextAfter, orderedFieldEntries)}`
             : 'Thanks. Is there anything else?';
         }
       }
@@ -578,7 +602,11 @@ Respond with ONLY a JSON object. No markdown. Format:
       if (endCall && missingFields.length > 0) {
         endCall = false;
         const firstMissing = missingFields[0];
-        nextMessage = `Sorry, I missed certain fields. First, can you provide the ${firstMissing}?`;
+        const phrase = this.getAskPhraseForField(
+          firstMissing,
+          orderedFieldEntries,
+        );
+        nextMessage = `Sorry, I missed certain fields. First, ${phrase}`;
       }
 
       const maxMessageLength = 200;
