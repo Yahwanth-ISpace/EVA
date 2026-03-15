@@ -326,6 +326,8 @@ interface StreamState {
   ivrDigitSent: boolean;
   /** True after we've already said our purpose (e.g. "I need a few benefit details") — avoid repeating it while user is speaking. */
   purposeSaid: boolean;
+  /** True after we refetched verification fields once after DOB (for testing timing + fresh data before benefit questions). */
+  fieldsRefetchedAfterDob: boolean;
 }
 
 @Injectable()
@@ -372,6 +374,7 @@ export class MediaStreamHandlerService {
       mode: isIvrBypass ? 'ivr-bypass' : 'eva',
       ivrDigitSent: false,
       purposeSaid: false,
+      fieldsRefetchedAfterDob: false,
     };
 
     const send = (obj: object) => {
@@ -862,9 +865,52 @@ export class MediaStreamHandlerService {
         } else {
         }
 
-        const orderedF = state.orderedFields.length
+        let orderedF = state.orderedFields.length
           ? state.orderedFields
           : ['coverage', 'deductible', 'copay', 'validity'];
+
+        // After name/DOB verification: refetch verification fields once before asking benefit fields (for testing API timing + fresh data).
+        if (
+          state.mode === 'eva' &&
+          state.payeeId &&
+          !state.fieldsRefetchedAfterDob &&
+          state.orderedFields.length > 0 &&
+          getFirstMissingField(state.extractedData, orderedF) === orderedF[0]
+        ) {
+          const refetchStart = Date.now();
+          try {
+            const {
+              orderedFields: refetchedFields,
+              orderedEntries: refetchedEntries,
+              requirementId: refetchedReqId,
+            } =
+              await this.verificationRequirementService.getOrderedFieldsAndRequirementId(
+                state.payeeId,
+              );
+            const refetchMs = Date.now() - refetchStart;
+            console.log(
+              `[MediaStream] Post-DOB refetch verification fields: ${refetchMs}ms`,
+              {
+                payeeId: state.payeeId,
+                requirementId: refetchedReqId,
+                fields: refetchedFields,
+              },
+            );
+            state.orderedFields = refetchedFields;
+            state.orderedEntries = refetchedEntries;
+            state.verificationRequirementId = refetchedReqId;
+            orderedF = refetchedFields.length
+              ? refetchedFields
+              : ['coverage', 'deductible', 'copay', 'validity'];
+          } catch (e: any) {
+            this.logger.warn(
+              '[MediaStream] Post-DOB refetch failed',
+              e?.message,
+            );
+          }
+          state.fieldsRefetchedAfterDob = true;
+        }
+
         const recallReply = getRecallReply(
           userSaid,
           state.extractedData,
