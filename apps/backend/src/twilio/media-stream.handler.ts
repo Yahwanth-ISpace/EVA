@@ -100,6 +100,18 @@ function isThankYouOrGoodbye(text: string): boolean {
   );
 }
 
+/** Detect if user is confirming (e.g. after DOB: "yes", "we're good", "thank you"). Used to run post-DOB refetch only after DOB verification. */
+function isConfirmationAfterDob(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t || t.length < 2) return false;
+  return (
+    /^(yes|yeah|yep|ok|okay)(\.?\s*)$/i.test(t) ||
+    /^(we'?re\s+good|we are good|i'?m\s+good|that'?s\s+correct|correct)(\.?\s*)$/i.test(t) ||
+    /^(thank you|thanks)(\.?\s*)$/i.test(t) ||
+    /^(yeah|yes),?\s*(we'?re\s+good|thank you|thanks)(\.?\s*)$/i.test(t)
+  );
+}
+
 /** First missing field in order (uses orderedFields or default four). */
 function getFirstMissingField(
   data: Record<string, string | null>,
@@ -869,13 +881,14 @@ export class MediaStreamHandlerService {
           ? state.orderedFields
           : ['coverage', 'deductible', 'copay', 'validity'];
 
-        // After name/DOB verification: refetch verification fields once before asking benefit fields (for testing API timing + fresh data).
+        // After name/DOB verification: refetch verification fields once only when user has confirmed (e.g. "yes" / "we're good" after DOB), then ask benefit fields (for testing API timing + fresh data).
         if (
           state.mode === 'eva' &&
           state.payeeId &&
           !state.fieldsRefetchedAfterDob &&
           state.orderedFields.length > 0 &&
-          getFirstMissingField(state.extractedData, orderedF) === orderedF[0]
+          getFirstMissingField(state.extractedData, orderedF) === orderedF[0] &&
+          isConfirmationAfterDob(userSaid)
         ) {
           const refetchStart = Date.now();
           try {
