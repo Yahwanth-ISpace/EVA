@@ -24,7 +24,7 @@ export class SchedulerService {
 
   constructor() {}
 
-  @Cron(CronExpression.EVERY_1_MINUTE)
+  @Cron(CronExpression.EVERY_MINUTE)
   async handleCron() {
     this.logger.debug('Called every 1 minute..............');
     console.log('Called every 1 minute..............');
