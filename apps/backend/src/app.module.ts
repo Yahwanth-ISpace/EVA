@@ -14,10 +14,12 @@ import { OfficeModule } from './offices/office.module';
 import { ProviderModule } from './providers/provider.module';
 import { TwilioModule } from './twilio/twilio.module';
 import { VerificationRequirementModule } from './verification-requirement/verification-requirement.module';
+import { SchedulerModule } from './schedular/scheduler.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    SchedulerModule,
     PrismaModule,
     PayeeModule,
     ProviderModule,
