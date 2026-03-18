@@ -30,7 +30,7 @@ export class SchedulerService {
     console.log('Called every 1 minute..............');
     try {
       const response = await axios.get<Appointment[]>(
-        'http://localhost:3000/assets/appointmentlist.json',
+        './src/assets/appointmentlist.json',
       );
       this.logger.debug('Successfully called appointment list API');
       this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
