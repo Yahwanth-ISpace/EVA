@@ -24,13 +24,13 @@ export class SchedulerService {
 
   constructor() {}
 
-  @Cron(CronExpression.EVERY_10_SECONDS)
+  @Cron(CronExpression.EVERY_1_MINUTE)
   async handleCron() {
-    this.logger.debug('Called every 10 seconds..............');
-    console.log('Called every 10 seconds..............');
+    this.logger.debug('Called every 1 minute..............');
+    console.log('Called every 1 minute..............');
     try {
       const response = await axios.get<Appointment[]>(
-        'http://localhost:8089/appointmentlist',
+        'http://localhost:3000/assets/appointmentlist.json',
       );
       this.logger.debug('Successfully called appointment list API');
       this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
