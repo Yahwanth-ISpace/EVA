@@ -25,6 +25,19 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+### OpenAPI (Swagger)
+
+After `npm run start:dev`, open **interactive API docs** (Try it out + example payloads):
+
+- **URL:** [http://localhost:3000/api](http://localhost:3000/api) (port from `PORT` env)
+
+**Authorize in Swagger**
+
+1. **jwt-auth** — `POST /auth/login`, copy `access_token`, then **Authorize** → paste `Bearer <token>`.
+2. **verifications-api-token** — set env `VERIFICATIONS_API_TOKEN`, then **Authorize** with `Bearer <same value>` for verification endpoints that use the API token guard.
+
+WebSocket media stream is not listed in Swagger; use `ws://localhost:3000/twilio/media-stream?payeeId=...`.
+
 ## Project setup
 
 ```bash

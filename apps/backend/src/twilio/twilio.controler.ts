@@ -7,9 +7,17 @@ import {
   Res,
   BadRequestException,
 } from '@nestjs/common';
+import {
+  ApiBody,
+  ApiOperation,
+  ApiProduces,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Response } from 'express';
 import { TwilioService } from './twilio.service';
 import { ElevenLabsService } from '../voice/elevenlabs.service';
+import { TwilioCallIvrDto, TwilioInitiateCallDto } from './dto/twilio-call.dto';
 
 const backendBaseUrl = (process.env.BACKEND_URL || '').trim() || `http://localhost:${process.env.PORT ?? 3000}`;
 
@@ -33,6 +41,7 @@ function getStreamBaseUrl(): string {
  * TwilioController handles phone call infrastructure via Twilio.
  * IVR: Press 1 complaints, 2 register insurance, 3 latest offers, 4 talk to agent (hold 10s then dial).
  */
+@ApiTags('twilio')
 @Controller('twilio')
 export class TwilioController {
   constructor(
@@ -46,6 +55,12 @@ export class TwilioController {
    * Flow: 1 = complaint, 2 = register insurance, 3 = latest offers, 4 = hold 10s then dial agent (e.g. 9515663123).
    */
   @Post('inbound')
+  @ApiOperation({
+    summary: 'IVR inbound — main menu (TwiML)',
+    description:
+      'Twilio webhook: plays menu (press 1–4). Configure your Twilio number **Voice webhook** to `POST /twilio/inbound`. Returns `text/xml`.',
+  })
+  @ApiProduces('text/xml')
   async handleInbound(@Body() body: Record<string, string>, @Res() res: Response) {
     res.type('text/xml').send(`
       <Response>
@@ -62,6 +77,11 @@ export class TwilioController {
    * IVR menu handler — branch on digit (1–4). Option 4: hold 10 seconds then dial agent number.
    */
   @Post('ivr-menu')
+  @ApiOperation({
+    summary: 'IVR digit handler (TwiML)',
+    description: 'Follow-up from Gather on `/twilio/inbound`; branches on Digits 1–4.',
+  })
+  @ApiProduces('text/xml')
   async handleIvrMenu(@Body() body: Record<string, string>, @Res() res: Response) {
     const digits = (body?.Digits || body?.digits || '').trim();
     const base = backendBaseUrl;
@@ -130,6 +150,13 @@ export class TwilioController {
    * interruptions, update backend, respond with TTS. Accepts GET (outbound) and POST (inbound).
    */
   @Post('inbound-stream')
+  @ApiOperation({
+    summary: 'Connect call to EVA media stream (TwiML)',
+    description:
+      'Returns `<Connect><Stream url="ws(s)://.../twilio/media-stream?payeeId=...">`. Query `payeeId` or `INBOUND_PAYEE_ID` env.',
+  })
+  @ApiQuery({ name: 'payeeId', required: false, example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
+  @ApiProduces('text/xml')
   async handleInboundStreamPost(
     @Body() body: Record<string, string>,
     @Query('payeeId') payeeIdQuery: string,
@@ -144,6 +171,9 @@ export class TwilioController {
   }
 
   @Get('inbound-stream')
+  @ApiOperation({ summary: 'Same as POST inbound-stream (GET for some Twilio configs)' })
+  @ApiQuery({ name: 'payeeId', required: false })
+  @ApiProduces('text/xml')
   async handleInboundStreamGet(@Query('payeeId') payeeId: string, @Res() res: Response) {
     const id = payeeId || process.env.INBOUND_PAYEE_ID?.trim() || 'inbound';
     this.sendStreamTwiML(id, res);
@@ -168,6 +198,11 @@ export class TwilioController {
    */
   @Get('outbound-ivr-connect')
   @Post('outbound-ivr-connect')
+  @ApiOperation({
+    summary: 'IVR-bypass stream (TwiML)',
+    description: 'Media stream with `mode=ivr-bypass` for STT-driven DTMF 4 flow.',
+  })
+  @ApiProduces('text/xml')
   outboundIvrConnect(@Res() res: Response) {
     const streamUrl = getStreamBaseUrl() + '/twilio/media-stream?mode=ivr-bypass';
     res.type('text/xml').send(`
@@ -185,6 +220,8 @@ export class TwilioController {
    */
   @Get('play-dtmf-4')
   @Post('play-dtmf-4')
+  @ApiOperation({ summary: 'Send DTMF digit 4 (TwiML)' })
+  @ApiProduces('text/xml')
   playDtmf4(@Res() res: Response) {
     res.type('text/xml').send(
       '<Response><Play digits="4"/></Response>',
@@ -196,7 +233,12 @@ export class TwilioController {
    * Body optional: { "to": "+1..." } to override TWILIO_IVR_PHONE_NUMBER.
    */
   @Post('call-ivr-and-bypass')
-  async callIvrAndBypass(@Body() body: { to?: string }) {
+  @ApiOperation({
+    summary: 'Start outbound call to IVR in bypass mode',
+    description: 'JSON body optional `{ "to": "+1..." }`; defaults to `TWILIO_IVR_PHONE_NUMBER`.',
+  })
+  @ApiBody({ type: TwilioCallIvrDto })
+  async callIvrAndBypass(@Body() body: TwilioCallIvrDto) {
     return this.twilioService.callIvrAndBypass(body?.to);
   }
 
@@ -205,6 +247,10 @@ export class TwilioController {
    * Acknowledge with 200; optionally log CallSid, CallStatus, etc.
    */
   @Post('status')
+  @ApiOperation({
+    summary: 'Twilio call status callback',
+    description: 'Twilio posts `CallSid`, `CallStatus`, etc. Returns `{}`.',
+  })
   async handleStatusCallback(@Body() body: Record<string, string>) {
     const { CallSid, CallStatus } = body ?? {};
     if (CallSid && CallStatus) {
@@ -216,12 +262,25 @@ export class TwilioController {
 
   // STEP 1: Initiate outbound call
   @Post('call')
-  async initiateCall(@Body() body: { to: string; payeeId: string }) {
+  @ApiOperation({
+    summary: 'Outbound verification call',
+    description:
+      'Dials `to` with TwiML that connects media stream for `payeeId` (EVA benefit verification).',
+  })
+  @ApiBody({ type: TwilioInitiateCallDto })
+  async initiateCall(@Body() body: TwilioInitiateCallDto) {
     return this.twilioService.makeCall(body.to, body.payeeId);
   }
 
   // STEP 2: Main IVR step handler
   @Post('step')
+  @ApiOperation({
+    summary: 'Legacy IVR step (TwiML)',
+    description: 'Multi-step record flow with `step` and `payeeId` query params. Returns TwiML.',
+  })
+  @ApiQuery({ name: 'step', required: false, example: '0' })
+  @ApiQuery({ name: 'payeeId', example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
+  @ApiProduces('text/xml')
   async handleStep(
     @Body() body: any,
     @Query('step') step: string,
@@ -303,6 +362,8 @@ export class TwilioController {
 
   // STEP 3: Explicit recording webhook (optional, still supported)
   @Post('call-recording')
+  @ApiOperation({ summary: 'Recording webhook', description: 'Twilio posts `RecordingUrl`; processes with `payeeId` query.' })
+  @ApiQuery({ name: 'payeeId', required: true })
   async handleRecording(@Body() body: any, @Query('payeeId') payeeId: string) {
     const recordingUrl = body?.RecordingUrl;
     if (!recordingUrl) {
@@ -314,6 +375,8 @@ export class TwilioController {
 
   // STEP 4: Ask "Is that all?" using ElevenLabs
   @Post('recording-done')
+  @ApiOperation({ summary: 'Post-recording confirmation TwiML' })
+  @ApiQuery({ name: 'payeeId', required: true })
   async postRecordingConfirmation(
     @Body() body: any,
     @Query('payeeId') payeeId: string,
@@ -345,6 +408,8 @@ export class TwilioController {
 
   // STEP 5: Handle Gather response
   @Post('gather-response')
+  @ApiOperation({ summary: 'Speech gather result (yes/no branch)' })
+  @ApiQuery({ name: 'payeeId', required: true })
   async handleGather(@Body() body: any, @Query('payeeId') payeeId: string) {
     const speechResult = body?.SpeechResult?.toLowerCase() ?? '';
 

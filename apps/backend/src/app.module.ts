@@ -14,6 +14,7 @@ import { OfficeModule } from './offices/office.module';
 import { ProviderModule } from './providers/provider.module';
 import { TwilioModule } from './twilio/twilio.module';
 import { VerificationRequirementModule } from './verification-requirement/verification-requirement.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { VerificationRequirementModule } from './verification-requirement/verifi
     AuthModule,
     UserModule,
     TwilioModule,
+    ChatModule,
   ],
 })
 export class AppModule {}

@@ -2,10 +2,12 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { MediaStreamHandlerService } from './twilio/media-stream.handler';
 import { isFfmpegAvailable } from './voice/ffmpeg-check';
+import { setupSwagger } from './swagger/swagger.setup';
 import * as WebSocket from 'ws';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  setupSwagger(app);
   app.enableCors({
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
