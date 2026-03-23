@@ -6,6 +6,13 @@ import {
   UseGuards,
   Get,
 } from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import * as path from 'path';
@@ -16,6 +23,8 @@ import { JwtAuthGuard } from '../auth/guards/jwtAuthGuard';
 import { AiService } from '../ai/ai.service';
 import { Express } from 'express';
 
+@ApiTags('transcription')
+@ApiBearerAuth('jwt-auth')
 @Controller('transcription')
 @UseGuards(JwtAuthGuard)
 export class TranscriptionController {
@@ -25,6 +34,21 @@ export class TranscriptionController {
   ) {}
 
   @Post()
+  @ApiOperation({
+    summary: 'Transcribe audio + extract insurance fields',
+    description:
+      'Multipart upload `file` → Whisper (or configured STT) → transcript. Then AI extracts coverage/deductible/copay/validity.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: {
+        file: { type: 'string', format: 'binary', description: 'Audio file (mp3, wav, etc.)' },
+      },
+    },
+  })
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
@@ -63,6 +87,10 @@ export class TranscriptionController {
   };
 
   @Get('transcribe-test')
+  @ApiOperation({
+    summary: 'Dev: run transcription on bundled test audio',
+    description: 'Looks for `src/assets/audio/audioTest.mp3` (or dist path). Returns transcript or error if file missing.',
+  })
   async test() {
     // Try to find the test audio file in different possible locations
     const possiblePaths = [
