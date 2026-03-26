@@ -131,7 +131,6 @@ enum Role {
 }
 
 enum AgentStatus {
-  WAITING
   IN_PROGRESS
   COMPLETED
 }
