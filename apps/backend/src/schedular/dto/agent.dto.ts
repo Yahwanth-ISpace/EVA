@@ -15,9 +15,17 @@ export class AgentDto {
   })
   status: AgentStatus;
 
-  @ApiProperty({ example: '2024-03-23T10:00:00Z', type: 'string' })
+  @ApiProperty({
+    example: '2024-03-23T10:00:00Z',
+    type: 'string',
+    description: 'ISO 8601 formatted start time',
+  })
   startTime: string | null;
 
-  @ApiProperty({ example: '2024-03-23T10:30:00Z', type: 'string' })
+  @ApiProperty({
+    example: '2024-03-23T10:30:00Z',
+    type: 'string',
+    description: 'ISO 8601 formatted end time',
+  })
   endTime: string | null;
 }
