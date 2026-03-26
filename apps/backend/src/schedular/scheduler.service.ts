@@ -107,7 +107,7 @@ export class SchedulerService {
     );
     await this.prisma.agent.update({
       where: { id: agent.id },
-      data: { status: AgentStatus.IN_PROGRESS },
+      data: { status: AgentStatus.IN_PROGRESS, startTime: new Date() },
     });
   }
 
