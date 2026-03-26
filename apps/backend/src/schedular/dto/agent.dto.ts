@@ -2,30 +2,38 @@ import { ApiProperty } from '@nestjs/swagger';
 import { AgentStatus } from '@prisma/client';
 
 export class AgentDto {
-  @ApiProperty({ example: 'uuid-1234' })
+  @ApiProperty({
+    example: '69c226bfa13e73054507cb1b',
+    description: 'MongoDB ObjectId',
+  })
   id: string;
 
-  @ApiProperty({ example: 'Appointment Check' })
+  @ApiProperty({
+    example: 'Insurance Verification Agent1',
+    description: 'Agent name',
+  })
   name: string;
 
   @ApiProperty({
     enum: AgentStatus,
     example: AgentStatus.COMPLETED,
-    description: 'Current status of the scheduled task',
+    description: 'Current status of the agent',
   })
   status: AgentStatus;
 
   @ApiProperty({
-    example: '2024-03-23T10:00:00Z',
+    example: '2026-03-26T08:46:34.498Z',
     type: 'string',
-    description: 'ISO 8601 formatted start time',
+    format: 'date-time',
+    description: 'ISO 8601 formatted start time from MongoDB',
   })
-  startTime: string | null;
+  startTime: Date | null;
 
   @ApiProperty({
-    example: '2024-03-23T10:30:00Z',
+    example: '2026-03-26T09:00:00.000Z',
     type: 'string',
-    description: 'ISO 8601 formatted end time',
+    format: 'date-time',
+    description: 'ISO 8601 formatted end time from MongoDB',
   })
-  endTime: string | null;
+  endTime: Date | null;
 }
