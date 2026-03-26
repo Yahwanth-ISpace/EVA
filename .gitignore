@@ -48,3 +48,4 @@ coverage/
 
 # Tests
 test-output/
+package-lock.json
