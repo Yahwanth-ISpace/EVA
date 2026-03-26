@@ -2,7 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import axios from 'axios';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { AgentDto, AgentStatus } from './dto/agent.dto';
+import { AgentDto } from './dto/agent.dto';
+import { AgentStatus } from '@prisma/client';
 
 // Ensure @nestjs/schedule is installed: npm install @nestjs/schedule
 

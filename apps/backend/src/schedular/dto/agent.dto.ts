@@ -1,9 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-
-export enum AgentStatus {
-  IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETED = 'COMPLETED',
-}
+import { AgentStatus } from '@prisma/client';
 
 export class AgentDto {
   @ApiProperty({ example: 'uuid-1234' })
