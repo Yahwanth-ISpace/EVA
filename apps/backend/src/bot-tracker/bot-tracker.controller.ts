@@ -18,7 +18,7 @@ import {
   ApiResponse,
 } from '@nestjs/swagger';
 import { BotTrackerService } from './bot-tracker.service';
-import { CreateBotTrackerDto } from './dto/create-bot-tracker.dto';
+import { BotTrackerDto } from './dto/bot-tracker.dto';
 // import { JwtAuthGuard } from 'src/auth/guards/jwtAuthGuard';
 
 @ApiTags('bot-trackers')
@@ -51,7 +51,7 @@ export class BotTrackerController {
       },
     },
   })
-  async create(@Body() createBotTrackerDto: CreateBotTrackerDto) {
+  async create(@Body() createBotTrackerDto: BotTrackerDto) {
     return this.botTrackerService.create(createBotTrackerDto);
   }
 
@@ -106,7 +106,7 @@ export class BotTrackerController {
   })
   async update(
     @Param('id') id: string,
-    @Body() updateBotTrackerDto: Partial<CreateBotTrackerDto>,
+    @Body() updateBotTrackerDto: Partial<BotTrackerDto>,
   ) {
     return this.botTrackerService.update(id, updateBotTrackerDto);
   }
