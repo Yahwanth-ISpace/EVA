@@ -1,7 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 export enum AgentStatus {
-  WAITING = 'WAITING',
   IN_PROGRESS = 'IN_PROGRESS',
   COMPLETED = 'COMPLETED',
 }

@@ -57,7 +57,7 @@ export class SchedulerService {
 
       while (pendingAppointments.length > 0) {
         const agents: AgentDto[] = await this.prisma.agent.findMany({
-          where: { status: 'COMPLETED' },
+          where: { status: AgentStatus.COMPLETED },
         });
 
         if (agents.length > 0) {
