@@ -2,8 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import axios from 'axios';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Agent } from '@prisma/client';
 import { AgentStatus } from '@prisma/client';
+import { AgentDto } from './dto/agent.dto';
 
 // Ensure @nestjs/schedule is installed: npm install @nestjs/schedule
 
@@ -57,7 +57,7 @@ export class SchedulerService {
       const pendingAppointments = [...appointments];
 
       while (pendingAppointments.length > 0) {
-        const agents: Agent[] = await this.prisma.agent.findMany({
+        const agents: AgentDto[] = await this.prisma.agent.findMany({
           where: { status: AgentStatus.COMPLETED },
         });
 
@@ -73,7 +73,7 @@ export class SchedulerService {
                 `Processing appointment for ${appointment.patiantName} with agent ${agent.name}`,
               );
               //   call appointment api for each agent and appointment and update agent status to IN_PROGRESS
-              await this.callAppointmentApi(agent as Agent, appointment);
+              await this.callAppointmentApi(agent, appointment);
             }
           }
         } else {
@@ -94,7 +94,7 @@ export class SchedulerService {
     }
   }
 
-  async callAppointmentApi(agent: Agent, appointment: Appointment) {
+  async callAppointmentApi(agent: AgentDto, appointment: Appointment) {
     this.logger.log(
       `Calling appointment API for ${appointment.patiantName} with agent ${agent.name}`,
     );
