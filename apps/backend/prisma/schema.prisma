@@ -110,7 +110,28 @@ model Verification {
   createdAt               DateTime @default(now())
 }
 
+model Agent {
+  id        String    @id @default(uuid()) @map("_id")
+  name      String    @unique
+  status    AgentStatus
+  startTime DateTime?  @default(now())
+  endTime   DateTime? @default(now())
+}
+
+model BotTracker {
+  id        String   @id @default(uuid()) @map("_id")
+  payeeId   String
+  transcript String
+  createdAt DateTime @default(now())
+}
+
 enum Role {
   ADMIN
   PAYEE
+}
+
+enum AgentStatus {
+  WAITING
+  IN_PROGRESS
+  COMPLETED
 }

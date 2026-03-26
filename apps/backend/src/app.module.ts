@@ -15,6 +15,8 @@ import { ProviderModule } from './providers/provider.module';
 import { TwilioModule } from './twilio/twilio.module';
 import { VerificationRequirementModule } from './verification-requirement/verification-requirement.module';
 import { ChatModule } from './chat/chat.module';
+import { SchedulerModule } from './schedular/scheduler.module';
+import { BotTrackerModule } from './bot-tracker/bot-tracker.module';
 
 @Module({
   imports: [
@@ -32,6 +34,8 @@ import { ChatModule } from './chat/chat.module';
     UserModule,
     TwilioModule,
     ChatModule,
+    SchedulerModule,
+    BotTrackerModule,
   ],
 })
 export class AppModule {}
