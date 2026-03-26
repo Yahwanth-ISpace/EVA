@@ -1,7 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { CreateBotTrackerDto } from './dto/create-bot-tracker.dto';
-import { Tracker } from '@prisma/client';
+import { BotTrackerDto } from './dto/bot-tracker.dto';
 
 @Injectable()
 export class BotTrackerService {
@@ -12,7 +11,7 @@ export class BotTrackerService {
    * @param createBotTrackerDto - Contains payeeId and transcript data
    * @returns - Created tracker record
    */
-  async create(createBotTrackerDto: CreateBotTrackerDto): Promise<Tracker> {
+  async create(createBotTrackerDto: BotTrackerDto): Promise<BotTrackerDto> {
     const { payeeId, transcript } = createBotTrackerDto;
 
     // // Validate that the payee exists
@@ -41,7 +40,7 @@ export class BotTrackerService {
    * @param payeeId - ID of the payee
    * @returns - Array of tracker records
    */
-  async findByPayeeId(payeeId: string): Promise<Tracker[]> {
+  async findByPayeeId(payeeId: string): Promise<BotTrackerDto[]> {
     const trackers = await this.prisma.botTracker.findMany({
       where: { payeeId },
       orderBy: { createdAt: 'desc' },
@@ -55,7 +54,7 @@ export class BotTrackerService {
    * @param id - ID of the tracker record
    * @returns - Tracker record or null if not found
    */
-  async findById(id: string): Promise<Tracker | null> {
+  async findById(id: string): Promise<BotTrackerDto | null> {
     const tracker = await this.prisma.botTracker.findUnique({
       where: { id },
     });
@@ -71,8 +70,8 @@ export class BotTrackerService {
    */
   async update(
     id: string,
-    updateData: Partial<CreateBotTrackerDto>,
-  ): Promise<Tracker> {
+    updateData: Partial<BotTrackerDto>,
+  ): Promise<BotTrackerDto> {
     const tracker = await this.prisma.botTracker.update({
       where: { id },
       data: updateData,
@@ -86,7 +85,7 @@ export class BotTrackerService {
    * @param id - ID of the tracker record
    * @returns - Deleted tracker record
    */
-  async delete(id: string): Promise<Tracker> {
+  async delete(id: string): Promise<BotTrackerDto> {
     const tracker = await this.prisma.botTracker.delete({
       where: { id },
     });

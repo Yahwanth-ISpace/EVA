@@ -23,7 +23,9 @@ export interface Appointment {
 const noOfAgents = process.env.NO_OF_AGENTS
   ? parseInt(process.env.NO_OF_AGENTS)
   : 1;
-const appointmentListApiUrl = process.env.APPOINTMENT_LIST_API_URL;
+const appointmentListApiUrl =
+  process.env.APPOINTMENT_LIST_API_URL ||
+  'https://beea-35-153-127-242.ngrok-free.app/appointments';
 const appointmentApiToken =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzYjgyODIwNC0zMDg2LTQ5ZjgtOGJiZC01YTlkODdkZjcxNTYiLCJlbWFpbCI6InRlZW5hQGRlbnRhbHMuY29tIiwicm9sZSI6IlBBWUVFIiwiZmlyc3ROYW1lIjoiVGVlbmEiLCJsYXN0TmFtZSI6IlN0b25lIiwiZG9iIjoiMjAwMi0wMS0zMVQwMDowMTowMC4wMDBaIiwiaWF0IjoxNzc0MzQ0MjQ4LCJleHAiOjE3NzQ0MzA2NDh9.83iU6yF_Pg35EvXkxQy3SoUt05mC6PSK_3S9OEz6MMk';
 
