@@ -1,9 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 export enum AgentStatus {
-  WAITING = 'waiting',
-  IN_PROGRESS = 'inprogress',
-  COMPLETED = 'completed',
+  WAITING = 'WAITING',
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETED = 'COMPLETED',
 }
 
 export class AgentDto {
@@ -21,8 +21,8 @@ export class AgentDto {
   status: AgentStatus;
 
   @ApiProperty({ example: '2024-03-23T10:00:00Z' })
-  startTime: Date;
+  startTime: Date | null;
 
   @ApiProperty({ example: '2024-03-23T10:30:00Z' })
-  endTime: Date;
+  endTime: Date | null;
 }
