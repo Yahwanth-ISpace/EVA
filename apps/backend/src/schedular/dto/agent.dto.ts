@@ -18,9 +18,9 @@ export class AgentDto {
 
   @ApiProperty({ example: '2024-03-23T10:00:00Z', type: 'string' })
   @Type(() => Date)
-  startTime: Date | null;
+  startTime: string | null;
 
   @ApiProperty({ example: '2024-03-23T10:30:00Z', type: 'string' })
   @Type(() => Date)
-  endTime: Date | null;
+  endTime: string | null;
 }
