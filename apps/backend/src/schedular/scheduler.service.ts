@@ -57,16 +57,23 @@ export class SchedulerService {
       const pendingAppointments = [...appointments];
 
       while (pendingAppointments.length > 0) {
-        const agents: AgentDto[] = await this.prisma.agent.findMany({
+        const agentsData = await this.prisma.agent.findMany({
           where: { status: AgentStatus.COMPLETED },
         });
 
-        if (agents.length > 0) {
-          this.logger.debug(`Fetched ${agents.length} available agents.`);
-          const count = Math.min(agents.length, pendingAppointments.length);
+        // Convert Date objects to ISO strings
+        // const agents: AgentDto[] = agentsData.map((agent) => ({
+        //   ...agent,
+        //   startTime: agent.startTime ? agent.startTime.toISOString() : null,
+        //   endTime: agent.endTime ? agent.endTime.toISOString() : null,
+        // }));
+
+        if (agentsData.length > 0) {
+          this.logger.debug(`Fetched ${agentsData.length} available agents.`);
+          const count = Math.min(agentsData.length, pendingAppointments.length);
 
           for (let i = 0; i < count; i++) {
-            const agent = agents[i];
+            const agent = agentsData[i];
             const appointment = pendingAppointments.shift();
             if (appointment) {
               this.logger.log(
@@ -94,7 +101,7 @@ export class SchedulerService {
     }
   }
 
-  async callAppointmentApi(agent: AgentDto, appointment: Appointment) {
+  async callAppointmentApi(agent: any, appointment: Appointment) {
     this.logger.log(
       `Calling appointment API for ${appointment.patiantName} with agent ${agent.name}`,
     );
