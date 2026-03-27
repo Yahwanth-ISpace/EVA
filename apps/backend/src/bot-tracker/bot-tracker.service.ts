@@ -12,7 +12,7 @@ export class BotTrackerService {
    * @returns - Created tracker record
    */
   async create(createBotTrackerDto: BotTrackerDto): Promise<BotTrackerDto> {
-    const { payeeId, transcript } = createBotTrackerDto;
+    const { payeeId, callLog } = createBotTrackerDto;
 
     // // Validate that the payee exists
     // const payeeExists = await this.prisma.payee.findUnique({
@@ -27,7 +27,7 @@ export class BotTrackerService {
     const tracker = await this.prisma.botTracker.create({
       data: {
         payeeId,
-        transcript,
+        callLog,
         createdAt: new Date(),
       },
     });

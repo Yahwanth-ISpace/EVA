@@ -14,10 +14,10 @@ export class BotTrackerDto {
   payeeId: string;
 
   @ApiProperty({
-    description: 'Transcript content from the call or interaction',
-    example: 'Hello, how can I help you today?',
+    description: 'Call log data - accepts any data type',
+    example: { duration: 300, status: 'completed', notes: 'verification completed' },
   })
-  transcript: string;
+  callLog: any;
 
   @ApiProperty({
     description: 'Timestamp when the record was created',
