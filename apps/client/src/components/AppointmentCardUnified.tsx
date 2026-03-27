@@ -4,6 +4,7 @@ import type { AppointmentRecord } from "../redux/types/appointmentsTypes";
 interface Props {
   appt: AppointmentRecord;
   isVerified: boolean;
+  isCallInProgress?: boolean;
   onOpenDetails: (id: string) => void;
   onDelete: (id: string) => void;
 }
@@ -11,6 +12,7 @@ interface Props {
 export default function AppointmentCardUnified({
   appt,
   isVerified,
+  isCallInProgress = false,
   onOpenDetails,
   onDelete,
 }: Props) {
@@ -20,6 +22,24 @@ export default function AppointmentCardUnified({
       onDelete(appt.id);
     }
   };
+
+  const statusLabel = isVerified
+    ? "Verified"
+    : isCallInProgress
+      ? "In progress"
+      : "Scheduled";
+
+  const statusClass = isVerified
+    ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
+    : isCallInProgress
+      ? "bg-amber-50 text-amber-700 border border-amber-100"
+      : "bg-slate-100 text-slate-700 border border-slate-200";
+
+  const dotClass = isVerified
+    ? "bg-emerald-500"
+    : isCallInProgress
+      ? "bg-amber-500"
+      : "bg-slate-500";
 
   return (
     <div
@@ -32,18 +52,10 @@ export default function AppointmentCardUnified({
       {/* Pill with dot inside - top right, inset from edge */}
       <div className="absolute top-4 right-6 z-10">
         <span
-          className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full shadow-sm ${
-            isVerified
-              ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
-              : "bg-amber-50 text-amber-700 border border-amber-100"
-          }`}
+          className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full shadow-sm ${statusClass}`}
         >
-          <span
-            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-              isVerified ? "bg-emerald-500" : "bg-amber-500"
-            }`}
-          />
-          {isVerified ? "Verified" : "In progress"}
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotClass}`} />
+          {statusLabel}
         </span>
       </div>
 
