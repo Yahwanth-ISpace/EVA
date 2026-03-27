@@ -1,10 +1,16 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
+import { useEffect, useMemo, useState } from "react";
 import type { RootState } from "../redux/store";
 import Navbar from "../components/Navbar";
 import type { VerificationRecord } from "../redux/types/verificationTypes";
 import type { AppointmentRecord } from "../redux/types/appointmentsTypes";
 import Icon from "../components/Icons";
+import { api } from "../utils/api";
+import {
+  isCallActiveFromTrackers,
+} from "../utils/botTracker";
+import type { BotTrackerRecord } from "../utils/botTracker";
 
 const STATIC_FIELDS = [
   { label: "Family Deductible", value: "$20" },
@@ -38,6 +44,30 @@ export default function AppointmentDetail() {
   const verification = appointment
     ? getVerificationForPayee(verifications, appointment.payeeId)
     : undefined;
+  const [liveLogs, setLiveLogs] = useState<BotTrackerRecord[]>([]);
+
+  useEffect(() => {
+    if (!appointment?.payeeId) return;
+    let cancelled = false;
+
+    const fetchLiveLogs = async () => {
+      try {
+        const data = await api.get<BotTrackerRecord[]>(
+          `/bot-trackers/payee/${appointment.payeeId}`,
+        );
+        if (!cancelled) setLiveLogs(data);
+      } catch {
+        if (!cancelled) setLiveLogs([]);
+      }
+    };
+
+    fetchLiveLogs();
+    const timer = window.setInterval(fetchLiveLogs, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [appointment?.payeeId]);
 
   if (!id || !appointment) {
     return (
@@ -68,6 +98,25 @@ export default function AppointmentDetail() {
       })
     : "—";
   const address = "816 West Main Street, Danville, Virginia, 24541";
+  const isCallInProgress = useMemo(
+    () => isCallActiveFromTrackers(liveLogs),
+    [liveLogs],
+  );
+  const statusLabel = verification
+    ? "Verified"
+    : isCallInProgress
+      ? "In progress"
+      : "Scheduled";
+  const statusClass = verification
+    ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
+    : isCallInProgress
+      ? "bg-amber-50 text-amber-700 border border-amber-100"
+      : "bg-slate-100 text-slate-700 border border-slate-200";
+  const statusDotClass = verification
+    ? "bg-emerald-500"
+    : isCallInProgress
+      ? "bg-amber-500"
+      : "bg-slate-500";
 
   return (
     <div className="flex flex-col h-screen max-h-screen bg-slate-50/50 overflow-hidden pt-5">
@@ -86,18 +135,12 @@ export default function AppointmentDetail() {
           {/* Pill - top right */}
           <div className="absolute top-5 right-8 z-10">
             <span
-              className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full shadow-sm ${
-                verification
-                  ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
-                  : "bg-amber-50 text-amber-700 border border-amber-100"
-              }`}
+              className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full shadow-sm ${statusClass}`}
             >
               <span
-                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                  verification ? "bg-emerald-500" : "bg-amber-500"
-                }`}
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass}`}
               />
-              {verification ? "Verified" : "In progress"}
+              {statusLabel}
             </span>
           </div>
 
@@ -184,6 +227,36 @@ export default function AppointmentDetail() {
                     verification call.
                   </p>
                 )}
+              </div>
+
+              <div className="h-px bg-slate-100" />
+
+              <div className="p-6 sm:p-8">
+                <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wider mb-4">
+                  Live
+                </h3>
+                <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 max-h-56 overflow-auto custom-scrollbar">
+                  {liveLogs.length > 0 ? (
+                    <div className="space-y-2">
+                      {liveLogs
+                        .slice(0, 30)
+                        .reverse()
+                        .map((log) => (
+                          <p
+                            key={log.id}
+                            className="text-xs text-slate-700 whitespace-pre-wrap font-mono"
+                          >
+                            [{new Date(log.createdAt).toLocaleTimeString()}]{" "}
+                            {log.transcript}
+                          </p>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-500">
+                      No live call logs yet.
+                    </p>
+                  )}
+                </div>
               </div>
 
               {/* Transcript - shown when verified, from database */}
