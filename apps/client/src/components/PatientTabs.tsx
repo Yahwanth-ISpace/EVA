@@ -1,5 +1,6 @@
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   deleteAppointment,
@@ -9,6 +10,11 @@ import type { AppDispatch, RootState } from "../redux/store";
 import type { AppointmentRecord } from "../redux/types/appointmentsTypes";
 import type { VerificationRecord } from "../redux/types/verificationTypes";
 import AppointmentCardUnified from "./AppointmentCardUnified";
+import { api } from "../utils/api";
+import {
+  isCallActiveFromTrackers,
+} from "../utils/botTracker";
+import type { BotTrackerRecord } from "../utils/botTracker";
 
 const SkeletonCard = () => (
   <div className="w-full max-w-sm rounded-2xl overflow-hidden bg-slate-50 border border-slate-100 animate-pulse min-h-[160px] flex flex-col relative shadow-[0_1px_3px_0_rgba(0,0,0,0.08),0_1px_2px_-1px_rgba(0,0,0,0.06)]">
@@ -43,6 +49,48 @@ export default function PatientTabs() {
   );
 
   const loading = loadingAppointments || loadingVerifications;
+  const [liveTrackersByPayee, setLiveTrackersByPayee] = useState<
+    Record<string, BotTrackerRecord[]>
+  >({});
+
+  const payeeIds = useMemo(
+    () => Array.from(new Set(appointments.map((a) => a.payeeId).filter(Boolean))),
+    [appointments],
+  );
+
+  useEffect(() => {
+    if (!payeeIds.length) {
+      setLiveTrackersByPayee({});
+      return;
+    }
+
+    let cancelled = false;
+    const fetchLogs = async () => {
+      try {
+        const pairs = await Promise.all(
+          payeeIds.map(async (payeeId) => {
+            const logs = await api.get<BotTrackerRecord[]>(
+              `/bot-trackers/payee/${payeeId}`,
+            );
+            return [payeeId, logs] as const;
+          }),
+        );
+        if (cancelled) return;
+        const next: Record<string, BotTrackerRecord[]> = {};
+        for (const [payeeId, logs] of pairs) next[payeeId] = logs;
+        setLiveTrackersByPayee(next);
+      } catch {
+        // Keep UI resilient even if bot tracker endpoint fails.
+      }
+    };
+
+    fetchLogs();
+    const timer = window.setInterval(fetchLogs, 7000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [payeeIds]);
 
   const handleOpenDetails = (appointmentId: string) => {
     navigate(`/appointments/${appointmentId}`);
@@ -85,11 +133,15 @@ export default function PatientTabs() {
                 appt.payeeId,
               );
               const isVerified = Boolean(verification);
+              const isCallInProgress = isCallActiveFromTrackers(
+                liveTrackersByPayee[appt.payeeId] ?? [],
+              );
               return (
                 <AppointmentCardUnified
                   key={appt.id}
                   appt={appt}
                   isVerified={isVerified}
+                  isCallInProgress={isCallInProgress}
                   onOpenDetails={handleOpenDetails}
                   onDelete={handleDelete}
                 />
