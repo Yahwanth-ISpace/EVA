@@ -1,14 +1,15 @@
 // src/utils/chatApi.ts
 import store from "../redux/store";
+import { withNgrokBypass } from "./ngrokHeaders";
 
 const CHAT_BASE_URL = import.meta.env.VITE_CHAT_BACKEND_URL;
 
 const getAuthHeaders = () => {
   const { token } = store.getState().authState;
-  return {
+  return withNgrokBypass(CHAT_BASE_URL, {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+  });
 };
 
 const handleResponse = async <T>(res: Response): Promise<T> => {

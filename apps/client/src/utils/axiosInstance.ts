@@ -3,9 +3,15 @@ import axios from "axios";
 import store from "../redux/store"; // if using Redux
 import actions from "../redux/actions";
 
+const backendBase = import.meta.env.VITE_BACKEND_URL || "";
+
 const axiosInstance = axios.create({
-  baseURL: import.meta.env.VITE_BACKEND_URL,
+  baseURL: backendBase,
   withCredentials: true,
+  headers:
+    backendBase.toLowerCase().includes("ngrok")
+      ? { "ngrok-skip-browser-warning": "true" }
+      : undefined,
 });
 
 axiosInstance.interceptors.response.use(
