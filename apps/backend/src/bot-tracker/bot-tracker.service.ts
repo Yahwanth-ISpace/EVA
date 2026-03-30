@@ -1,6 +1,8 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { BotTrackerDto } from './dto/bot-tracker.dto';
+import { CreateBotTrackerDto } from './dto/create-bot-tracker.dto';
 
 @Injectable()
 export class BotTrackerService {
@@ -8,10 +10,9 @@ export class BotTrackerService {
 
   /**
    * Create a new tracker record asynchronously
-   * @param createBotTrackerDto - Contains payeeId and transcript data
-   * @returns - Created tracker record
+   * @param createBotTrackerDto - payeeId and callLog (stored as Prisma Json)
    */
-  async create(createBotTrackerDto: BotTrackerDto): Promise<BotTrackerDto> {
+  async create(createBotTrackerDto: CreateBotTrackerDto): Promise<BotTrackerDto> {
     const { payeeId, callLog } = createBotTrackerDto;
 
     // // Validate that the payee exists
@@ -27,8 +28,7 @@ export class BotTrackerService {
     const tracker = await this.prisma.botTracker.create({
       data: {
         payeeId,
-        callLog,
-        createdAt: new Date(),
+        callLog: callLog as Prisma.InputJsonValue,
       },
     });
 

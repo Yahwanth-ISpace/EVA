@@ -369,8 +369,8 @@ export class MediaStreamHandlerService {
       try {
         await this.botTrackerService.create({
           payeeId: state.payeeId,
-          transcript: line.trim(),
-        } as any);
+          callLog: line.trim(),
+        });
       } catch (e: any) {
         this.logger.warn('[MediaStream] Bot tracker write failed', e?.message);
       }
