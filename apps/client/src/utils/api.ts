@@ -1,16 +1,20 @@
 // src/utils/api.ts
 import store from "../redux/store";
+import { withNgrokBypass } from "./ngrokHeaders";
 
 interface ErrorResponse {
   message: string;
 }
 
-const getAuthHeaders = () => {
+const resolveBase = (baseUrl?: string) =>
+  baseUrl || import.meta.env.VITE_BACKEND_URL || "";
+
+const getAuthHeaders = (baseUrl?: string) => {
   const { token } = store.getState().authState;
-  return {
+  return withNgrokBypass(resolveBase(baseUrl), {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+  });
 };
 
 const handleResponse = async <T>(res: Response): Promise<T> => {
@@ -41,12 +45,10 @@ const handleResponse = async <T>(res: Response): Promise<T> => {
 
 export const api = {
   get: async <T>(url: string, baseUrl?: string): Promise<T> => {
-    const res = await fetch(
-      `${baseUrl || import.meta.env.VITE_BACKEND_URL}${url}`,
-      {
-        headers: getAuthHeaders(),
-      }
-    );
+    const base = resolveBase(baseUrl);
+    const res = await fetch(`${base}${url}`, {
+      headers: getAuthHeaders(baseUrl),
+    });
     return handleResponse<T>(res);
   },
 
@@ -55,14 +57,12 @@ export const api = {
     body: TRequest,
     baseUrl?: string
   ): Promise<TResponse> => {
-    const res = await fetch(
-      `${baseUrl || import.meta.env.VITE_BACKEND_URL}${url}`,
-      {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: JSON.stringify(body),
-      }
-    );
+    const base = resolveBase(baseUrl);
+    const res = await fetch(`${base}${url}`, {
+      method: "POST",
+      headers: getAuthHeaders(baseUrl),
+      body: JSON.stringify(body),
+    });
     return handleResponse<TResponse>(res);
   },
 
@@ -71,25 +71,21 @@ export const api = {
     body: TRequest,
     baseUrl?: string
   ): Promise<TResponse> => {
-    const res = await fetch(
-      `${baseUrl || import.meta.env.VITE_BACKEND_URL}${url}`,
-      {
-        method: "PUT",
-        headers: getAuthHeaders(),
-        body: JSON.stringify(body),
-      }
-    );
+    const base = resolveBase(baseUrl);
+    const res = await fetch(`${base}${url}`, {
+      method: "PUT",
+      headers: getAuthHeaders(baseUrl),
+      body: JSON.stringify(body),
+    });
     return handleResponse<TResponse>(res);
   },
 
   delete: async <T>(url: string, baseUrl?: string): Promise<T> => {
-    const res = await fetch(
-      `${baseUrl || import.meta.env.VITE_BACKEND_URL}${url}`,
-      {
-        method: "DELETE",
-        headers: getAuthHeaders(),
-      }
-    );
+    const base = resolveBase(baseUrl);
+    const res = await fetch(`${base}${url}`, {
+      method: "DELETE",
+      headers: getAuthHeaders(baseUrl),
+    });
     return handleResponse<T>(res);
   },
 };
