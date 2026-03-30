@@ -8,6 +8,7 @@ import type { AppointmentRecord } from "../redux/types/appointmentsTypes";
 import Icon from "../components/Icons";
 import { api } from "../utils/api";
 import {
+  formatCallLogLine,
   isCallActiveFromTrackers,
 } from "../utils/botTracker";
 import type { BotTrackerRecord } from "../utils/botTracker";
@@ -247,7 +248,7 @@ export default function AppointmentDetail() {
                             className="text-xs text-slate-700 whitespace-pre-wrap font-mono"
                           >
                             [{new Date(log.createdAt).toLocaleTimeString()}]{" "}
-                            {log.transcript}
+                            {formatCallLogLine(log)}
                           </p>
                         ))}
                     </div>

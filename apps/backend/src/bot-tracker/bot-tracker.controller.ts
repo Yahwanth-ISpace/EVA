@@ -19,6 +19,7 @@ import {
 } from '@nestjs/swagger';
 import { BotTrackerService } from './bot-tracker.service';
 import { BotTrackerDto } from './dto/bot-tracker.dto';
+import { CreateBotTrackerDto } from './dto/create-bot-tracker.dto';
 // import { JwtAuthGuard } from 'src/auth/guards/jwtAuthGuard';
 
 @ApiTags('bot-trackers')
@@ -30,14 +31,14 @@ export class BotTrackerController {
 
   /**
    * Create a new tracker record asynchronously
-   * Accepts payeeId and transcript in the request body
+   * Accepts payeeId and callLog in the request body
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Create bot tracker record asynchronously',
     description:
-      'Creates a new bot tracker record with payeeId and transcript. The operation is asynchronous and returns immediately.',
+      'Creates a new bot tracker record with payeeId and callLog. The operation is asynchronous and returns immediately.',
   })
   @ApiResponse({
     status: 201,
@@ -46,12 +47,12 @@ export class BotTrackerController {
       example: {
         id: 'tracker-uuid',
         payeeId: 'payee-uuid',
-        transcript: 'Sample transcript',
+        callLog: 'EVA: Sample line from the call',
         createdAt: '2026-03-25T10:00:00Z',
       },
     },
   })
-  async create(@Body() createBotTrackerDto: BotTrackerDto) {
+  async create(@Body() createBotTrackerDto: CreateBotTrackerDto) {
     return this.botTrackerService.create(createBotTrackerDto);
   }
 
