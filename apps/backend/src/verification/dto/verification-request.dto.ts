@@ -14,7 +14,10 @@ export class VerifyPayeeTranscriptDto {
 
 /** Body for `POST /verifications/:payeeId/push-extracted`. */
 export class PushExtractedDto {
-  @ApiPropertyOptional({ example: '80%', description: 'Coverage (e.g. percentage).' })
+  @ApiPropertyOptional({
+    example: '80%',
+    description: 'Coverage (e.g. percentage).',
+  })
   @IsOptional()
   @IsString()
   coverage?: string | null;
@@ -38,34 +41,6 @@ export class PushExtractedDto {
     example: 'User: ... EVA: ...',
     description: 'Optional call transcript to append to the verification record.',
   })
-  @IsOptional()
-  @IsString()
-  transcript?: string;
-}
-
-/** Body for `POST /verifications/from-extracted-call/:payeeId` — dynamic field keys from verification requirement. */
-export class FromExtractedCallDto {
-  @ApiPropertyOptional({ example: '80%' })
-  @IsOptional()
-  @IsString()
-  coverage?: string | null;
-
-  @ApiPropertyOptional({ example: '500 dollars' })
-  @IsOptional()
-  @IsString()
-  deductible?: string | null;
-
-  @ApiPropertyOptional({ example: '20 dollars' })
-  @IsOptional()
-  @IsString()
-  copay?: string | null;
-
-  @ApiPropertyOptional({ example: 'December 2025' })
-  @IsOptional()
-  @IsString()
-  validity?: string | null;
-
-  @ApiPropertyOptional({ description: 'Appended to stored transcript.' })
   @IsOptional()
   @IsString()
   transcript?: string;
