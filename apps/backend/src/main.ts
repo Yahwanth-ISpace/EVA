@@ -5,13 +5,43 @@ import { isFfmpegAvailable } from './voice/ffmpeg-check';
 import { setupSwagger } from './swagger/swagger.setup';
 import * as WebSocket from 'ws';
 
+function corsOrigin():
+  | string[]
+  | ((
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => void) {
+  const fromEnv = process.env.CORS_ORIGINS?.split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  if (fromEnv?.length) return fromEnv;
+
+  // Local Vite (and similar) may use any port; reflect origin so preflight + credentials work.
+  if (process.env.NODE_ENV !== 'production') {
+    return (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+        return callback(null, true);
+      }
+      callback(new Error('Not allowed by CORS'));
+    };
+  }
+
+  return ['http://localhost:5173', 'http://127.0.0.1:5173'];
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   setupSwagger(app);
   app.enableCors({
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    origin: corsOrigin(),
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'X-Requested-With',
+    ],
     credentials: true,
   });
   const port = process.env.PORT ?? 3000;
