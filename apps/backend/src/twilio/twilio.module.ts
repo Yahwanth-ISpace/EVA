@@ -8,6 +8,7 @@ import { AiModule } from '../ai/ai.module';
 import { TranscriptionModule } from '../transcription/transcription.module';
 import { VerificationModule } from '../verification/verification.module';
 import { VerificationRequirementModule } from '../verification-requirement/verification-requirement.module';
+import { BotTrackerModule } from '../bot-tracker/bot-tracker.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { VerificationRequirementModule } from '../verification-requirement/verif
     TranscriptionModule,
     VerificationModule,
     VerificationRequirementModule,
+    BotTrackerModule,
   ],
   controllers: [TwilioController],
   providers: [TwilioService, MediaStreamHandlerService],

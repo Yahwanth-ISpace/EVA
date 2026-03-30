@@ -22,6 +22,7 @@ import { TranscriptionService } from '../transcription/transcription.service';
 import { ElevenLabsAudioStackService } from '../voice/elevenlabs-audio-stack.service';
 import { VerificationService } from '../verification/verification.service';
 import { VerificationRequirementService } from '../verification-requirement/verification-requirement.service';
+import { BotTrackerService } from '../bot-tracker/bot-tracker.service';
 import { TwilioService } from './twilio.service';
 import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
@@ -323,6 +324,7 @@ export class MediaStreamHandlerService {
     private readonly aiService: AiService,
     private readonly verificationService: VerificationService,
     private readonly verificationRequirementService: VerificationRequirementService,
+    private readonly botTrackerService: BotTrackerService,
     private readonly twilioService: TwilioService,
   ) {}
 
@@ -360,6 +362,18 @@ export class MediaStreamHandlerService {
 
     const send = (obj: object) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
+    };
+
+    const pushLiveTracker = async (line: string) => {
+      if (!state.payeeId || !line?.trim()) return;
+      try {
+        await this.botTrackerService.create({
+          payeeId: state.payeeId,
+          transcript: line.trim(),
+        } as any);
+      } catch (e: any) {
+        this.logger.warn('[MediaStream] Bot tracker write failed', e?.message);
+      }
     };
 
     const playAudio = async (mulawBuffer: Buffer) => {
@@ -1120,9 +1134,11 @@ export class MediaStreamHandlerService {
           !/^\.{2,}$/.test(userSaid)
         ) {
           state.conversationTranscript.push('User: ' + userSaid);
+          await pushLiveTracker(`User: ${userSaid}`);
         }
         if (toSpeak?.trim()) {
           state.conversationTranscript.push('EVA: ' + toSpeak.trim());
+          await pushLiveTracker(`EVA: ${toSpeak.trim()}`);
         }
         if (toSpeak?.trim()) {
           await speak(toSpeak);
@@ -1180,6 +1196,9 @@ export class MediaStreamHandlerService {
               state.payeeId = fromCallSid;
             }
           }
+          void pushLiveTracker(
+            `[CALL_EVENT] START callSid=${state.callSid ?? 'unknown'}`,
+          );
         }
         startFallbackTimer();
         if (state.mode === 'ivr-bypass') {
@@ -1239,6 +1258,9 @@ export class MediaStreamHandlerService {
       }
 
       if (event === 'stop') {
+        void pushLiveTracker(
+          `[CALL_EVENT] END callSid=${state.callSid ?? 'unknown'}`,
+        );
         if (state.fallbackTimer) {
           clearInterval(state.fallbackTimer);
           state.fallbackTimer = null;
