@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Post,
   Body,
@@ -6,6 +7,7 @@ import {
   Param,
   Put,
   Delete,
+  Query,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -15,6 +17,7 @@ import {
   ApiOperation,
   ApiBearerAuth,
   ApiParam,
+  ApiQuery,
   ApiResponse,
 } from '@nestjs/swagger';
 import { BotTrackerService } from './bot-tracker.service';
@@ -54,6 +57,35 @@ export class BotTrackerController {
   })
   async create(@Body() createBotTrackerDto: CreateBotTrackerDto) {
     return this.botTrackerService.create(createBotTrackerDto);
+  }
+
+  /**
+   * List trackers by query (preferred for dashboards): avoids multi-segment paths that some proxies mishandle.
+   * `GET /bot-trackers?appointmentId=...` or `?payeeId=...` (exactly one required).
+   */
+  @Get()
+  @ApiOperation({
+    summary: 'List bot trackers by query',
+    description:
+      'Pass `appointmentId` for lines scoped to one visit, or `payeeId` for all lines for that patient.',
+  })
+  @ApiQuery({ name: 'appointmentId', required: false })
+  @ApiQuery({ name: 'payeeId', required: false })
+  async findByQuery(
+    @Query('appointmentId') appointmentId?: string,
+    @Query('payeeId') payeeId?: string,
+  ) {
+    const appt = appointmentId?.trim();
+    const payee = payeeId?.trim();
+    if (appt) {
+      return this.botTrackerService.findByAppointmentId(appt);
+    }
+    if (payee) {
+      return this.botTrackerService.findByPayeeId(payee);
+    }
+    throw new BadRequestException(
+      'Provide query parameter appointmentId or payeeId',
+    );
   }
 
   /**

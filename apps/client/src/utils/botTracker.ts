@@ -1,4 +1,4 @@
-/** Row from GET /bot-trackers/appointment/:id or payee/:payeeId */
+/** Row from GET /appointments/:id/bot-trackers (or legacy /bot-trackers APIs) */
 export type BotTrackerRecord = {
   id: string;
   payeeId: string;
