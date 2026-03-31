@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 
 export class BotTrackerDto {
   @ApiProperty({
@@ -12,11 +12,6 @@ export class BotTrackerDto {
     example: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
   })
   payeeId: string;
-
-  @ApiPropertyOptional({
-    description: 'Appointment this log line belongs to (isolates call activity per visit).',
-  })
-  appointmentId?: string | null;
 
   @ApiProperty({
     description: 'Call log data - accepts any data type',

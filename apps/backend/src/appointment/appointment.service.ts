@@ -65,11 +65,7 @@ export class AppointmentService {
       `${appointment.payee.payer?.phoneExt}` + appointment.payee.payer?.phone;
     if (toPhoneNumber) {
       console.log('Making call to:', toPhoneNumber);
-      await this.twilioService.makeCall(
-        toPhoneNumber,
-        dto.payeeId,
-        appointment.id,
-      );
+      await this.twilioService.makeCall(toPhoneNumber, dto.payeeId);
     } else {
       this.logger.warn(
         `No phone number found for Payer linked to Payee ID ${dto.payeeId}`,

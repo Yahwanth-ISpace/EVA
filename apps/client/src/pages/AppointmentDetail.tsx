@@ -35,16 +35,11 @@ const STATIC_FIELDS = [
   { label: "Group ID", value: "M01298" },
 ];
 
-/** Only verification rows explicitly linked to this appointment (no cross-visit leakage). */
-function getVerificationForAppointment(
+function getVerificationForPayee(
   verifications: VerificationRecord[],
-  appointmentId: string,
   payeeId: string,
 ): VerificationRecord | undefined {
-  return verifications.find(
-    (v) =>
-      v.payee?.id === payeeId && v.appointmentId === appointmentId,
-  );
+  return verifications.find((v) => v.payee?.id === payeeId);
 }
 
 function formatAppointmentWhen(iso: string | undefined): string {
@@ -90,11 +85,7 @@ export default function AppointmentDetail() {
 
   const appointment = appointments.find((a: AppointmentRecord) => a.id === id);
   const verification = appointment
-    ? getVerificationForAppointment(
-        verifications,
-        appointment.id,
-        appointment.payeeId,
-      )
+    ? getVerificationForPayee(verifications, appointment.payeeId)
     : undefined;
   const [liveLogs, setLiveLogs] = useState<BotTrackerRecord[]>([]);
   const [callLogTab, setCallLogTab] = useState<"live" | "transcript">("live");
@@ -163,13 +154,13 @@ export default function AppointmentDetail() {
   }, [callLogTab]);
 
   useEffect(() => {
-    if (!appointment?.id) return;
+    if (!appointment?.payeeId) return;
     let cancelled = false;
 
     const fetchLiveLogs = async () => {
       try {
         const data = await api.get<BotTrackerRecord[]>(
-          `/appointments/${encodeURIComponent(appointment.id)}/bot-trackers`,
+          `/bot-trackers/payee/${appointment.payeeId}`,
         );
         if (!cancelled) setLiveLogs(data);
       } catch {
@@ -183,11 +174,11 @@ export default function AppointmentDetail() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [appointment?.id]);
+  }, [appointment?.payeeId]);
 
   useEffect(() => {
     liveTailRef.current = { len: 0, tailId: "" };
-  }, [appointment?.id]);
+  }, [appointment?.payeeId]);
 
   if (!id || !appointment) {
     return (

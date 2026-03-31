@@ -160,19 +160,13 @@ export class TwilioController {
   @ApiOperation({
     summary: 'Connect call to EVA media stream (TwiML)',
     description:
-      'Returns `<Connect><Stream url="ws(s)://.../twilio/media-stream?payeeId=...">`. Optional `appointmentId` scopes verification to that visit. Query `payeeId` or `INBOUND_PAYEE_ID` env.',
+      'Returns `<Connect><Stream url="ws(s)://.../twilio/media-stream?payeeId=...">`. Query `payeeId` or `INBOUND_PAYEE_ID` env.',
   })
   @ApiQuery({ name: 'payeeId', required: false, example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
-  @ApiQuery({
-    name: 'appointmentId',
-    required: false,
-    description: 'Optional; ties saved verification to this appointment.',
-  })
   @ApiProduces('text/xml')
   async handleInboundStreamPost(
     @Body() body: Record<string, string>,
     @Query('payeeId') payeeIdQuery: string,
-    @Query('appointmentId') appointmentIdQuery: string,
     @Res() res: Response,
   ) {
     const payeeId =
@@ -180,38 +174,21 @@ export class TwilioController {
       process.env.INBOUND_PAYEE_ID?.trim() ||
       body?.payeeId ||
       'inbound';
-    const appointmentId =
-      appointmentIdQuery?.trim() || body?.appointmentId?.trim() || undefined;
-    this.sendStreamTwiML(payeeId, res, appointmentId);
+    this.sendStreamTwiML(payeeId, res);
   }
 
   @Get('inbound-stream')
   @ApiOperation({ summary: 'Same as POST inbound-stream (GET for some Twilio configs)' })
   @ApiQuery({ name: 'payeeId', required: false })
-  @ApiQuery({ name: 'appointmentId', required: false })
   @ApiProduces('text/xml')
-  async handleInboundStreamGet(
-    @Query('payeeId') payeeId: string,
-    @Query('appointmentId') appointmentId: string,
-    @Res() res: Response,
-  ) {
+  async handleInboundStreamGet(@Query('payeeId') payeeId: string, @Res() res: Response) {
     const id = payeeId || process.env.INBOUND_PAYEE_ID?.trim() || 'inbound';
-    this.sendStreamTwiML(id, res, appointmentId?.trim() || undefined);
+    this.sendStreamTwiML(id, res);
   }
 
-  private sendStreamTwiML(
-    payeeId: string,
-    res: Response,
-    appointmentId?: string,
-  ) {
-    let streamUrl =
-      getStreamBaseUrl() +
-      '/twilio/media-stream?payeeId=' +
-      encodeURIComponent(payeeId);
-    if (appointmentId?.trim()) {
-      streamUrl +=
-        '&appointmentId=' + encodeURIComponent(appointmentId.trim());
-    }
+  private sendStreamTwiML(payeeId: string, res: Response) {
+    const streamUrl =
+      getStreamBaseUrl() + '/twilio/media-stream?payeeId=' + encodeURIComponent(payeeId);
 
     res.type('text/xml').send(`
       <Response>
@@ -299,11 +276,7 @@ export class TwilioController {
   })
   @ApiBody({ type: TwilioInitiateCallDto })
   async initiateCall(@Body() body: TwilioInitiateCallDto) {
-    return this.twilioService.makeCall(
-      body.to,
-      body.payeeId,
-      body.appointmentId,
-    );
+    return this.twilioService.makeCall(body.to, body.payeeId);
   }
 
   @Post('end-call')

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { BotTrackerDto } from './dto/bot-tracker.dto';
@@ -13,20 +13,7 @@ export class BotTrackerService {
    * @param createBotTrackerDto - payeeId and callLog (stored as Prisma Json)
    */
   async create(createBotTrackerDto: CreateBotTrackerDto): Promise<BotTrackerDto> {
-    const { payeeId, callLog, appointmentId } = createBotTrackerDto;
-
-    const appointmentIdTrim = appointmentId?.trim() || null;
-    if (appointmentIdTrim) {
-      const appt = await this.prisma.appointment.findFirst({
-        where: { id: appointmentIdTrim, payeeId },
-        select: { id: true },
-      });
-      if (!appt) {
-        throw new BadRequestException(
-          'appointmentId does not match this payee or was not found',
-        );
-      }
-    }
+    const { payeeId, callLog } = createBotTrackerDto;
 
     // // Validate that the payee exists
     // const payeeExists = await this.prisma.payee.findUnique({
@@ -42,7 +29,6 @@ export class BotTrackerService {
       data: {
         payeeId,
         callLog: callLog as Prisma.InputJsonValue,
-        ...(appointmentIdTrim && { appointmentId: appointmentIdTrim }),
       },
     });
 
@@ -61,14 +47,6 @@ export class BotTrackerService {
     });
 
     return trackers;
-  }
-
-  /** Live / historical call lines for one appointment only (excludes other visits for the same payee). */
-  async findByAppointmentId(appointmentId: string): Promise<BotTrackerDto[]> {
-    return this.prisma.botTracker.findMany({
-      where: { appointmentId },
-      orderBy: { createdAt: 'desc' },
-    });
   }
 
   /**
