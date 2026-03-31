@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Controller,
   Post,
   Body,
@@ -7,7 +6,6 @@ import {
   Param,
   Put,
   Delete,
-  Query,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -17,7 +15,6 @@ import {
   ApiOperation,
   ApiBearerAuth,
   ApiParam,
-  ApiQuery,
   ApiResponse,
 } from '@nestjs/swagger';
 import { BotTrackerService } from './bot-tracker.service';
@@ -60,35 +57,6 @@ export class BotTrackerController {
   }
 
   /**
-   * List trackers by query (preferred for dashboards): avoids multi-segment paths that some proxies mishandle.
-   * `GET /bot-trackers?appointmentId=...` or `?payeeId=...` (exactly one required).
-   */
-  @Get()
-  @ApiOperation({
-    summary: 'List bot trackers by query',
-    description:
-      'Pass `appointmentId` for lines scoped to one visit, or `payeeId` for all lines for that patient.',
-  })
-  @ApiQuery({ name: 'appointmentId', required: false })
-  @ApiQuery({ name: 'payeeId', required: false })
-  async findByQuery(
-    @Query('appointmentId') appointmentId?: string,
-    @Query('payeeId') payeeId?: string,
-  ) {
-    const appt = appointmentId?.trim();
-    const payee = payeeId?.trim();
-    if (appt) {
-      return this.botTrackerService.findByAppointmentId(appt);
-    }
-    if (payee) {
-      return this.botTrackerService.findByPayeeId(payee);
-    }
-    throw new BadRequestException(
-      'Provide query parameter appointmentId or payeeId',
-    );
-  }
-
-  /**
    * Get all tracker records for a specific payee
    */
   @Get('payee/:payeeId')
@@ -104,24 +72,6 @@ export class BotTrackerController {
   })
   async findByPayeeId(@Param('payeeId') payeeId: string) {
     return this.botTrackerService.findByPayeeId(payeeId);
-  }
-
-  /**
-   * Get tracker records for a single appointment (call activity is not mixed with other appointments).
-   */
-  @Get('appointment/:appointmentId')
-  @ApiOperation({
-    summary: 'Get bot tracker records by appointment ID',
-    description:
-      'Returns call log lines scoped to this appointment only; same payee’s other visits are excluded.',
-  })
-  @ApiParam({
-    name: 'appointmentId',
-    description: 'UUID of the appointment',
-    example: 'appointment-uuid-here',
-  })
-  async findByAppointmentId(@Param('appointmentId') appointmentId: string) {
-    return this.botTrackerService.findByAppointmentId(appointmentId);
   }
 
   /**

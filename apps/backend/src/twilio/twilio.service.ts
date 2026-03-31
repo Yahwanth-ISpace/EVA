@@ -15,24 +15,20 @@ const apiToken = process.env.VERIFICATIONS_API_TOKEN?.trim();
 
 const client = twilio(accountSid, authToken);
 
-/** Outbound call context stored when placing a call; consumed once when the media stream starts (Twilio may omit WS query params). */
-export type OutboundCallContext = { payeeId: string; appointmentId?: string };
-
-const callSidToOutboundContext = new Map<string, OutboundCallContext>();
+/** In-memory map: call SID → payeeId, so the media stream can resolve payeeId when the WebSocket URL omits query params (e.g. some Twilio flows). */
+const callSidToPayeeId = new Map<string, string>();
 
 @Injectable()
 export class TwilioService {
   /**
-   * Resolve payeeId (and optional appointmentId) for an outbound call from its Twilio call SID.
-   * One-time read; removes the entry so the same SID is not applied twice.
+   * Resolve payeeId for an outbound call from its Twilio call SID.
+   * Used by the media stream when the stream URL does not include payeeId (e.g. query params not passed through).
    */
-  consumeOutboundCallContext(
-    callSid: string | null,
-  ): OutboundCallContext | null {
+  getPayeeIdForCall(callSid: string | null): string | null {
     if (!callSid?.trim()) return null;
-    const ctx = callSidToOutboundContext.get(callSid) ?? null;
-    if (ctx) callSidToOutboundContext.delete(callSid);
-    return ctx;
+    const payeeId = callSidToPayeeId.get(callSid) ?? null;
+    if (payeeId) callSidToPayeeId.delete(callSid); // one-time use
+    return payeeId;
   }
 
   /**
@@ -96,25 +92,20 @@ export class TwilioService {
    * Make outbound call using Twilio telephony infrastructure.
    * Stores payeeId by call SID so the media stream can load patient details even if the stream URL omits query params.
    */
-  async makeCall(to: string, payeeId: string, appointmentId?: string | null) {
+  async makeCall(to: string, payeeId: string) {
     if (!fromNumber) {
       throw new Error('TWILIO_PHONE_NUMBER environment variable is not set.');
     }
 
-    const apptQs = appointmentId?.trim()
-      ? `&appointmentId=${encodeURIComponent(appointmentId.trim())}`
-      : '';
     const call = await client.calls.create({
       to,
       from: fromNumber,
-      url: `${backendBaseUrl}/twilio/inbound-stream?payeeId=${encodeURIComponent(payeeId)}${apptQs}`,
+      url: `${backendBaseUrl}/twilio/inbound-stream?payeeId=${encodeURIComponent(payeeId)}`,
       record: true,
     });
 
     if (call?.sid && payeeId) {
-      const ctx: OutboundCallContext = { payeeId };
-      if (appointmentId?.trim()) ctx.appointmentId = appointmentId.trim();
-      callSidToOutboundContext.set(call.sid, ctx);
+      callSidToPayeeId.set(call.sid, payeeId);
     }
     return call;
   }

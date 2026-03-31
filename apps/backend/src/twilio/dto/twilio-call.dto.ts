@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsNotEmpty, IsString } from 'class-validator';
 
 /** Body for `POST /twilio/call` — start outbound verification call. */
 export class TwilioInitiateCallDto {
@@ -14,15 +14,6 @@ export class TwilioInitiateCallDto {
     description: 'Payee (patient) ID — links stream to verification requirement.',
   })
   payeeId: string;
-
-  @ApiPropertyOptional({
-    example: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
-    description:
-      'When set, verification transcript and extracted data are stored for this appointment only.',
-  })
-  @IsOptional()
-  @IsString()
-  appointmentId?: string;
 }
 
 /** Body for `POST /twilio/call-ivr-and-bypass`. */

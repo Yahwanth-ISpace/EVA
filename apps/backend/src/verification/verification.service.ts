@@ -4,7 +4,6 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import * as fs from 'fs';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
@@ -162,7 +161,6 @@ export class VerificationService {
     },
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
-    appointmentId?: string | null,
   ) {
     if (!payeeId) {
       throw new BadRequestException('payeeId is required');
@@ -172,7 +170,6 @@ export class VerificationService {
       extracted as Record<string, string | null | undefined>,
       transcriptToAppend,
       verificationRequirementId,
-      appointmentId ?? null,
     );
   }
 
@@ -212,7 +209,6 @@ export class VerificationService {
    * Merge extracted insurance data into the current verification for a payee (used by media-stream flow).
    * Finds or creates a recent verification and updates only the provided fields; optionally appends transcript.
    * When verificationRequirementId is set, stores full extracted in extractedData (Json); legacy keys are also set when present.
-   * When appointmentId is set, only merges with verifications for that appointment (separate visits for the same payee).
    */
   async mergeExtractedData(
     payeeId: string,
@@ -224,34 +220,15 @@ export class VerificationService {
     }> | Record<string, string | null | undefined>,
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
-    appointmentId?: string | null,
   ) {
     const payee = await this.prisma.payee.findUnique({
       where: { id: payeeId },
     });
     if (!payee) throw new NotFoundException('Payee not found');
 
-    const appointmentIdTrim = appointmentId?.trim() || null;
-    if (appointmentIdTrim) {
-      const appt = await this.prisma.appointment.findFirst({
-        where: { id: appointmentIdTrim, payeeId },
-        select: { id: true },
-      });
-      if (!appt) {
-        throw new NotFoundException(
-          'Appointment not found for this payee',
-        );
-      }
-    }
-
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    const where: Prisma.VerificationWhereInput = {
-      payeeId,
-      createdAt: { gte: oneHourAgo },
-      appointmentId: appointmentIdTrim,
-    };
     const existing = await this.prisma.verification.findFirst({
-      where,
+      where: { payeeId, createdAt: { gte: oneHourAgo } },
       orderBy: { createdAt: 'desc' },
       include: { payee: true },
     });
@@ -269,11 +246,7 @@ export class VerificationService {
       }
     }
 
-    const updatePayload: {
-      transcript?: string;
-      extractedData: Record<string, string | null>;
-      verificationRequirementId?: string | null;
-    } = {
+    const updatePayload: { transcript?: string; extractedData: Record<string, string | null>; verificationRequirementId?: string | null } = {
       extractedData: merged,
     };
     if (transcriptToAppend?.trim()) {
@@ -297,7 +270,6 @@ export class VerificationService {
       transcript: updatePayload.transcript ?? transcriptToAppend ?? '',
       extractedData: merged,
       ...(verificationRequirementId && { verificationRequirementId }),
-      ...(appointmentIdTrim && { appointmentId: appointmentIdTrim }),
     };
     return this.prisma.verification.create({
       data: createData,
@@ -416,14 +388,7 @@ export class VerificationService {
     },
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
-    appointmentId?: string | null,
   ) {
-    return this.mergeExtractedData(
-      payeeId,
-      extracted,
-      transcriptToAppend,
-      verificationRequirementId,
-      appointmentId ?? null,
-    );
+    return this.mergeExtractedData(payeeId, extracted, transcriptToAppend, verificationRequirementId);
   }
 }

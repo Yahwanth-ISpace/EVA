@@ -1,8 +1,7 @@
-/** Row from GET /appointments/:id/bot-trackers (or legacy /bot-trackers APIs) */
+/** Row from GET /bot-trackers/payee/:payeeId */
 export type BotTrackerRecord = {
   id: string;
   payeeId: string;
-  appointmentId?: string | null;
   callLog?: unknown;
   createdAt: string;
   /** Legacy field if API still returns old shape */

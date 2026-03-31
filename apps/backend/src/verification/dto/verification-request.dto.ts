@@ -44,12 +44,4 @@ export class PushExtractedDto {
   @IsOptional()
   @IsString()
   transcript?: string;
-
-  @ApiPropertyOptional({
-    description:
-      'When set, upsert applies only to verifications for this appointment (same payee can have one row per visit).',
-  })
-  @IsOptional()
-  @IsString()
-  appointmentId?: string;
 }

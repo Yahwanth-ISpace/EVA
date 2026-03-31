@@ -1,5 +1,5 @@
-import { IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
 /** Body for POST /bot-trackers — live call lines are stored as JSON (usually a string). */
 export class CreateBotTrackerDto {
@@ -15,12 +15,4 @@ export class CreateBotTrackerDto {
   @IsNotEmpty()
   @IsString()
   callLog: string;
-
-  @ApiPropertyOptional({
-    description:
-      'Tie this line to a specific appointment so dashboards do not mix calls across visits.',
-  })
-  @IsOptional()
-  @IsUUID()
-  appointmentId?: string;
 }

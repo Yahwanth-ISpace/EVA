@@ -78,13 +78,11 @@ export class VerificationController {
     @Param('payeeId') payeeId: string,
     @Body() body: PushExtractedDto,
   ) {
-    const { transcript, appointmentId, ...extracted } = body;
+    const { transcript, ...extracted } = body;
     return this.verificationService.pushExtractedData(
       payeeId,
       extracted,
       transcript ?? undefined,
-      undefined,
-      appointmentId?.trim() || null,
     );
   }
 
@@ -115,13 +113,11 @@ export class VerificationController {
     @Param('payeeId') payeeId: string,
     @Body() body: Record<string, string | null | undefined>,
   ) {
-    const { transcript, appointmentId, ...extracted } = body;
+    const { transcript, ...extracted } = body;
     const verification = await this.verificationService.verifyFromExtractedCall(
       payeeId,
       extracted,
       transcript ?? undefined,
-      undefined,
-      appointmentId?.trim() || null,
     );
     const extractedResponse = await this.verificationService.getExtractedForResponse(verification.id);
     return {
