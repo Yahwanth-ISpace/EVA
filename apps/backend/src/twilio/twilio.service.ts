@@ -15,20 +15,30 @@ const apiToken = process.env.VERIFICATIONS_API_TOKEN?.trim();
 
 const client = twilio(accountSid, authToken);
 
-/** In-memory map: call SID → payeeId, so the media stream can resolve payeeId when the WebSocket URL omits query params (e.g. some Twilio flows). */
-const callSidToPayeeId = new Map<string, string>();
+/** In-memory map: call SID → stream context when Twilio omits query params on the WebSocket URL. */
+export type CallStreamContext = {
+  payeeId: string;
+  appointmentId: string | null;
+};
+
+const callSidToStreamContext = new Map<string, CallStreamContext>();
 
 @Injectable()
 export class TwilioService {
   /**
-   * Resolve payeeId for an outbound call from its Twilio call SID.
-   * Used by the media stream when the stream URL does not include payeeId (e.g. query params not passed through).
+   * Resolve payeeId + optional appointmentId for an outbound call from its Twilio call SID.
+   * Used when the media stream WebSocket URL omits query params.
    */
-  getPayeeIdForCall(callSid: string | null): string | null {
+  getStreamContextForCall(callSid: string | null): CallStreamContext | null {
     if (!callSid?.trim()) return null;
-    const payeeId = callSidToPayeeId.get(callSid) ?? null;
-    if (payeeId) callSidToPayeeId.delete(callSid); // one-time use
-    return payeeId;
+    const ctx = callSidToStreamContext.get(callSid) ?? null;
+    if (ctx) callSidToStreamContext.delete(callSid);
+    return ctx;
+  }
+
+  /** @deprecated Prefer getStreamContextForCall */
+  getPayeeIdForCall(callSid: string | null): string | null {
+    return this.getStreamContextForCall(callSid)?.payeeId ?? null;
   }
 
   /**
@@ -90,22 +100,33 @@ export class TwilioService {
 
   /**
    * Make outbound call using Twilio telephony infrastructure.
-   * Stores payeeId by call SID so the media stream can load patient details even if the stream URL omits query params.
+   * Stores payeeId (and optional appointmentId) by call SID for the media stream when the WS URL omits query params.
    */
-  async makeCall(to: string, payeeId: string) {
+  async makeCall(
+    to: string,
+    payeeId: string,
+    appointmentId?: string | null,
+  ) {
     if (!fromNumber) {
       throw new Error('TWILIO_PHONE_NUMBER environment variable is not set.');
     }
 
+    const apptId = appointmentId?.trim();
+    const apptQ = apptId
+      ? `&appointmentId=${encodeURIComponent(apptId)}`
+      : '';
     const call = await client.calls.create({
       to,
       from: fromNumber,
-      url: `${backendBaseUrl}/twilio/inbound-stream?payeeId=${encodeURIComponent(payeeId)}`,
+      url: `${backendBaseUrl}/twilio/inbound-stream?payeeId=${encodeURIComponent(payeeId)}${apptQ}`,
       record: true,
     });
 
     if (call?.sid && payeeId) {
-      callSidToPayeeId.set(call.sid, payeeId);
+      callSidToStreamContext.set(call.sid, {
+        payeeId,
+        appointmentId: apptId || null,
+      });
     }
     return call;
   }

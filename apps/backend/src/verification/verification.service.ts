@@ -79,6 +79,7 @@ export class VerificationService {
           createdAt: {
             gte: oneHourAgo, // Only consider recent verifications (within last hour)
           },
+          appointmentId: null,
         },
         orderBy: { createdAt: 'desc' },
         include: { payee: true },
@@ -161,6 +162,7 @@ export class VerificationService {
     },
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
+    appointmentId?: string | null,
   ) {
     if (!payeeId) {
       throw new BadRequestException('payeeId is required');
@@ -170,6 +172,7 @@ export class VerificationService {
       extracted as Record<string, string | null | undefined>,
       transcriptToAppend,
       verificationRequirementId,
+      appointmentId,
     );
   }
 
@@ -220,18 +223,41 @@ export class VerificationService {
     }> | Record<string, string | null | undefined>,
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
+    appointmentId?: string | null,
   ) {
     const payee = await this.prisma.payee.findUnique({
       where: { id: payeeId },
     });
     if (!payee) throw new NotFoundException('Payee not found');
 
+    const apptId = appointmentId?.trim() || null;
+    if (apptId) {
+      const appt = await this.prisma.appointment.findFirst({
+        where: { id: apptId, payeeId },
+      });
+      if (!appt) {
+        throw new BadRequestException(
+          'appointmentId does not match this payee or was not found',
+        );
+      }
+    }
+
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    const existing = await this.prisma.verification.findFirst({
-      where: { payeeId, createdAt: { gte: oneHourAgo } },
-      orderBy: { createdAt: 'desc' },
-      include: { payee: true },
-    });
+    const existing = apptId
+      ? await this.prisma.verification.findFirst({
+          where: { payeeId, appointmentId: apptId },
+          orderBy: { createdAt: 'desc' },
+          include: { payee: true },
+        })
+      : await this.prisma.verification.findFirst({
+          where: {
+            payeeId,
+            createdAt: { gte: oneHourAgo },
+            appointmentId: null,
+          },
+          orderBy: { createdAt: 'desc' },
+          include: { payee: true },
+        });
 
     const hasValue = (v: string | null | undefined) =>
       v !== null && v !== undefined && String(v).trim().length > 0;
@@ -270,6 +296,7 @@ export class VerificationService {
       transcript: updatePayload.transcript ?? transcriptToAppend ?? '',
       extractedData: merged,
       ...(verificationRequirementId && { verificationRequirementId }),
+      ...(apptId && { appointmentId: apptId }),
     };
     return this.prisma.verification.create({
       data: createData,
@@ -353,12 +380,20 @@ export class VerificationService {
   async startVerificationCall(
     payeeId: string,
     verificationRequirementId?: string | null,
+    appointmentId?: string | null,
   ): Promise<{ id: string } | null> {
     const payee = await this.prisma.payee.findUnique({
       where: { id: payeeId },
     });
     if (!payee) return null;
-    const data: { payeeId: string; transcript: string; extractedData: Record<string, never>; verificationRequirementId?: string } = {
+    const apptId = appointmentId?.trim() || undefined;
+    const data: {
+      payeeId: string;
+      transcript: string;
+      extractedData: Record<string, never>;
+      verificationRequirementId?: string;
+      appointmentId?: string;
+    } = {
       payeeId,
       transcript: 'Call started.',
       extractedData: {},
@@ -366,6 +401,7 @@ export class VerificationService {
     if (verificationRequirementId) {
       data.verificationRequirementId = verificationRequirementId;
     }
+    if (apptId) data.appointmentId = apptId;
     const record = await this.prisma.verification.create({
       data,
       select: { id: true },
@@ -388,7 +424,14 @@ export class VerificationService {
     },
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
+    appointmentId?: string | null,
   ) {
-    return this.mergeExtractedData(payeeId, extracted, transcriptToAppend, verificationRequirementId);
+    return this.mergeExtractedData(
+      payeeId,
+      extracted,
+      transcriptToAppend,
+      verificationRequirementId,
+      appointmentId,
+    );
   }
 }

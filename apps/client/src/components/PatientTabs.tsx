@@ -8,13 +8,13 @@ import {
 } from "../redux/actions/appointmentsActions";
 import type { AppDispatch, RootState } from "../redux/store";
 import type { AppointmentRecord } from "../redux/types/appointmentsTypes";
-import type { VerificationRecord } from "../redux/types/verificationTypes";
 import AppointmentCardUnified from "./AppointmentCardUnified";
 import { api } from "../utils/api";
 import {
   isCallActiveFromTrackers,
 } from "../utils/botTracker";
 import type { BotTrackerRecord } from "../utils/botTracker";
+import { getVerificationForAppointment } from "../utils/verificationDisplay";
 
 const SkeletonCard = () => (
   <div className="w-full max-w-sm rounded-2xl overflow-hidden bg-slate-50 border border-slate-100 animate-pulse min-h-[160px] flex flex-col relative shadow-[0_1px_3px_0_rgba(0,0,0,0.08),0_1px_2px_-1px_rgba(0,0,0,0.06)]">
@@ -29,13 +29,6 @@ const SkeletonCard = () => (
     <div className="absolute bottom-4 right-4 w-9 h-9 bg-slate-200 rounded-lg" />
   </div>
 );
-
-function getVerificationForPayee(
-  verifications: VerificationRecord[],
-  payeeId: string,
-): VerificationRecord | undefined {
-  return verifications.find((v) => v.payee?.id === payeeId);
-}
 
 export default function PatientTabs() {
   const navigate = useNavigate();
@@ -128,9 +121,14 @@ export default function PatientTabs() {
         ) : (
           <div className="grid gap-5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 w-full">
             {appointments.map((appt: AppointmentRecord) => {
-              const verification = getVerificationForPayee(
+              const samePayeeCount = appointments.filter(
+                (a) => a.payeeId === appt.payeeId,
+              ).length;
+              const verification = getVerificationForAppointment(
                 verifications,
+                appt.id,
                 appt.payeeId,
+                samePayeeCount,
               );
               const isVerified = Boolean(verification);
               const isCallInProgress = isCallActiveFromTrackers(

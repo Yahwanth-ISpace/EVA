@@ -34,6 +34,8 @@ export interface VerificationRecord {
   id: string;
   payee: Payee;
   payeeId?: string;
+  /** When set, this verification belongs to a specific appointment visit. */
+  appointmentId?: string | null;
   transcript: string;
   createdAt?: string;
   extractedData?: Record<string, string | null> | null;

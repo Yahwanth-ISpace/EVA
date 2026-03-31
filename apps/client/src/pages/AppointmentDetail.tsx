@@ -11,7 +11,6 @@ import {
 } from "react";
 import type { AppDispatch, RootState } from "../redux/store";
 import Navbar from "../components/Navbar";
-import type { VerificationRecord } from "../redux/types/verificationTypes";
 import type { AppointmentRecord } from "../redux/types/appointmentsTypes";
 import Icon from "../components/Icons";
 import { api } from "../utils/api";
@@ -24,7 +23,10 @@ import {
   CallActivitySection,
   type CallFooterPhase,
 } from "../components/CallActivitySection";
-import { getVerificationFieldRows } from "../utils/verificationDisplay";
+import {
+  getVerificationFieldRows,
+  getVerificationForAppointment,
+} from "../utils/verificationDisplay";
 import { getVerifications } from "../redux/actions/verificationActions";
 
 const STATIC_FIELDS = [
@@ -36,13 +38,6 @@ const STATIC_FIELDS = [
   { label: "Minor", value: "10%" },
   { label: "Group ID", value: "M01298" },
 ];
-
-function getVerificationForPayee(
-  verifications: VerificationRecord[],
-  payeeId: string,
-): VerificationRecord | undefined {
-  return verifications.find((v) => v.payee?.id === payeeId);
-}
 
 function formatAppointmentWhen(iso: string | undefined): string {
   if (!iso) return "—";
@@ -316,8 +311,21 @@ export default function AppointmentDetail() {
         (fetchedAppointment !== null && fetchedAppointment.id !== id)),
   );
 
+  const samePayeeAppointmentCount = useMemo(
+    () =>
+      appointment
+        ? appointments.filter((a) => a.payeeId === appointment.payeeId).length
+        : 0,
+    [appointments, appointment],
+  );
+
   const verification = appointment
-    ? getVerificationForPayee(verifications, appointment.payeeId)
+    ? getVerificationForAppointment(
+        verifications,
+        appointment.id,
+        appointment.payeeId,
+        samePayeeAppointmentCount,
+      )
     : undefined;
   const [liveLogs, setLiveLogs] = useState<BotTrackerRecord[]>([]);
   const [callLogTab, setCallLogTab] = useState<"live" | "transcript">("live");
