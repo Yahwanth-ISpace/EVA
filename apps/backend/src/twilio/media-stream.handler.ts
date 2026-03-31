@@ -298,6 +298,8 @@ interface StreamState {
   orderedFields: string[];
   /** When set, verification is linked to this requirement and extractedData is stored in Verification.extractedData. */
   verificationRequirementId: string | null;
+  /** When set, verification rows are scoped to this appointment (not merged across visits). */
+  appointmentId: string | null;
   callEnded: boolean;
   lastSpeakTime: number;
   onHold: boolean;
@@ -332,6 +334,7 @@ export class MediaStreamHandlerService {
     ws: WebSocket,
     payeeId?: string | null,
     mode?: string | null,
+    appointmentId?: string | null,
   ): void {
     const isIvrBypass = mode === 'ivr-bypass';
     const state: StreamState = {
@@ -345,6 +348,7 @@ export class MediaStreamHandlerService {
       extractedData: {},
       orderedFields: [],
       verificationRequirementId: null,
+      appointmentId: appointmentId?.trim() || null,
       callEnded: false,
       lastSpeakTime: 0,
       onHold: false,
@@ -436,6 +440,7 @@ export class MediaStreamHandlerService {
           state.extractedData,
           fullTranscript,
           state.verificationRequirementId,
+          state.appointmentId,
         )
         .then(() => {})
         .catch((e) =>
@@ -1188,12 +1193,15 @@ export class MediaStreamHandlerService {
         state.callSid = msg?.start?.callSid ?? msg?.callSid ?? null;
         if (!state.mode || state.mode === 'eva') {
           // Resolve payeeId from URL param or from call SID (stored when makeCall was used), so patient details are available before greeting
-          if (!state.payeeId?.trim() && state.callSid) {
-            const fromCallSid = this.twilioService.getPayeeIdForCall(
+          if (state.callSid) {
+            const ctx = this.twilioService.getStreamContextForCall(
               state.callSid,
             );
-            if (fromCallSid) {
-              state.payeeId = fromCallSid;
+            if (ctx) {
+              if (!state.payeeId?.trim()) state.payeeId = ctx.payeeId;
+              if (!state.appointmentId?.trim() && ctx.appointmentId) {
+                state.appointmentId = ctx.appointmentId;
+              }
             }
           }
           void pushLiveTracker(

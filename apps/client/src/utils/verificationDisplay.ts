@@ -98,3 +98,26 @@ export function getVerificationFieldRows(
       value: String(value),
     }));
 }
+
+/**
+ * Prefer verification rows linked to this appointment.
+ * Legacy rows without `appointmentId` are only reused when this payee has a single appointment
+ * (otherwise the same row would incorrectly appear on every visit).
+ */
+export function getVerificationForAppointment(
+  verifications: VerificationRecord[],
+  appointmentId: string,
+  payeeId: string,
+  samePayeeAppointmentCount?: number,
+): VerificationRecord | undefined {
+  const linked = verifications.find((v) => v.appointmentId === appointmentId);
+  if (linked) return linked;
+  if (samePayeeAppointmentCount !== 1) return undefined;
+  const unlinked = verifications.filter(
+    (v) =>
+      v.payee?.id === payeeId &&
+      (v.appointmentId == null || v.appointmentId === ""),
+  );
+  if (unlinked.length === 1) return unlinked[0];
+  return undefined;
+}
