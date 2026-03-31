@@ -24,10 +24,10 @@ export default function AppointmentCardUnified({
   };
 
   const statusLabel = isVerified
-    ? "Verified"
+    ? "verified"
     : isCallInProgress
-      ? "In progress"
-      : "Scheduled";
+      ? "in progress"
+      : "scheduled";
 
   const statusClass = isVerified
     ? "bg-emerald-50 text-emerald-700 border border-emerald-100"

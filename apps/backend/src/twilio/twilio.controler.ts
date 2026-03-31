@@ -6,18 +6,25 @@ import {
   Body,
   Res,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import {
+  ApiBearerAuth,
   ApiBody,
   ApiOperation,
   ApiProduces,
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
+import { JwtAuthGuard } from 'src/auth/guards/jwtAuthGuard';
 import { Response } from 'express';
 import { TwilioService } from './twilio.service';
 import { ElevenLabsService } from '../voice/elevenlabs.service';
-import { TwilioCallIvrDto, TwilioInitiateCallDto } from './dto/twilio-call.dto';
+import {
+  TwilioCallIvrDto,
+  TwilioEndCallDto,
+  TwilioInitiateCallDto,
+} from './dto/twilio-call.dto';
 
 const backendBaseUrl = (process.env.BACKEND_URL || '').trim() || `http://localhost:${process.env.PORT ?? 3000}`;
 
@@ -153,13 +160,19 @@ export class TwilioController {
   @ApiOperation({
     summary: 'Connect call to EVA media stream (TwiML)',
     description:
-      'Returns `<Connect><Stream url="ws(s)://.../twilio/media-stream?payeeId=...">`. Query `payeeId` or `INBOUND_PAYEE_ID` env.',
+      'Returns `<Connect><Stream url="ws(s)://.../twilio/media-stream?payeeId=...">`. Optional `appointmentId` scopes verification to that visit. Query `payeeId` or `INBOUND_PAYEE_ID` env.',
   })
   @ApiQuery({ name: 'payeeId', required: false, example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
+  @ApiQuery({
+    name: 'appointmentId',
+    required: false,
+    description: 'Optional; ties saved verification to this appointment.',
+  })
   @ApiProduces('text/xml')
   async handleInboundStreamPost(
     @Body() body: Record<string, string>,
     @Query('payeeId') payeeIdQuery: string,
+    @Query('appointmentId') appointmentIdQuery: string,
     @Res() res: Response,
   ) {
     const payeeId =
@@ -167,21 +180,38 @@ export class TwilioController {
       process.env.INBOUND_PAYEE_ID?.trim() ||
       body?.payeeId ||
       'inbound';
-    this.sendStreamTwiML(payeeId, res);
+    const appointmentId =
+      appointmentIdQuery?.trim() || body?.appointmentId?.trim() || undefined;
+    this.sendStreamTwiML(payeeId, res, appointmentId);
   }
 
   @Get('inbound-stream')
   @ApiOperation({ summary: 'Same as POST inbound-stream (GET for some Twilio configs)' })
   @ApiQuery({ name: 'payeeId', required: false })
+  @ApiQuery({ name: 'appointmentId', required: false })
   @ApiProduces('text/xml')
-  async handleInboundStreamGet(@Query('payeeId') payeeId: string, @Res() res: Response) {
+  async handleInboundStreamGet(
+    @Query('payeeId') payeeId: string,
+    @Query('appointmentId') appointmentId: string,
+    @Res() res: Response,
+  ) {
     const id = payeeId || process.env.INBOUND_PAYEE_ID?.trim() || 'inbound';
-    this.sendStreamTwiML(id, res);
+    this.sendStreamTwiML(id, res, appointmentId?.trim() || undefined);
   }
 
-  private sendStreamTwiML(payeeId: string, res: Response) {
-    const streamUrl =
-      getStreamBaseUrl() + '/twilio/media-stream?payeeId=' + encodeURIComponent(payeeId);
+  private sendStreamTwiML(
+    payeeId: string,
+    res: Response,
+    appointmentId?: string,
+  ) {
+    let streamUrl =
+      getStreamBaseUrl() +
+      '/twilio/media-stream?payeeId=' +
+      encodeURIComponent(payeeId);
+    if (appointmentId?.trim()) {
+      streamUrl +=
+        '&appointmentId=' + encodeURIComponent(appointmentId.trim());
+    }
 
     res.type('text/xml').send(`
       <Response>
@@ -269,7 +299,25 @@ export class TwilioController {
   })
   @ApiBody({ type: TwilioInitiateCallDto })
   async initiateCall(@Body() body: TwilioInitiateCallDto) {
-    return this.twilioService.makeCall(body.to, body.payeeId);
+    return this.twilioService.makeCall(
+      body.to,
+      body.payeeId,
+      body.appointmentId,
+    );
+  }
+
+  @Post('end-call')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('jwt-auth')
+  @ApiOperation({
+    summary: 'End active Twilio call',
+    description:
+      'Completes the call by Call SID (e.g. parsed from bot-tracker live events). Requires JWT.',
+  })
+  @ApiBody({ type: TwilioEndCallDto })
+  async endCall(@Body() body: TwilioEndCallDto) {
+    await this.twilioService.hangUp(body.callSid);
+    return { ok: true };
   }
 
   // STEP 2: Main IVR step handler

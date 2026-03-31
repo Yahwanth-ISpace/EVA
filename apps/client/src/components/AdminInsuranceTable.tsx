@@ -2,6 +2,7 @@ import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css"; // Ensure skeleton CSS is imported
 import { Link } from "react-router-dom";
 import type { VerificationRecord } from "../redux/types/verificationTypes";
+import { getVerificationFieldRows } from "../utils/verificationDisplay";
 
 interface Props {
   records: VerificationRecord[];
@@ -16,10 +17,7 @@ export default function AdminInsuranceTable({ records, loading }: Props) {
         <thead className="bg-indigo-100 text-gray-900">
           <tr>
             <th className="px-6 py-3">Name</th>
-            <th className="px-6 py-3">Coverage</th>
-            <th className="px-6 py-3">Copay</th>
-            <th className="px-6 py-3">Deductible</th>
-            <th className="px-6 py-3">Validity</th>
+            <th className="px-6 py-3">Verification fields</th>
             <th className="px-6 py-3">Action</th>
           </tr>
         </thead>
@@ -28,28 +26,25 @@ export default function AdminInsuranceTable({ records, loading }: Props) {
             // Skeleton loading rows
             [...Array(5)].map((_, i) => (
               <tr key={i} className="border-b bg-white">
-                {[...Array(6)].map(
-                  (
-                    _,
-                    j // 6 columns for this table
-                  ) => (
-                    <td key={j} className="px-6 py-4">
-                      <Skeleton height={20} width="100%" />
-                    </td>
-                  )
-                )}
+                {[...Array(3)].map((_, j) => (
+                  <td key={j} className="px-6 py-4">
+                    <Skeleton height={20} width="100%" />
+                  </td>
+                ))}
               </tr>
             ))
           ) : records.length === 0 ? (
             // Display message when no records are available
             <tr>
-              <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
+              <td colSpan={3} className="px-6 py-4 text-center text-gray-500">
                 No insurance records found.
               </td>
             </tr>
           ) : (
             // Actual data rows
-            records.map((record) => (
+            records.map((record) => {
+              const rows = getVerificationFieldRows(record);
+              return (
               <tr
                 key={record.id}
                 className="bg-white border-b hover:bg-indigo-50"
@@ -57,10 +52,22 @@ export default function AdminInsuranceTable({ records, loading }: Props) {
                 <td className="px-6 py-3">
                   {record.payee.firstName} {record.payee.lastName}
                 </td>
-                <td className="px-6 py-3">{record.coverage}</td>
-                <td className="px-6 py-3">{record.copay}</td>
-                <td className="px-6 py-3">{record.deductible}</td>
-                <td className="px-6 py-3">{record.validity}</td>
+                <td className="px-6 py-3 max-w-md">
+                  {rows.length === 0 ? (
+                    <span className="text-gray-400">—</span>
+                  ) : (
+                    <ul className="space-y-1 text-gray-700">
+                      {rows.map((r) => (
+                        <li key={r.key}>
+                          <span className="font-medium text-gray-800">
+                            {r.label}:
+                          </span>{" "}
+                          {r.value || "—"}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </td>
                 <td className="px-6 py-3">
                   <Link
                     to={`/insurance/${record.id}`}
@@ -70,7 +77,8 @@ export default function AdminInsuranceTable({ records, loading }: Props) {
                   </Link>
                 </td>
               </tr>
-            ))
+            );
+            })
           )}
         </tbody>
       </table>

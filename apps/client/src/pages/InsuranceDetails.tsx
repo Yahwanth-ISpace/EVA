@@ -1,9 +1,10 @@
 // src/pages/InsuranceDetails.tsx
 import { useParams } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import type { RootState, AppDispatch } from "../redux/store";
 import { getVerificationById } from "../redux/actions/verificationActions";
+import { getVerificationFieldRows } from "../utils/verificationDisplay";
 
 export default function InsuranceDetails() {
   const { id } = useParams();
@@ -19,6 +20,11 @@ export default function InsuranceDetails() {
       dispatch(getVerificationById(id));
     }
   }, [id, dispatch]);
+
+  const fieldRows = useMemo(
+    () => getVerificationFieldRows(verification ?? undefined),
+    [verification],
+  );
 
   if (loading) return <p className="p-6">Loading...</p>;
   if (error) return <p className="p-6 text-red-600">{error}</p>;
@@ -38,18 +44,17 @@ export default function InsuranceDetails() {
       <p>
         <strong>SSN:</strong> {verification.payee.ssn || "N/A"}
       </p>
-      <p>
-        <strong>Coverage:</strong> {verification.coverage || "N/A"}
-      </p>
-      <p>
-        <strong>Deductible:</strong> {verification.deductible || "N/A"}
-      </p>
-      <p>
-        <strong>Copay:</strong> {verification.copay || "N/A"}
-      </p>
-      <p>
-        <strong>Valid Till:</strong> {verification.validity || "N/A"}
-      </p>
+      {fieldRows.length > 0 ? (
+        <ul className="mt-3 space-y-2">
+          {fieldRows.map((row) => (
+            <li key={row.key}>
+              <strong>{row.label}:</strong> {row.value || "N/A"}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-gray-600">No extracted benefit fields yet.</p>
+      )}
       <p className="mt-4 text-gray-700">
         <strong>Transcript:</strong>
         <br />

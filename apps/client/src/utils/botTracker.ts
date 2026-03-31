@@ -1,7 +1,8 @@
-/** Row from GET /bot-trackers/payee/:payeeId */
+/** Row from GET /bot-trackers/appointment/:id or payee/:payeeId */
 export type BotTrackerRecord = {
   id: string;
   payeeId: string;
+  appointmentId?: string | null;
   callLog?: unknown;
   createdAt: string;
   /** Legacy field if API still returns old shape */
@@ -24,6 +25,28 @@ export function formatCallLogLine(record: BotTrackerRecord): string {
  * Call is "live" if the latest START/END pair is unclosed (START after last END).
  * Trackers are typically returned newest-first; we sort by time ascending.
  */
+/** Latest open CallSid from START/END markers in tracker lines (for dashboard end-call). */
+export function extractActiveCallSidFromTrackers(
+  trackers: BotTrackerRecord[],
+): string | null {
+  const chron = [...trackers].sort(
+    (a, b) =>
+      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  );
+  let openSid: string | null = null;
+  for (const t of chron) {
+    const line = formatCallLogLine(t);
+    if (line.includes("[CALL_EVENT] START")) {
+      const m = line.match(/callSid=([^\s]+)/);
+      const sid = m?.[1]?.trim();
+      openSid = sid && sid !== "unknown" ? sid : null;
+    } else if (line.includes("[CALL_EVENT] END")) {
+      openSid = null;
+    }
+  }
+  return openSid;
+}
+
 export function isCallActiveFromTrackers(
   trackers: BotTrackerRecord[],
 ): boolean {

@@ -60,7 +60,9 @@ async function bootstrap() {
   wss.on('connection', (ws: WebSocket, req: { url?: string }) => {
     const url = new URL(req.url || '', 'http://localhost');
     const payeeId = url.searchParams.get('payeeId');
-    mediaHandler.handleConnection(ws, payeeId);
+    const mode = url.searchParams.get('mode');
+    const appointmentId = url.searchParams.get('appointmentId');
+    mediaHandler.handleConnection(ws, payeeId, mode, appointmentId);
   });
 }
 bootstrap();
