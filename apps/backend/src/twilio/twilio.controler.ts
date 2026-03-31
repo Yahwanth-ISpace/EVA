@@ -44,6 +44,14 @@ function getStreamBaseUrl(): string {
   return base.replace(/^http/, 'ws').replace(/\/+$/, '');
 }
 
+/** TwiML attributes are XML; `&` in query strings must be escaped or Twilio rejects the document ("we're sorry"). */
+function escapeXmlAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;');
+}
+
 /**
  * TwilioController handles phone call infrastructure via Twilio.
  * IVR: Press 1 complaints, 2 register insurance, 3 latest offers, 4 talk to agent (hold 10s then dial).
@@ -213,7 +221,7 @@ export class TwilioController {
     res.type('text/xml').send(`
       <Response>
         <Connect>
-          <Stream url="${streamUrl}" />
+          <Stream url="${escapeXmlAttr(streamUrl)}" />
         </Connect>
       </Response>
     `);
@@ -235,7 +243,7 @@ export class TwilioController {
     res.type('text/xml').send(`
       <Response>
         <Connect>
-          <Stream url="${streamUrl}" />
+          <Stream url="${escapeXmlAttr(streamUrl)}" />
         </Connect>
       </Response>
     `);
