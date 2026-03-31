@@ -123,7 +123,7 @@ export class AppointmentService {
     });
   }
 
-  async findOne(id: string, user: { id: string; role: 'ADMIN' | 'PAYEE' }) {
+  async findOne(id: string, user: { userId: string; role: 'ADMIN' | 'PAYEE' }) {
     const appointment = await this.prisma.appointment.findUnique({
       where: { id },
       include: {
@@ -143,7 +143,7 @@ export class AppointmentService {
     }
 
     if (user.role === 'PAYEE') {
-      if (appointment.payee?.user?.id !== user.id) {
+      if (appointment.payee?.user?.id !== user.userId) {
         throw new ForbiddenException('Access denied to this appointment');
       }
     }

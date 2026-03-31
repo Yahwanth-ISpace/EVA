@@ -1,5 +1,5 @@
-import { useParams, useNavigate } from "react-router-dom";
-import { useSelector } from "react-redux";
+import { useParams, useNavigate, type NavigateFunction } from "react-router-dom";
+import { useDispatch, useSelector } from "react-redux";
 import {
   useCallback,
   useEffect,
@@ -7,8 +7,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
-import type { RootState } from "../redux/store";
+import type { AppDispatch, RootState } from "../redux/store";
 import Navbar from "../components/Navbar";
 import type { VerificationRecord } from "../redux/types/verificationTypes";
 import type { AppointmentRecord } from "../redux/types/appointmentsTypes";
@@ -24,6 +25,7 @@ import {
   type CallFooterPhase,
 } from "../components/CallActivitySection";
 import { getVerificationFieldRows } from "../utils/verificationDisplay";
+import { getVerifications } from "../redux/actions/verificationActions";
 
 const STATIC_FIELDS = [
   { label: "Family Deductible", value: "$20" },
@@ -72,9 +74,185 @@ function maskSsn(ssn: string | undefined | null): string {
   return "On file";
 }
 
+function SkeletonBar({ className = "" }: { className?: string }) {
+  return (
+    <div
+      className={`animate-pulse rounded-md bg-slate-200/70 ${className}`}
+      aria-hidden
+    />
+  );
+}
+
+function sectionHeading(title: string, subtitle: string): ReactNode {
+  return (
+    <div className="flex items-center gap-2 mb-4 sm:mb-5">
+      <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
+      <div>
+        <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
+          {title}
+        </h2>
+        <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
+function AppointmentDetailLoadingShell({ navigate }: { navigate: NavigateFunction }) {
+  return (
+    <div className="flex flex-col h-screen max-h-screen bg-gradient-to-b from-slate-50 to-slate-100/80 overflow-hidden pt-5">
+      <Navbar />
+
+      <div className="w-full flex-1 min-h-0 flex flex-col px-4 sm:px-6 lg:px-8 py-6 mx-auto w-full max-w-[min(1400px,100%)]">
+        <button
+          type="button"
+          onClick={() => navigate("/dashboard")}
+          className="group text-sm font-medium text-slate-600 hover:text-indigo-700 flex items-center gap-2 w-fit transition-colors"
+        >
+          <Icon iconName="leftArrow" iconColor="currentColor" size="xs" />
+          Back to dashboard
+        </button>
+
+        <div className="mt-4 relative flex-1 min-h-0 flex flex-col bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden ring-1 ring-slate-900/5">
+          <div className="absolute top-4 right-4 sm:top-6 z-10 md:right-[calc(min(440px,42vw)+1.25rem)]">
+            <SkeletonBar className="h-7 w-28 rounded-full" />
+          </div>
+
+          <div className="flex-1 min-h-0 pr-1 overflow-hidden flex flex-col">
+            <div className="flex flex-1 min-h-0 overflow-hidden flex-col md:flex-row md:items-stretch">
+              <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar">
+                <section className="p-6 sm:p-8 pt-14 sm:pt-7 border-b border-slate-100 bg-slate-50/40">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-indigo-600/90 mb-7">
+                    Appointment record
+                  </p>
+                  {sectionHeading(
+                    "Patient",
+                    "Demographics used for eligibility and verification.",
+                  )}
+                  <div className="flex flex-col lg:flex-row lg:items-start gap-8 lg:gap-10">
+                    <div className="shrink-0 flex justify-center lg:justify-start">
+                      <SkeletonBar className="w-28 h-28 sm:w-32 sm:h-32 rounded-2xl" />
+                    </div>
+                    <div className="min-w-0 flex-1 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      {Array.from({ length: 6 }, (_, i) => (
+                        <div key={i}>
+                          <SkeletonBar className="h-3 w-20 mb-2" />
+                          <SkeletonBar className="h-10 w-full rounded-lg" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="p-6 sm:p-8 border-b border-slate-100">
+                  {sectionHeading(
+                    "Visit & provider",
+                    "When and where care is scheduled; who is treating the patient.",
+                  )}
+                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                    <div>
+                      <SkeletonBar className="h-3 w-24 mb-2" />
+                      <SkeletonBar className="h-10 w-full rounded-lg" />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <SkeletonBar className="h-3 w-16 mb-2" />
+                      <SkeletonBar className="h-10 w-full rounded-lg" />
+                    </div>
+                    <div className="sm:col-span-2 lg:col-span-3">
+                      <SkeletonBar className="h-3 w-40 mb-2" />
+                      <SkeletonBar className="h-10 w-full rounded-lg" />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="p-6 sm:p-8 border-b border-slate-100">
+                  {sectionHeading(
+                    "Insurance verification",
+                    "Benefits confirmed on the call—what applies to this claim.",
+                  )}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {Array.from({ length: 4 }, (_, i) => (
+                      <div key={i}>
+                        <SkeletonBar className="h-3 w-28 mb-2" />
+                        <SkeletonBar className="h-10 w-full rounded-lg" />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="p-6 sm:p-8 pb-10 bg-white">
+                  {sectionHeading(
+                    "Benefit summary",
+                    "Plan-level limits and codes—use alongside verified coverage above.",
+                  )}
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {Array.from({ length: 6 }, (_, i) => (
+                      <div key={i}>
+                        <SkeletonBar className="h-3 w-24 mb-2" />
+                        <SkeletonBar className="h-10 w-full rounded-lg" />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </div>
+
+              <aside className="flex flex-col min-h-[min(52vh,480px)] md:min-h-0 w-full md:w-[min(440px,42vw)] shrink-0 border-t md:border-t-0 md:border-l border-slate-200 bg-slate-50/30 overflow-hidden">
+                <section className="flex flex-col flex-1 min-h-0 p-4 sm:p-5 border-0 bg-slate-50/40">
+                  {sectionHeading(
+                    "Call activity",
+                    "Live lines during the call; transcript after it ends.",
+                  )}
+                  <div className="rounded-xl border border-slate-200/90 bg-white overflow-hidden shadow-sm flex flex-col flex-1 min-h-0">
+                    <div
+                      className="flex flex-wrap items-stretch justify-start gap-0 border-b border-slate-200 bg-white px-2 pt-1 shrink-0"
+                      role="tablist"
+                      aria-label="Call activity"
+                    >
+                      <div className="relative px-4 py-3 text-sm font-semibold text-emerald-600 rounded-t-lg">
+                        <span className="inline-flex items-center gap-2">
+                          <span>Live</span>
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_0_2px_rgba(16,185,129,0.35)]"
+                            aria-hidden
+                          />
+                        </span>
+                        <span className="absolute bottom-0 left-4 right-4 h-0.5 rounded-full bg-emerald-500" />
+                      </div>
+                      <div className="relative px-4 py-3 text-sm font-semibold text-slate-500 rounded-t-lg">
+                        Transcript
+                      </div>
+                    </div>
+                    <div className="flex-1 min-h-[180px] p-4 space-y-3">
+                      {Array.from({ length: 8 }, (_, i) => (
+                        <SkeletonBar
+                          key={i}
+                          className={`h-3 rounded w-full ${
+                            i % 3 === 1
+                              ? "max-w-[88%]"
+                              : i % 3 === 2
+                                ? "max-w-[58%]"
+                                : ""
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <div className="p-3 border-t border-slate-200 shrink-0">
+                      <SkeletonBar className="h-10 w-full rounded-lg" />
+                    </div>
+                  </div>
+                </section>
+              </aside>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AppointmentDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const dispatch = useDispatch<AppDispatch>();
 
   const { appointments } = useSelector(
     (state: RootState) => state.appointmentsState,
@@ -83,7 +261,61 @@ export default function AppointmentDetail() {
     (state: RootState) => state.verificationsState,
   );
 
-  const appointment = appointments.find((a: AppointmentRecord) => a.id === id);
+  const appointmentFromStore = useMemo(
+    () =>
+      id
+        ? appointments.find((a: AppointmentRecord) => a.id === id)
+        : undefined,
+    [appointments, id],
+  );
+
+  const [fetchedAppointment, setFetchedAppointment] = useState<
+    AppointmentRecord | null | undefined
+  >(undefined);
+
+  useEffect(() => {
+    setFetchedAppointment(undefined);
+  }, [id]);
+
+  useEffect(() => {
+    if (!id || appointmentFromStore) return;
+    let cancelled = false;
+    api
+      .get<AppointmentRecord>(`/appointments/${id}`)
+      .then((data) => {
+        if (!cancelled) setFetchedAppointment(data);
+      })
+      .catch(() => {
+        if (!cancelled) setFetchedAppointment(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, appointmentFromStore]);
+
+  useEffect(() => {
+    if (verifications.length === 0) {
+      dispatch(getVerifications());
+    }
+  }, [dispatch, verifications.length]);
+
+  const remoteMatchesId =
+    fetchedAppointment != null && fetchedAppointment.id === id;
+  const appointment =
+    appointmentFromStore ??
+    (fetchedAppointment === null
+      ? undefined
+      : remoteMatchesId
+        ? fetchedAppointment
+        : undefined);
+
+  const loadingAppointment = Boolean(
+    id &&
+      !appointmentFromStore &&
+      (fetchedAppointment === undefined ||
+        (fetchedAppointment !== null && fetchedAppointment.id !== id)),
+  );
+
   const verification = appointment
     ? getVerificationForPayee(verifications, appointment.payeeId)
     : undefined;
@@ -180,45 +412,6 @@ export default function AppointmentDetail() {
     liveTailRef.current = { len: 0, tailId: "" };
   }, [appointment?.payeeId]);
 
-  if (!id || !appointment) {
-    return (
-      <div className="min-h-screen bg-slate-50/50 pt-5">
-        <Navbar />
-        <div className="w-full px-4 sm:px-6 py-8">
-          <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center shadow-sm">
-            <p className="text-slate-500">Appointment not found.</p>
-            <button
-              onClick={() => navigate("/dashboard")}
-              className="mt-4 text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-x-3 w-400"
-            >
-              <Icon iconName="leftArrow" iconColor="currentColor" size="xs" />
-              Back to Dashboard
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const payee = appointment.payee;
-  const office = appointment.office;
-  const provider = appointment.provider;
-  const dobFormatted = payee.dob
-    ? new Date(payee.dob).toLocaleDateString(undefined, {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      })
-    : "—";
-  const officeAddressLine = office
-    ? [
-        office.address,
-        [office.city, office.state].filter(Boolean).join(", "),
-        office.zip,
-      ]
-        .filter(Boolean)
-        .join(", ")
-    : "—";
   const isCallInProgress = useMemo(
     () => isCallActiveFromTrackers(liveLogs),
     [liveLogs],
@@ -252,12 +445,78 @@ export default function AppointmentDetail() {
       setEndCallLoading(false);
     }
   }, [activeCallSid]);
+
+  if (!id) {
+    return (
+      <div className="min-h-screen bg-slate-50/50 pt-5">
+        <Navbar />
+        <div className="w-full px-4 sm:px-6 py-8">
+          <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center shadow-sm">
+            <p className="text-slate-500">Appointment not found.</p>
+            <button
+              type="button"
+              onClick={() => navigate("/dashboard")}
+              className="mt-4 text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-x-3 w-400"
+            >
+              <Icon iconName="leftArrow" iconColor="currentColor" size="xs" />
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadingAppointment) {
+    return <AppointmentDetailLoadingShell navigate={navigate} />;
+  }
+
+  if (!appointment) {
+    return (
+      <div className="min-h-screen bg-slate-50/50 pt-5">
+        <Navbar />
+        <div className="w-full px-4 sm:px-6 py-8">
+          <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center shadow-sm">
+            <p className="text-slate-500">Appointment not found.</p>
+            <button
+              type="button"
+              onClick={() => navigate("/dashboard")}
+              className="mt-4 text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-x-3 w-400"
+            >
+              <Icon iconName="leftArrow" iconColor="currentColor" size="xs" />
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const payee = appointment.payee;
+  const office = appointment.office;
+  const provider = appointment.provider;
+  const dobFormatted = payee.dob
+    ? new Date(payee.dob).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    : "—";
+  const officeAddressLine = office
+    ? [
+        office.address,
+        [office.city, office.state].filter(Boolean).join(", "),
+        office.zip,
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : "—";
   /** Verification workflow only: scheduled → in progress → verified */
   const applicationStatusLabel = verification
-    ? "verified"
+    ? "Verified"
     : isCallInProgress
-      ? "in progress"
-      : "scheduled";
+      ? "In progress"
+      : "Scheduled";
   const statusClass = verification
     ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
     : isCallInProgress
