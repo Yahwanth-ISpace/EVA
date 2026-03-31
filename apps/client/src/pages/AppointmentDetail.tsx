@@ -169,7 +169,7 @@ export default function AppointmentDetail() {
     const fetchLiveLogs = async () => {
       try {
         const data = await api.get<BotTrackerRecord[]>(
-          `/bot-trackers/appointment/${appointment.id}`,
+          `/appointments/${encodeURIComponent(appointment.id)}/bot-trackers`,
         );
         if (!cancelled) setLiveLogs(data);
       } catch {

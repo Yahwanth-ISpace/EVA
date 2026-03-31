@@ -74,7 +74,7 @@ export default function PatientTabs() {
         const pairs = await Promise.all(
           appointmentIds.map(async (appointmentId) => {
             const logs = await api.get<BotTrackerRecord[]>(
-              `/bot-trackers/appointment/${appointmentId}`,
+              `/appointments/${encodeURIComponent(appointmentId)}/bot-trackers`,
             );
             return [appointmentId, logs] as const;
           }),
