@@ -75,6 +75,24 @@ export class BotTrackerController {
   }
 
   /**
+   * Get tracker records for a single appointment (call activity is not mixed with other appointments).
+   */
+  @Get('appointment/:appointmentId')
+  @ApiOperation({
+    summary: 'Get bot tracker records by appointment ID',
+    description:
+      'Returns call log lines scoped to this appointment only; same payee’s other visits are excluded.',
+  })
+  @ApiParam({
+    name: 'appointmentId',
+    description: 'UUID of the appointment',
+    example: 'appointment-uuid-here',
+  })
+  async findByAppointmentId(@Param('appointmentId') appointmentId: string) {
+    return this.botTrackerService.findByAppointmentId(appointmentId);
+  }
+
+  /**
    * Get a specific tracker record by ID
    */
   @Get(':id')

@@ -8,7 +8,7 @@ import type { VerificationRecord } from "../types/verificationTypes";
 export const getVerifications = () => async (dispatch: any) => {
   dispatch({ type: apptypes.verifications.FETCH_VERIFICATIONS_REQUEST });
   try {
-    const data = await api.get<InsuranceRecord[]>("/verifications");
+    const data = await api.get<VerificationRecord[]>("/verifications");
     dispatch({
       type: apptypes.verifications.FETCH_VERIFICATIONS_SUCCESS,
       payload: data,

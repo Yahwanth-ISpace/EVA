@@ -87,21 +87,26 @@ model Office {
 }
 
 model Appointment {
-  id         String   @id @default(uuid()) @map("_id")
-  payee      Payee    @relation(fields: [payeeId], references: [id])
-  payeeId    String
-  provider   Provider @relation(fields: [providerId], references: [id])
-  providerId String
-  office     Office   @relation(fields: [officeId], references: [id])
-  officeId   String
-  date       DateTime
-  notes      String?
+  id            String          @id @default(uuid()) @map("_id")
+  payee         Payee           @relation(fields: [payeeId], references: [id])
+  payeeId       String
+  provider      Provider        @relation(fields: [providerId], references: [id])
+  providerId    String
+  office        Office          @relation(fields: [officeId], references: [id])
+  officeId      String
+  date          DateTime
+  notes         String?
+  verifications Verification[]
+  botTrackers   BotTracker[]
 }
 
 model Verification {
   id                      String                 @id @default(uuid()) @map("_id")
   payee                   Payee?                 @relation(fields: [payeeId], references: [id])
   payeeId                 String?
+  /// When set, this verification belongs to a specific scheduled visit (outbound call from appointment create).
+  appointment             Appointment?           @relation(fields: [appointmentId], references: [id])
+  appointmentId           String?
   verificationRequirement VerificationRequirement? @relation(fields: [verificationRequirementId], references: [id])
   verificationRequirementId String?
   /// Dynamic field values (key = field name from VerificationRequirement.verificationFields). Used when verificationRequirementId is set.
@@ -120,10 +125,13 @@ model Agent {
 }
 
 model BotTracker {
-  id        String   @id @default(uuid()) @map("_id")
-  payeeId   String
-  callLog   Json?
-  createdAt DateTime @default(now())
+  id            String       @id @default(uuid()) @map("_id")
+  payeeId       String
+  /// When set, live call lines belong only to this appointment (not shared across visits).
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+  appointmentId String?
+  callLog       Json?
+  createdAt     DateTime     @default(now())
 }
 
 enum Role {

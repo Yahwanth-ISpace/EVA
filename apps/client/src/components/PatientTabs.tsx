@@ -30,11 +30,15 @@ const SkeletonCard = () => (
   </div>
 );
 
-function getVerificationForPayee(
+function getVerificationForAppointment(
   verifications: VerificationRecord[],
+  appointmentId: string,
   payeeId: string,
 ): VerificationRecord | undefined {
-  return verifications.find((v) => v.payee?.id === payeeId);
+  return verifications.find(
+    (v) =>
+      v.payee?.id === payeeId && v.appointmentId === appointmentId,
+  );
 }
 
 export default function PatientTabs() {
@@ -49,18 +53,18 @@ export default function PatientTabs() {
   );
 
   const loading = loadingAppointments || loadingVerifications;
-  const [liveTrackersByPayee, setLiveTrackersByPayee] = useState<
+  const [liveTrackersByAppointment, setLiveTrackersByAppointment] = useState<
     Record<string, BotTrackerRecord[]>
   >({});
 
-  const payeeIds = useMemo(
-    () => Array.from(new Set(appointments.map((a) => a.payeeId).filter(Boolean))),
+  const appointmentIds = useMemo(
+    () => appointments.map((a) => a.id).filter(Boolean),
     [appointments],
   );
 
   useEffect(() => {
-    if (!payeeIds.length) {
-      setLiveTrackersByPayee({});
+    if (!appointmentIds.length) {
+      setLiveTrackersByAppointment({});
       return;
     }
 
@@ -68,17 +72,18 @@ export default function PatientTabs() {
     const fetchLogs = async () => {
       try {
         const pairs = await Promise.all(
-          payeeIds.map(async (payeeId) => {
+          appointmentIds.map(async (appointmentId) => {
             const logs = await api.get<BotTrackerRecord[]>(
-              `/bot-trackers/payee/${payeeId}`,
+              `/bot-trackers/appointment/${appointmentId}`,
             );
-            return [payeeId, logs] as const;
+            return [appointmentId, logs] as const;
           }),
         );
         if (cancelled) return;
         const next: Record<string, BotTrackerRecord[]> = {};
-        for (const [payeeId, logs] of pairs) next[payeeId] = logs;
-        setLiveTrackersByPayee(next);
+        for (const [appointmentId, logs] of pairs)
+          next[appointmentId] = logs;
+        setLiveTrackersByAppointment(next);
       } catch {
         // Keep UI resilient even if bot tracker endpoint fails.
       }
@@ -90,7 +95,7 @@ export default function PatientTabs() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [payeeIds]);
+  }, [appointmentIds]);
 
   const handleOpenDetails = (appointmentId: string) => {
     navigate(`/appointments/${appointmentId}`);
@@ -128,13 +133,14 @@ export default function PatientTabs() {
         ) : (
           <div className="grid gap-5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 w-full">
             {appointments.map((appt: AppointmentRecord) => {
-              const verification = getVerificationForPayee(
+              const verification = getVerificationForAppointment(
                 verifications,
+                appt.id,
                 appt.payeeId,
               );
               const isVerified = Boolean(verification);
               const isCallInProgress = isCallActiveFromTrackers(
-                liveTrackersByPayee[appt.payeeId] ?? [],
+                liveTrackersByAppointment[appt.id] ?? [],
               );
               return (
                 <AppointmentCardUnified

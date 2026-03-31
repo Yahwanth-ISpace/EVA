@@ -24,12 +24,26 @@ export const DELETE_VERIFICATION_REQUEST = "DELETE_VERIFICATION_REQUEST";
 export const DELETE_VERIFICATION_SUCCESS = "DELETE_VERIFICATION_SUCCESS";
 export const DELETE_VERIFICATION_FAILURE = "DELETE_VERIFICATION_FAILURE";
 
+/** Subset of verification requirement returned with verification list/detail. */
+export interface VerificationRequirementRef {
+  id: string;
+  verificationFields?: unknown;
+}
+
 export interface VerificationRecord {
   id: string;
   payee: Payee;
-  coverage: string;
-  copay: string;
-  deductible: string;
+  payeeId?: string;
+  /** When set, this verification belongs to a specific appointment visit. */
+  appointmentId?: string | null;
   transcript: string;
-  validity: string;
+  createdAt?: string;
+  extractedData?: Record<string, string | null> | null;
+  verificationRequirementId?: string | null;
+  verificationRequirement?: VerificationRequirementRef | null;
+  /** Legacy API shape; prefer extractedData from backend. */
+  coverage?: string;
+  copay?: string;
+  deductible?: string;
+  validity?: string;
 }

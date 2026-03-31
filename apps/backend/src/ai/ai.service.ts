@@ -91,12 +91,14 @@ ${patientBlock}
         },
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
+    appointmentId?: string | null,
   ) {
     return this.verificationService.verifyFromExtractedCall(
       payeeId,
       extracted,
       transcriptToAppend,
       verificationRequirementId,
+      appointmentId ?? null,
     );
   }
 

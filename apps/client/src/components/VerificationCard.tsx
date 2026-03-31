@@ -7,6 +7,7 @@ import {
   FaCalendarAlt,
 } from "react-icons/fa";
 import type { VerificationRecord } from "../redux/types/verificationTypes";
+import { getVerificationFieldRows } from "../utils/verificationDisplay";
 
 interface Props {
   record: VerificationRecord;
@@ -19,6 +20,8 @@ export default function VerificationCard({
   handleEdit,
   handleDelete,
 }: Props) {
+  const rows = getVerificationFieldRows(record);
+
   return (
     <div
       className="w-full h-fit max-w-sm rounded-2xl overflow-hidden shadow-lg transform hover:scale-[1.02] transition-all cursor-pointer"
@@ -49,23 +52,25 @@ export default function VerificationCard({
       </div>
 
       {/* Bottom */}
-      <div className="bg-white p-5 space-y-4 text-sm">
-        <div className="flex items-center gap-2">
-          <FaPercentage className="text-indigo-500" />
-          <span className="font-medium">Coverage:</span> {record.coverage}
-        </div>
-        <div className="flex items-center gap-2">
-          <FaDollarSign className="text-green-500" />
-          <span className="font-medium">Copay:</span> {record.copay}
-        </div>
-        <div className="flex items-center gap-2">
-          <FaShieldAlt className="text-yellow-500" />
-          <span className="font-medium">Deductible:</span> {record.deductible}
-        </div>
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <FaCalendarAlt className="text-pink-500" />
-          Valid till: {record.validity}
-        </div>
+      <div className="bg-white p-5 space-y-3 text-sm">
+        {rows.length === 0 ? (
+          <p className="text-gray-500 text-sm">No captured fields yet.</p>
+        ) : (
+          rows.map((row, i) => {
+            const Icon = [FaPercentage, FaDollarSign, FaShieldAlt, FaCalendarAlt][
+              i % 4
+            ];
+            return (
+              <div key={row.key} className="flex items-start gap-2">
+                <Icon className="text-indigo-500 shrink-0 mt-0.5" />
+                <span>
+                  <span className="font-medium">{row.label}:</span>{" "}
+                  {row.value || "—"}
+                </span>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
