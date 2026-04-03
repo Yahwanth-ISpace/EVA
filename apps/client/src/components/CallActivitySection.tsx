@@ -1,10 +1,15 @@
-import { forwardRef } from "react";
+import { forwardRef, useMemo } from "react";
 import {
   formatCallLogLine,
+  formatLiveLogTimestamp,
+  parseLiveLogMessage,
+  parseTranscriptIntoTurns,
   type BotTrackerRecord,
+  type LiveLogMessageRole,
+  type TranscriptTurn,
 } from "../utils/botTracker";
 
-export type CallFooterPhase = "merge" | "end";
+export type CallFooterPhase = "barge" | "end";
 
 export interface CallActivitySectionProps {
   callLogTab: "live" | "transcript";
@@ -15,13 +20,190 @@ export interface CallActivitySectionProps {
   transcriptText: string;
   onLiveScroll: () => void;
   callFooterPhase: CallFooterPhase;
-  onMergeInClick: () => void;
+  onBargeInClick: () => void;
   onEndCallClick: () => void;
   endCallLoading?: boolean;
   canEndCall: boolean;
 }
 
-/** Fixed right column: live stream + transcript tabs (not part of main scroll flow). */
+function CallChatColumnHeader() {
+  return (
+    <div className="flex justify-between gap-2 px-1 pb-1 border-b border-slate-200/80 mb-1">
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+        TPA
+      </span>
+      <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">
+        EVA
+      </span>
+    </div>
+  );
+}
+
+function CallChatBubble({
+  id,
+  role,
+  text,
+  timeLabel,
+  dateTimeAttr,
+}: {
+  id: string;
+  role: LiveLogMessageRole;
+  text: string;
+  timeLabel?: string;
+  dateTimeAttr?: string;
+}) {
+  if (role === "system") {
+    return (
+      <div className="flex justify-center px-1" data-msg-id={id}>
+        <div className="max-w-[95%] flex flex-col items-center gap-1">
+          <p className="text-[11px] text-slate-600 bg-white/90 border border-slate-200/80 rounded-full px-3 py-1.5 font-mono leading-snug text-center whitespace-pre-wrap break-words">
+            {text}
+          </p>
+          {timeLabel ? (
+            <time
+              dateTime={dateTimeAttr}
+              className="text-[10px] text-slate-400 tabular-nums"
+            >
+              {timeLabel}
+            </time>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+  const isEva = role === "eva";
+  return (
+    <div
+      className={`flex w-full ${isEva ? "justify-end" : "justify-start"}`}
+      data-msg-id={id}
+    >
+      <div
+        className={`max-w-[min(88%,20rem)] flex flex-col gap-0.5 ${isEva ? "items-end" : "items-start"}`}
+      >
+        <div
+          className={`rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm whitespace-pre-wrap break-words ${
+            isEva
+              ? "bg-indigo-600 text-white rounded-br-md"
+              : "bg-white text-slate-800 border border-slate-200/90 rounded-bl-md"
+          }`}
+        >
+          {text || "—"}
+        </div>
+        {timeLabel ? (
+          <time
+            dateTime={dateTimeAttr}
+            className={`text-[10px] text-slate-400 tabular-nums px-0.5 ${isEva ? "text-right" : "text-left"}`}
+          >
+            {timeLabel}
+          </time>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** Saved transcript as plain log lines: EVA (indigo), TPA (default), divider after each turn. */
+function TranscriptLogView({ fullText }: { fullText: string }) {
+  const turns = useMemo(
+    () => parseTranscriptIntoTurns(fullText),
+    [fullText],
+  );
+
+  if (turns.length === 0) {
+    return (
+      <p className="text-sm text-slate-500 italic px-1 font-mono">No content.</p>
+    );
+  }
+
+  return (
+    <>
+      {turns.map((turn, i) => (
+        <TranscriptLogEntry
+          key={`t-${i}`}
+          turn={turn}
+          showDividerBelow={i < turns.length - 1}
+        />
+      ))}
+    </>
+  );
+}
+
+function TranscriptLogEntry({
+  turn,
+  showDividerBelow,
+}: {
+  turn: TranscriptTurn;
+  showDividerBelow: boolean;
+}) {
+  if (turn.kind === "divider") {
+    return (
+      <div className="py-2">
+        <div
+          className="flex items-center gap-2"
+          role="separator"
+          aria-label="Section break"
+        >
+          <div className="flex-1 border-t border-dashed border-slate-300" />
+          <span className="text-[10px] text-slate-400 font-mono shrink-0">
+            —
+          </span>
+          <div className="flex-1 border-t border-dashed border-slate-300" />
+        </div>
+        {showDividerBelow ? (
+          <div className="mt-2 border-b border-slate-200" aria-hidden />
+        ) : null}
+      </div>
+    );
+  }
+
+  if (turn.role === "system") {
+    return (
+      <div>
+        <p className="font-mono text-[13px] leading-relaxed text-slate-600 whitespace-pre-wrap break-words pl-0.5">
+          {turn.text}
+        </p>
+        {showDividerBelow ? (
+          <div
+            className="mt-3 mb-1 border-b border-slate-200"
+            aria-hidden
+          />
+        ) : null}
+      </div>
+    );
+  }
+
+  const isEva = turn.role === "eva";
+  const label = isEva ? "EVA" : "TPA";
+
+  return (
+    <div>
+      <p className="font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-words">
+        <span
+          className={
+            isEva
+              ? "font-semibold text-indigo-600"
+              : "font-semibold text-slate-800"
+          }
+        >
+          {label}:
+        </span>
+        {isEva ? (
+          <span className="text-indigo-600">
+            {turn.text ? ` ${turn.text}` : " —"}
+          </span>
+        ) : (
+          <span className="text-slate-700">
+            {turn.text ? ` ${turn.text}` : " —"}
+          </span>
+        )}
+      </p>
+      {showDividerBelow ? (
+        <div className="mt-3 mb-1 border-b border-slate-200" aria-hidden />
+      ) : null}
+    </div>
+  );
+}
+
 export const CallActivitySection = forwardRef<
   HTMLDivElement,
   CallActivitySectionProps
@@ -35,7 +217,7 @@ export const CallActivitySection = forwardRef<
     transcriptText,
     onLiveScroll,
     callFooterPhase,
-    onMergeInClick,
+    onBargeInClick,
     onEndCallClick,
     endCallLoading = false,
     canEndCall,
@@ -51,7 +233,7 @@ export const CallActivitySection = forwardRef<
             Call activity
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Live lines during the call; transcript after it ends.
+            Live lines during the call; transcript as a log after it ends.
           </p>
         </div>
       </div>
@@ -85,7 +267,6 @@ export const CallActivitySection = forwardRef<
             }`}
           >
             <span className="inline-flex items-center gap-2">
-              <span>Live</span>
               {isCallInProgress ? (
                 <span
                   className="relative flex h-2.5 w-2.5 shrink-0"
@@ -100,6 +281,7 @@ export const CallActivitySection = forwardRef<
                   aria-hidden
                 />
               )}
+              <span>Live</span>
             </span>
             {callLogTab === "live" && (
               <span
@@ -135,30 +317,37 @@ export const CallActivitySection = forwardRef<
           aria-labelledby="tab-live"
           hidden={callLogTab !== "live"}
           className={
-            callLogTab === "live"
-              ? "flex flex-col flex-1 min-h-0"
-              : "hidden"
+            callLogTab === "live" ? "flex flex-col flex-1 min-h-0" : "hidden"
           }
         >
           <div className="relative flex flex-1 min-h-0 flex-col">
             <div
               ref={ref}
               onScroll={onLiveScroll}
-              className="flex-1 min-h-0 overflow-y-auto scroll-smooth custom-scrollbar bg-slate-50/40 p-4"
+              className="flex-1 min-h-0 overflow-y-auto scroll-smooth custom-scrollbar bg-slate-100/50 p-3 sm:p-4"
             >
               {liveChronological.length > 0 ? (
-                <div className="space-y-2.5 pr-1">
-                  {liveChronological.map((log) => (
-                    <p
-                      key={log.id}
-                      className="text-xs text-slate-700 whitespace-pre-wrap font-mono leading-relaxed border-l-2 border-indigo-200 pl-2.5"
-                    >
-                      <span className="text-slate-400 tabular-nums">
-                        [{new Date(log.createdAt).toLocaleTimeString()}]{" "}
-                      </span>
-                      {formatCallLogLine(log)}
-                    </p>
-                  ))}
+                <div
+                  className="flex flex-col gap-3 pr-0.5"
+                  role="log"
+                  aria-live="polite"
+                >
+                  <CallChatColumnHeader />
+                  {liveChronological.map((log) => {
+                    const raw = formatCallLogLine(log);
+                    const { role, text } = parseLiveLogMessage(raw);
+                    const ts = formatLiveLogTimestamp(log.createdAt);
+                    return (
+                      <CallChatBubble
+                        key={log.id}
+                        id={log.id}
+                        role={role}
+                        text={text}
+                        timeLabel={ts || undefined}
+                        dateTimeAttr={log.createdAt}
+                      />
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center py-10 px-6 text-center min-h-[10rem]">
@@ -204,11 +393,9 @@ export const CallActivitySection = forwardRef<
               : "hidden"
           }
         >
-          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-slate-50/40 p-4">
+          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-slate-100/50 p-3 sm:p-4">
             {hasTranscript ? (
-              <p className="text-sm text-slate-800 whitespace-pre-wrap font-mono leading-relaxed">
-                {transcriptText}
-              </p>
+              <TranscriptLogView fullText={transcriptText} />
             ) : (
               <div className="flex flex-col items-center justify-center py-10 px-6 text-center min-h-[10rem]">
                 <div
@@ -234,8 +421,7 @@ export const CallActivitySection = forwardRef<
                 </p>
                 <p className="mt-1.5 max-w-sm text-xs text-slate-500 leading-relaxed">
                   After the verification call finishes, the saved conversation
-                  transcript will show here. You can follow the call in real
-                  time on the{" "}
+                  transcript will show here as a log. Follow the call on the{" "}
                   <span className="font-semibold text-indigo-600">Live</span>{" "}
                   tab.
                 </p>
@@ -246,14 +432,14 @@ export const CallActivitySection = forwardRef<
       </div>
 
       <div className="mt-3 shrink-0 px-0.5">
-        {callFooterPhase === "merge" ? (
+        {callFooterPhase === "barge" ? (
           <button
             type="button"
             disabled={!isCallInProgress}
-            onClick={onMergeInClick}
+            onClick={onBargeInClick}
             className="w-full rounded-lg py-2.5 text-center text-sm font-semibold shadow-sm transition-colors disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none bg-indigo-600 text-white hover:bg-indigo-700"
           >
-            Merge in
+            Barge in
           </button>
         ) : (
           <button

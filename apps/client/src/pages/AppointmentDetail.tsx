@@ -1,4 +1,8 @@
-import { useParams, useNavigate, type NavigateFunction } from "react-router-dom";
+import {
+  useParams,
+  useNavigate,
+  type NavigateFunction,
+} from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import {
   useCallback,
@@ -92,16 +96,20 @@ function sectionHeading(title: string, subtitle: string): ReactNode {
   );
 }
 
-function AppointmentDetailLoadingShell({ navigate }: { navigate: NavigateFunction }) {
+function AppointmentDetailLoadingShell({
+  navigate,
+}: {
+  navigate: NavigateFunction;
+}) {
   return (
     <div className="flex flex-col h-screen max-h-screen bg-gradient-to-b from-slate-50 to-slate-100/80 overflow-hidden pt-5">
       <Navbar />
 
-      <div className="w-full flex-1 min-h-0 flex flex-col px-4 sm:px-6 lg:px-8 py-6 mx-auto w-full max-w-[min(1400px,100%)]">
+      <div className="w-full flex-1 min-h-0 flex flex-col px-4 sm:px-6 lg:px-8 py-6 mx-auto max-w-[min(1400px,100%)]">
         <button
           type="button"
           onClick={() => navigate("/dashboard")}
-          className="group text-sm font-medium text-slate-600 hover:text-indigo-700 flex items-center gap-2 w-fit transition-colors"
+          className="group text-sm uppercase text- font-medium tracking-widest text-slate-600 hover:text-indigo-700 flex items-center gap-2 w-fit transition-colors"
         >
           <Icon iconName="leftArrow" iconColor="currentColor" size="xs" />
           Back to dashboard
@@ -258,9 +266,7 @@ export default function AppointmentDetail() {
 
   const appointmentFromStore = useMemo(
     () =>
-      id
-        ? appointments.find((a: AppointmentRecord) => a.id === id)
-        : undefined,
+      id ? appointments.find((a: AppointmentRecord) => a.id === id) : undefined,
     [appointments, id],
   );
 
@@ -306,9 +312,9 @@ export default function AppointmentDetail() {
 
   const loadingAppointment = Boolean(
     id &&
-      !appointmentFromStore &&
-      (fetchedAppointment === undefined ||
-        (fetchedAppointment !== null && fetchedAppointment.id !== id)),
+    !appointmentFromStore &&
+    (fetchedAppointment === undefined ||
+      (fetchedAppointment !== null && fetchedAppointment.id !== id)),
   );
 
   const samePayeeAppointmentCount = useMemo(
@@ -330,7 +336,7 @@ export default function AppointmentDetail() {
   const [liveLogs, setLiveLogs] = useState<BotTrackerRecord[]>([]);
   const [callLogTab, setCallLogTab] = useState<"live" | "transcript">("live");
   const [callFooterPhase, setCallFooterPhase] =
-    useState<CallFooterPhase>("merge");
+    useState<CallFooterPhase>("barge");
   const [endCallLoading, setEndCallLoading] = useState(false);
   const liveScrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -431,10 +437,10 @@ export default function AppointmentDetail() {
   );
 
   useEffect(() => {
-    if (!isCallInProgress) setCallFooterPhase("merge");
+    if (!isCallInProgress) setCallFooterPhase("barge");
   }, [isCallInProgress]);
 
-  const handleMergeInFooterClick = useCallback(() => {
+  const handleBargeInFooterClick = useCallback(() => {
     if (!isCallInProgress) return;
     setCallFooterPhase("end");
   }, [isCallInProgress]);
@@ -446,7 +452,7 @@ export default function AppointmentDetail() {
       await api.post<{ ok: boolean }>("/twilio/end-call", {
         callSid: activeCallSid,
       });
-      setCallFooterPhase("merge");
+      setCallFooterPhase("barge");
     } catch {
       // Non-blocking; UI will update when stream ends or poll refreshes.
     } finally {
@@ -464,7 +470,7 @@ export default function AppointmentDetail() {
             <button
               type="button"
               onClick={() => navigate("/dashboard")}
-              className="mt-4 text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-x-3 w-400"
+              className="mt-4 uppercase tracking-widest text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-x-3 w-400"
             >
               <Icon iconName="leftArrow" iconColor="currentColor" size="xs" />
               Back to Dashboard
@@ -489,7 +495,7 @@ export default function AppointmentDetail() {
             <button
               type="button"
               onClick={() => navigate("/dashboard")}
-              className="mt-4 text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-x-3 w-400"
+              className="mt-4 uppercase tracking-widest text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center gap-x-3 w-400"
             >
               <Icon iconName="leftArrow" iconColor="currentColor" size="xs" />
               Back to Dashboard
@@ -547,7 +553,7 @@ export default function AppointmentDetail() {
         <button
           type="button"
           onClick={() => navigate("/dashboard")}
-          className="group text-sm font-medium text-slate-600 hover:text-indigo-700 flex items-center gap-2 w-fit transition-colors"
+          className="group uppercase tracking-widest text-sm font-medium text-slate-600 hover:text-indigo-700 flex items-center gap-2 w-fit transition-colors"
         >
           <Icon iconName="leftArrow" iconColor="currentColor" size="xs" />
           Back to dashboard
@@ -568,224 +574,225 @@ export default function AppointmentDetail() {
           <div className="flex-1 min-h-0 pr-1 overflow-hidden flex flex-col">
             <div className="flex flex-1 min-h-0 overflow-hidden flex-col md:flex-row md:items-stretch">
               <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar">
-              {/* Patient */}
-              <section className="p-6 sm:p-8 pt-14 sm:pt-7 border-b border-slate-100 bg-slate-50/40">
-                <p className="text-xs font-semibold uppercase tracking-widest text-indigo-600/90 mb-7">
-                  Appointment record
-                </p>
-                <div className="flex items-center gap-2 mb-5">
-                  <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
-                  <div>
-                    <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-                      Patient
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Demographics used for eligibility and verification.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex flex-col lg:flex-row lg:items-start gap-8 lg:gap-10">
-                  <div className="shrink-0 flex justify-center lg:justify-start">
-                    <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-2xl bg-gradient-to-br from-indigo-100 to-slate-100 border border-indigo-200/50 flex items-center justify-center text-3xl sm:text-4xl font-bold text-indigo-900/80 shadow-inner">
-                      {payee.firstName?.[0]}
-                      {payee.lastName?.[0]}
+                {/* Patient */}
+                <section className="p-6 sm:p-8 pt-14 sm:pt-7 border-b border-slate-100 bg-slate-50/40">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-indigo-600/90 mb-7">
+                    Appointment record
+                  </p>
+                  <div className="flex items-center gap-2 mb-5">
+                    <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
+                    <div>
+                      <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
+                        Patient
+                      </h2>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Demographics used for eligibility and verification.
+                      </p>
                     </div>
                   </div>
-                  <div className="min-w-0 flex-1 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                        First name
-                      </label>
-                      <p className={fieldClass}>{payee.firstName || "—"}</p>
+                  <div className="flex flex-col lg:flex-row lg:items-start gap-8 lg:gap-10">
+                    <div className="shrink-0 flex justify-center lg:justify-start">
+                      <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-2xl bg-gradient-to-br from-indigo-100 to-slate-100 border border-indigo-200/50 flex items-center justify-center text-3xl sm:text-4xl font-bold text-indigo-900/80 shadow-inner">
+                        {payee.firstName?.[0]}
+                        {payee.lastName?.[0]}
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                        Last name
-                      </label>
-                      <p className={fieldClass}>{payee.lastName || "—"}</p>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                        Date of birth
-                      </label>
-                      <p className={fieldClass}>{dobFormatted}</p>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                        SSN (masked)
-                      </label>
-                      <p className={fieldClass}>{maskSsn(payee.ssn)}</p>
+                    <div className="min-w-0 flex-1 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                          First name
+                        </label>
+                        <p className={fieldClass}>{payee.firstName || "—"}</p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                          Last name
+                        </label>
+                        <p className={fieldClass}>{payee.lastName || "—"}</p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                          Date of birth
+                        </label>
+                        <p className={fieldClass}>{dobFormatted}</p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                          SSN (masked)
+                        </label>
+                        <p className={fieldClass}>{maskSsn(payee.ssn)}</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </section>
+                </section>
 
-              {/* Visit & provider */}
-              <section className="p-6 sm:p-8 border-b border-slate-100">
-                <div className="flex items-center gap-2 mb-4">
-                  <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
-                  <div>
-                    <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-                      Visit & provider
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      When and where care is scheduled; who is treating the
-                      patient.
-                    </p>
-                  </div>
-                </div>
-                <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                      Appointment
-                    </label>
-                    <p className={`${fieldClass} !py-2.5`}>
-                      {formatAppointmentWhen(appointment.date)}
-                    </p>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                      Provider
-                    </label>
-                    <p className={`${fieldClass} !py-2.5`}>
-                      {providerDisplayName(provider)}
-                      {provider?.specialty ? (
-                        <span className="text-slate-500 font-normal">
-                          {" "}
-                          · {provider.specialty}
-                        </span>
-                      ) : null}
-                    </p>
-                    {provider?.npi ? (
-                      <p className="text-xs text-slate-500 mt-1.5 ml-2">
-                        NPI {provider.npi}
-                        {provider.phone ? ` · ${provider.phone}` : ""}
+                {/* Visit & provider */}
+                <section className="p-6 sm:p-8 border-b border-slate-100">
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
+                    <div>
+                      <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
+                        Visit & provider
+                      </h2>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        When and where care is scheduled; who is treating the
+                        patient.
                       </p>
-                    ) : provider?.phone ? (
-                      <p className="text-xs text-slate-500 mt-1.5 ml-2">
-                        {provider.phone}
-                      </p>
-                    ) : null}
+                    </div>
                   </div>
-                  <div className="sm:col-span-2 lg:col-span-3">
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                      Office / service location
-                    </label>
-                    <p className={`${fieldClass} !py-2.5`}>
-                      {office?.name ? (
-                        <>
-                          <span className="font-medium text-slate-900">
-                            {office.name}
-                          </span>
-                          <span className="text-slate-600">
+                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                        Appointment
+                      </label>
+                      <p className={`${fieldClass} !py-2.5`}>
+                        {formatAppointmentWhen(appointment.date)}
+                      </p>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                        Provider
+                      </label>
+                      <p className={`${fieldClass} !py-2.5`}>
+                        {providerDisplayName(provider)}
+                        {provider?.specialty ? (
+                          <span className="text-slate-500 font-normal">
                             {" "}
-                            — {officeAddressLine}
+                            · {provider.specialty}
                           </span>
-                        </>
-                      ) : (
-                        officeAddressLine
-                      )}
-                    </p>
-                    {office?.phone ? (
-                      <p className="text-xs text-slate-500 mt-1.5">
-                        Phone {office.phone}
+                        ) : null}
                       </p>
-                    ) : null}
-                  </div>
-                  {appointment.notes?.trim() ? (
+                      {provider?.npi ? (
+                        <p className="text-xs text-slate-500 mt-1.5 ml-2">
+                          NPI {provider.npi}
+                          {provider.phone ? ` · ${provider.phone}` : ""}
+                        </p>
+                      ) : provider?.phone ? (
+                        <p className="text-xs text-slate-500 mt-1.5 ml-2">
+                          {provider.phone}
+                        </p>
+                      ) : null}
+                    </div>
                     <div className="sm:col-span-2 lg:col-span-3">
                       <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                        Notes
+                        Office / service location
                       </label>
-                      <p className="rounded-lg border border-slate-200/90 bg-slate-50/80 px-3.5 py-3 text-sm text-slate-700 whitespace-pre-wrap">
-                        {appointment.notes}
+                      <p className={`${fieldClass} !py-2.5`}>
+                        {office?.name ? (
+                          <>
+                            <span className="font-medium text-slate-900">
+                              {office.name}
+                            </span>
+                            <span className="text-slate-600">
+                              {" "}
+                              — {officeAddressLine}
+                            </span>
+                          </>
+                        ) : (
+                          officeAddressLine
+                        )}
+                      </p>
+                      {office?.phone ? (
+                        <p className="text-xs text-slate-500 mt-1.5">
+                          Phone {office.phone}
+                        </p>
+                      ) : null}
+                    </div>
+                    {appointment.notes?.trim() ? (
+                      <div className="sm:col-span-2 lg:col-span-3">
+                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                          Notes
+                        </label>
+                        <p className="rounded-lg border border-slate-200/90 bg-slate-50/80 px-3.5 py-3 text-sm text-slate-700 whitespace-pre-wrap">
+                          {appointment.notes}
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+
+                {/* Insurance verification */}
+                <section className="p-6 sm:p-8 border-b border-slate-100">
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
+                    <div>
+                      <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
+                        Insurance verification
+                      </h2>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Benefits confirmed on the call—what applies to this
+                        claim.
                       </p>
                     </div>
-                  ) : null}
-                </div>
-              </section>
-
-              {/* Insurance verification */}
-              <section className="p-6 sm:p-8 border-b border-slate-100">
-                <div className="flex items-center gap-2 mb-4">
-                  <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
-                  <div>
-                    <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-                      Insurance verification
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Benefits confirmed on the call—what applies to this claim.
-                    </p>
                   </div>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {verificationFieldRows.map((row) => (
-                    <div key={row.key}>
-                      <label
-                        className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5"
-                        title={row.questionHint}
-                      >
-                        {row.label}
-                      </label>
-                      <input
-                        type="text"
-                        readOnly
-                        value={row.value}
-                        className={fieldClass}
-                        placeholder="—"
-                        title={row.questionHint}
-                      />
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {verificationFieldRows.map((row) => (
+                      <div key={row.key}>
+                        <label
+                          className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5"
+                          title={row.questionHint}
+                        >
+                          {row.label}
+                        </label>
+                        <input
+                          type="text"
+                          readOnly
+                          value={row.value}
+                          className={fieldClass}
+                          placeholder="—"
+                          title={row.questionHint}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  {verification && verificationFieldRows.length === 0 && (
+                    <p className="mt-3 text-sm text-slate-500">
+                      No verification fields to show yet. They will match your
+                      verification requirement and fill in as data is captured
+                      on the call.
+                    </p>
+                  )}
+                  {!verification && (
+                    <div className="mt-4 rounded-xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-900">
+                      <p className="font-medium">No verification on file yet</p>
+                      <p className="text-xs text-amber-800/90 mt-1 leading-relaxed">
+                        Coverage details will populate after the verification
+                        call completes successfully.
+                      </p>
                     </div>
-                  ))}
-                </div>
-                {verification && verificationFieldRows.length === 0 && (
-                  <p className="mt-3 text-sm text-slate-500">
-                    No verification fields to show yet. They will match your
-                    verification requirement and fill in as data is captured on
-                    the call.
-                  </p>
-                )}
-                {!verification && (
-                  <div className="mt-4 rounded-xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-900">
-                    <p className="font-medium">No verification on file yet</p>
-                    <p className="text-xs text-amber-800/90 mt-1 leading-relaxed">
-                      Coverage details will populate after the verification call
-                      completes successfully.
-                    </p>
-                  </div>
-                )}
-              </section>
+                  )}
+                </section>
 
-              {/* Benefit summary (plan) */}
-              <section className="p-6 sm:p-8 pb-10 bg-white">
-                <div className="flex items-center gap-2 mb-4">
-                  <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
-                  <div>
-                    <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-                      Benefit summary
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Plan-level limits and codes—use alongside verified
-                      coverage above.
-                    </p>
-                  </div>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {STATIC_FIELDS.map(({ label, value }) => (
-                    <div key={label}>
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                        {label}
-                      </label>
-                      <input
-                        type="text"
-                        readOnly
-                        value={value}
-                        className={fieldClass}
-                      />
+                {/* Benefit summary (plan) */}
+                <section className="p-6 sm:p-8 pb-10 bg-white">
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
+                    <div>
+                      <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
+                        Benefit summary
+                      </h2>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Plan-level limits and codes—use alongside verified
+                        coverage above.
+                      </p>
                     </div>
-                  ))}
-                </div>
-              </section>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {STATIC_FIELDS.map(({ label, value }) => (
+                      <div key={label}>
+                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                          {label}
+                        </label>
+                        <input
+                          type="text"
+                          readOnly
+                          value={value}
+                          className={fieldClass}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </section>
               </div>
               <aside className="flex flex-col min-h-[min(52vh,480px)] md:min-h-0 w-full md:w-[min(440px,42vw)] shrink-0 border-t md:border-t-0 md:border-l border-slate-200 bg-slate-50/30 overflow-hidden">
                 <CallActivitySection
@@ -798,7 +805,7 @@ export default function AppointmentDetail() {
                   transcriptText={transcriptText}
                   onLiveScroll={onLiveScroll}
                   callFooterPhase={callFooterPhase}
-                  onMergeInClick={handleMergeInFooterClick}
+                  onBargeInClick={handleBargeInFooterClick}
                   onEndCallClick={handleEndCallClick}
                   endCallLoading={endCallLoading}
                   canEndCall={Boolean(activeCallSid)}
