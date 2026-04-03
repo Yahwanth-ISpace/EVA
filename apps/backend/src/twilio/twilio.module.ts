@@ -9,6 +9,7 @@ import { TranscriptionModule } from '../transcription/transcription.module';
 import { VerificationModule } from '../verification/verification.module';
 import { VerificationRequirementModule } from '../verification-requirement/verification-requirement.module';
 import { BotTrackerModule } from '../bot-tracker/bot-tracker.module';
+import { AudioEmotionModule } from '../audio-emotion/audio-emotion.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { BotTrackerModule } from '../bot-tracker/bot-tracker.module';
     VerificationModule,
     VerificationRequirementModule,
     BotTrackerModule,
+    AudioEmotionModule,
   ],
   controllers: [TwilioController],
   providers: [TwilioService, MediaStreamHandlerService],

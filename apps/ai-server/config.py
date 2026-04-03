@@ -11,6 +11,11 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "base")
 WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")  # float16 for GPU
 
+# TPA speech emotion (SUPERB wav2vec2 ER)
+SUPERB_ER_MODEL_ID = os.getenv(
+    "SUPERB_ER_MODEL_ID", "superb/wav2vec2-base-superb-er"
+)
+
 # Qdrant / RAG
 PROVIDER = os.getenv("PROVIDER", "gemini")
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")

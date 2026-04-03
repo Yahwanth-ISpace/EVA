@@ -1,17 +1,26 @@
-import { forwardRef, useMemo } from "react";
 import {
+  forwardRef,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import {
+  buildLiveActivityChatRows,
   formatCallLogLine,
   formatLiveLogTimestamp,
-  parseLiveLogMessage,
+  parseTpaEmotionLine,
   parseTranscriptIntoTurns,
   type BotTrackerRecord,
   type LiveLogMessageRole,
+  type TpaEmotionTone,
   type TranscriptTurn,
 } from "../utils/botTracker";
 
 export type CallFooterPhase = "barge" | "end";
 
 export interface CallActivitySectionProps {
+  /** Clears angry-modal dismiss state when switching patient / appointment */
+  payeeId?: string | null;
   callLogTab: "live" | "transcript";
   setCallLogTab: (t: "live" | "transcript") => void;
   isCallInProgress: boolean;
@@ -45,12 +54,15 @@ function CallChatBubble({
   text,
   timeLabel,
   dateTimeAttr,
+  tpaTone,
 }: {
   id: string;
   role: LiveLogMessageRole;
   text: string;
   timeLabel?: string;
   dateTimeAttr?: string;
+  /** Happy / Normal shown as a compact chip; angry uses a modal instead */
+  tpaTone?: TpaEmotionTone;
 }) {
   if (role === "system") {
     return (
@@ -72,6 +84,8 @@ function CallChatBubble({
     );
   }
   const isEva = role === "eva";
+  const showToneChip =
+    role === "tpa" && tpaTone && tpaTone !== "angry";
   return (
     <div
       className={`flex w-full ${isEva ? "justify-end" : "justify-start"}`}
@@ -89,6 +103,17 @@ function CallChatBubble({
         >
           {text || "—"}
         </div>
+        {showToneChip ? (
+          <span
+            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+              tpaTone === "happy"
+                ? "bg-emerald-50 text-emerald-700 border border-emerald-200/80"
+                : "bg-slate-100 text-slate-600 border border-slate-200/80"
+            }`}
+          >
+            {tpaTone === "happy" ? "Happy" : "Normal"}
+          </span>
+        ) : null}
         {timeLabel ? (
           <time
             dateTime={dateTimeAttr}
@@ -97,6 +122,73 @@ function CallChatBubble({
             {timeLabel}
           </time>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+function TpaAngryModal({
+  open,
+  onDismiss,
+}: {
+  open: boolean;
+  onDismiss: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      className="absolute inset-0 z-30 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="tpa-angry-modal-title"
+    >
+      <button
+        type="button"
+        className="absolute inset-0 bg-slate-900/45 backdrop-blur-[1px]"
+        aria-label="Dismiss overlay"
+        onClick={onDismiss}
+      />
+      <div className="relative z-10 w-full max-w-sm rounded-2xl border border-red-200/90 bg-white p-5 shadow-xl shadow-red-900/10">
+        <div className="flex items-start gap-3">
+          <span
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600"
+            aria-hidden
+          >
+            <svg
+              className="h-5 w-5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+              />
+            </svg>
+          </span>
+          <div className="min-w-0 flex-1">
+            <h3
+              id="tpa-angry-modal-title"
+              className="text-base font-bold text-slate-900"
+            >
+              TPA tone: angry
+            </h3>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+              The representative&apos;s speech in this segment was classified as
+              angry. You may want to listen in or barge in if the call needs a
+              human touch.
+            </p>
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="mt-4 w-full rounded-lg bg-slate-900 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Acknowledge
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -209,6 +301,7 @@ export const CallActivitySection = forwardRef<
   CallActivitySectionProps
 >(function CallActivitySection(
   {
+    payeeId,
     callLogTab,
     setCallLogTab,
     isCallInProgress,
@@ -224,6 +317,33 @@ export const CallActivitySection = forwardRef<
   },
   ref,
 ) {
+  const liveChatRows = useMemo(
+    () => buildLiveActivityChatRows(liveChronological),
+    [liveChronological],
+  );
+
+  const latestAngryLogId = useMemo(() => {
+    let id: string | null = null;
+    for (const log of liveChronological) {
+      const tone = parseTpaEmotionLine(formatCallLogLine(log));
+      if (tone === "angry") id = log.id;
+    }
+    return id;
+  }, [liveChronological]);
+
+  const [dismissedAngryForLogId, setDismissedAngryForLogId] = useState<
+    string | null
+  >(null);
+
+  useEffect(() => {
+    setDismissedAngryForLogId(null);
+  }, [payeeId]);
+
+  const showAngryModal =
+    callLogTab === "live" &&
+    latestAngryLogId != null &&
+    latestAngryLogId !== dismissedAngryForLogId;
+
   return (
     <section className="flex flex-col flex-1 min-h-0 p-4 sm:p-5 border-0 bg-slate-50/40">
       <div className="flex items-center gap-2 mb-4 shrink-0">
@@ -321,6 +441,13 @@ export const CallActivitySection = forwardRef<
           }
         >
           <div className="relative flex flex-1 min-h-0 flex-col">
+            <TpaAngryModal
+              open={showAngryModal}
+              onDismiss={() => {
+                if (latestAngryLogId)
+                  setDismissedAngryForLogId(latestAngryLogId);
+              }}
+            />
             <div
               ref={ref}
               onScroll={onLiveScroll}
@@ -333,18 +460,17 @@ export const CallActivitySection = forwardRef<
                   aria-live="polite"
                 >
                   <CallChatColumnHeader />
-                  {liveChronological.map((log) => {
-                    const raw = formatCallLogLine(log);
-                    const { role, text } = parseLiveLogMessage(raw);
-                    const ts = formatLiveLogTimestamp(log.createdAt);
+                  {liveChatRows.map((row) => {
+                    const ts = formatLiveLogTimestamp(row.createdAt);
                     return (
                       <CallChatBubble
-                        key={log.id}
-                        id={log.id}
-                        role={role}
-                        text={text}
+                        key={row.id}
+                        id={row.id}
+                        role={row.role}
+                        text={row.text}
                         timeLabel={ts || undefined}
-                        dateTimeAttr={log.createdAt}
+                        dateTimeAttr={row.createdAt}
+                        tpaTone={row.tpaTone}
                       />
                     );
                   })}

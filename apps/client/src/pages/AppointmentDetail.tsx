@@ -797,6 +797,7 @@ export default function AppointmentDetail() {
               <aside className="flex flex-col min-h-[min(52vh,480px)] md:min-h-0 w-full md:w-[min(440px,42vw)] shrink-0 border-t md:border-t-0 md:border-l border-slate-200 bg-slate-50/30 overflow-hidden">
                 <CallActivitySection
                   ref={liveScrollRef}
+                  payeeId={appointment.payeeId}
                   callLogTab={callLogTab}
                   setCallLogTab={setCallLogTab}
                   isCallInProgress={isCallInProgress}
