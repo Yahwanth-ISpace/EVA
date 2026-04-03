@@ -24,6 +24,10 @@ import { VerificationService } from '../verification/verification.service';
 import { VerificationRequirementService } from '../verification-requirement/verification-requirement.service';
 import { BotTrackerService } from '../bot-tracker/bot-tracker.service';
 import { TwilioService } from './twilio.service';
+import {
+  AudioEmotionService,
+  type TpaEmotionCategory,
+} from '../audio-emotion/audio-emotion.service';
 import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
 /** Minimum speech bytes before we consider processing (~1 sec at 8kHz mulaw). Ensures we have a real utterance, not a brief noise. */
@@ -328,6 +332,7 @@ export class MediaStreamHandlerService {
     private readonly verificationRequirementService: VerificationRequirementService,
     private readonly botTrackerService: BotTrackerService,
     private readonly twilioService: TwilioService,
+    private readonly audioEmotionService: AudioEmotionService,
   ) {}
 
   handleConnection(
@@ -533,9 +538,19 @@ export class MediaStreamHandlerService {
         `stream_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`,
       );
 
+      let emotionPromise: Promise<TpaEmotionCategory | null> =
+        Promise.resolve(null);
+
       try {
         fs.writeFileSync(rawPath, combined);
         this.mulawRawToWav(rawPath, wavPath);
+
+        emotionPromise =
+          state.mode === 'ivr-bypass'
+            ? Promise.resolve(null)
+            : this.audioEmotionService
+                .classifyWav(wavPath)
+                .catch(() => null);
 
         let transcript: string;
         try {
@@ -1138,6 +1153,10 @@ export class MediaStreamHandlerService {
           !/^\[?inaudible\]?\.?$/i.test(userSaid) &&
           !/^\.{2,}$/.test(userSaid)
         ) {
+          const tpaTone = await emotionPromise;
+          if (tpaTone) {
+            await pushLiveTracker(`[TPA_EMOTION] ${tpaTone}`);
+          }
           state.conversationTranscript.push('User: ' + userSaid);
           await pushLiveTracker(`User: ${userSaid}`);
         }
@@ -1163,6 +1182,7 @@ export class MediaStreamHandlerService {
         // Only ask to repeat; do not ask for the field again (same as transcription failure).
         await speak(getRepeatOnlyPrompt()).catch(() => {});
       } finally {
+        await emotionPromise.catch(() => {});
         try {
           fs.unlinkSync(rawPath);
         } catch {}

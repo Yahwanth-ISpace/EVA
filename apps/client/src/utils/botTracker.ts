@@ -20,6 +20,75 @@ export function formatCallLogLine(record: BotTrackerRecord): string {
 
 export type LiveLogMessageRole = "eva" | "tpa" | "system";
 
+/** Backend bot-tracker lines: `[TPA_EMOTION] angry|happy|normal` */
+export type TpaEmotionTone = "angry" | "happy" | "normal";
+
+export function parseTpaEmotionLine(line: string): TpaEmotionTone | null {
+  const m = line.trim().match(/^\[TPA_EMOTION\]\s+(angry|happy|normal)\s*$/i);
+  if (!m) return null;
+  const v = m[1].toLowerCase();
+  if (v === "angry" || v === "happy" || v === "normal") return v;
+  return null;
+}
+
+/** One row for the live call-activity chat (merges tone line + following User line). */
+export type LiveActivityChatRow = {
+  id: string;
+  role: LiveLogMessageRole;
+  text: string;
+  createdAt: string;
+  /** Present when this TPA utterance had a successful ER classification */
+  tpaTone?: TpaEmotionTone;
+};
+
+export function buildLiveActivityChatRows(
+  chronological: BotTrackerRecord[],
+): LiveActivityChatRow[] {
+  const out: LiveActivityChatRow[] = [];
+  for (let i = 0; i < chronological.length; i++) {
+    const log = chronological[i]!;
+    const raw = formatCallLogLine(log);
+    const tone = parseTpaEmotionLine(raw);
+    if (tone != null) {
+      const next = chronological[i + 1];
+      if (next) {
+        const nparsed = parseLiveLogMessage(formatCallLogLine(next));
+        if (nparsed.role === "tpa") {
+          out.push({
+            id: next.id,
+            role: "tpa",
+            text: nparsed.text,
+            createdAt: next.createdAt,
+            tpaTone: tone,
+          });
+          i++;
+          continue;
+        }
+      }
+      out.push({
+        id: log.id,
+        role: "system",
+        text:
+          tone === "angry"
+            ? "TPA tone: Angry"
+            : tone === "happy"
+              ? "TPA tone: Happy"
+              : "TPA tone: Normal",
+        createdAt: log.createdAt,
+      });
+      continue;
+    }
+    const { role, text } = parseLiveLogMessage(raw);
+    out.push({
+      id: log.id,
+      role,
+      text,
+      createdAt: log.createdAt,
+    });
+  }
+  return out;
+}
+
 export function parseLiveLogMessage(rawLine: string): {
   role: LiveLogMessageRole;
   text: string;

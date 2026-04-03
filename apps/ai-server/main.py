@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from transcription.routes import router as transcribe_router
 from rag.routes import router as rag_router
+from emotion.routes import router as emotion_router
 
 app = FastAPI(title="EVA AI Server", version="1.0.0")
 
@@ -30,6 +31,7 @@ def root():
 # Routers
 app.include_router(transcribe_router, prefix="/transcription")
 app.include_router(rag_router, prefix="/rag")
+app.include_router(emotion_router, prefix="/emotion")
 
 
 # Run when executed directly
