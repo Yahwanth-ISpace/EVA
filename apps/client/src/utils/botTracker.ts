@@ -116,18 +116,33 @@ export function formatLiveLogTimestamp(iso: string): string {
 }
 
 export type TranscriptTurn =
-  | { kind: "message"; role: LiveLogMessageRole; text: string }
+  | {
+      kind: "message";
+      role: LiveLogMessageRole;
+      text: string;
+      /** Set when a `[TPA_EMOTION]` line preceded this User turn in the saved log */
+      tpaTone?: TpaEmotionTone;
+    }
   | { kind: "divider" };
 
 export function parseTranscriptIntoTurns(fullText: string): TranscriptTurn[] {
   if (!fullText?.trim()) return [];
   const rawLines = fullText.split(/\r?\n/);
   const out: TranscriptTurn[] = [];
+  let pendingTpaTone: TpaEmotionTone | undefined;
 
   for (const raw of rawLines) {
     const trimmed = raw.trim();
     if (!trimmed) continue;
+
+    const emo = parseTpaEmotionLine(trimmed);
+    if (emo != null) {
+      pendingTpaTone = emo;
+      continue;
+    }
+
     if (/^---+\s*$/.test(trimmed)) {
+      pendingTpaTone = undefined;
       out.push({ kind: "divider" });
       continue;
     }
@@ -135,10 +150,14 @@ export function parseTranscriptIntoTurns(fullText: string): TranscriptTurn[] {
     const speaker = trimmed.match(/^\s*(EVA|User)\s*:\s*(.*)$/i);
     if (speaker) {
       const isEva = speaker[1].toLowerCase() === "eva";
+      const role = isEva ? "eva" : "tpa";
+      const tone = role === "tpa" ? pendingTpaTone : undefined;
+      if (role === "tpa") pendingTpaTone = undefined;
       out.push({
         kind: "message",
-        role: isEva ? "eva" : "tpa",
+        role,
         text: (speaker[2] ?? "").trim() || "—",
+        tpaTone: tone,
       });
       continue;
     }
@@ -152,6 +171,7 @@ export function parseTranscriptIntoTurns(fullText: string): TranscriptTurn[] {
       continue;
     }
 
+    pendingTpaTone = undefined;
     out.push({ kind: "message", role: "system", text: trimmed });
   }
 
@@ -194,4 +214,21 @@ export function isCallActiveFromTrackers(
     else if (line.includes("[CALL_EVENT] END")) open = false;
   }
   return open;
+}
+
+/** True if any `[TPA_EMOTION] angry` appears after the latest `[CALL_EVENT] START` (full payee log; not UI-sliced). */
+export function hasTpaAngrySinceLatestCallStart(
+  chronological: BotTrackerRecord[],
+): boolean {
+  let lastStart = -1;
+  for (let i = 0; i < chronological.length; i++) {
+    const line = formatCallLogLine(chronological[i]!);
+    if (line.includes("[CALL_EVENT] START")) lastStart = i;
+  }
+  if (lastStart < 0) return false;
+  for (let j = lastStart; j < chronological.length; j++) {
+    if (parseTpaEmotionLine(formatCallLogLine(chronological[j]!)) === "angry")
+      return true;
+  }
+  return false;
 }

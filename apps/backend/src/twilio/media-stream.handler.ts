@@ -1156,6 +1156,7 @@ export class MediaStreamHandlerService {
           const tpaTone = await emotionPromise;
           if (tpaTone) {
             await pushLiveTracker(`[TPA_EMOTION] ${tpaTone}`);
+            state.conversationTranscript.push(`[TPA_EMOTION] ${tpaTone}`);
           }
           state.conversationTranscript.push('User: ' + userSaid);
           await pushLiveTracker(`User: ${userSaid}`);
