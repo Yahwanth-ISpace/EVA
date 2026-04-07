@@ -20,6 +20,7 @@ import Icon from "../components/Icons";
 import { api } from "../utils/api";
 import {
   extractActiveCallSidFromTrackers,
+  hasTpaAngrySinceLatestCallStart,
   isCallActiveFromTrackers,
 } from "../utils/botTracker";
 import type { BotTrackerRecord } from "../utils/botTracker";
@@ -345,14 +346,16 @@ export default function AppointmentDetail() {
     tailId: "",
   });
 
-  const liveChronological = useMemo(() => {
-    return [...liveLogs]
-      .sort(
+  const liveSorted = useMemo(
+    () =>
+      [...liveLogs].sort(
         (a, b) =>
           new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-      )
-      .slice(-200);
-  }, [liveLogs]);
+      ),
+    [liveLogs],
+  );
+
+  const liveChronological = useMemo(() => liveSorted.slice(-200), [liveSorted]);
 
   const transcriptText = verification?.transcript?.trim() ?? "";
   const hasTranscript = Boolean(transcriptText);
@@ -429,6 +432,12 @@ export default function AppointmentDetail() {
   const isCallInProgress = useMemo(
     () => isCallActiveFromTrackers(liveLogs),
     [liveLogs],
+  );
+
+  const tpaAngryIndicatorActive = useMemo(
+    () =>
+      isCallInProgress && hasTpaAngrySinceLatestCallStart(liveSorted),
+    [isCallInProgress, liveSorted],
   );
 
   const activeCallSid = useMemo(
@@ -797,10 +806,10 @@ export default function AppointmentDetail() {
               <aside className="flex flex-col min-h-[min(52vh,480px)] md:min-h-0 w-full md:w-[min(440px,42vw)] shrink-0 border-t md:border-t-0 md:border-l border-slate-200 bg-slate-50/30 overflow-hidden">
                 <CallActivitySection
                   ref={liveScrollRef}
-                  payeeId={appointment.payeeId}
                   callLogTab={callLogTab}
                   setCallLogTab={setCallLogTab}
                   isCallInProgress={isCallInProgress}
+                  tpaAngryIndicatorActive={tpaAngryIndicatorActive}
                   liveChronological={liveChronological}
                   hasTranscript={hasTranscript}
                   transcriptText={transcriptText}
