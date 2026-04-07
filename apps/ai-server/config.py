@@ -15,6 +15,11 @@ WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")  # float16 for 
 SUPERB_ER_MODEL_ID = os.getenv(
     "SUPERB_ER_MODEL_ID", "superb/wav2vec2-base-superb-er"
 )
+# Stricter angry: model often confuses stressed/neutral speech with anger.
+EMOTION_ANGER_MIN_SCORE = float(os.getenv("EMOTION_ANGER_MIN_SCORE", "0.58"))
+EMOTION_ANGER_MARGIN_OVER_NEUTRAL = float(
+    os.getenv("EMOTION_ANGER_MARGIN_OVER_NEUTRAL", "0.14")
+)
 
 # Qdrant / RAG
 PROVIDER = os.getenv("PROVIDER", "gemini")
