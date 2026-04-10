@@ -434,10 +434,10 @@ export default function AppointmentDetail() {
     [liveLogs],
   );
 
+  /** Stays true after the call ends if any TPA segment was angry since the latest [CALL_EVENT] START. */
   const tpaAngryIndicatorActive = useMemo(
-    () =>
-      isCallInProgress && hasTpaAngrySinceLatestCallStart(liveSorted),
-    [isCallInProgress, liveSorted],
+    () => hasTpaAngrySinceLatestCallStart(liveSorted),
+    [liveSorted],
   );
 
   const activeCallSid = useMemo(
