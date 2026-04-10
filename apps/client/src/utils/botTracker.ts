@@ -216,7 +216,10 @@ export function isCallActiveFromTrackers(
   return open;
 }
 
-/** True if any `[TPA_EMOTION] angry` appears after the latest `[CALL_EVENT] START` (full payee log; not UI-sliced). */
+/**
+ * True if any `[TPA_EMOTION] angry` appears after the latest `[CALL_EVENT] START`
+ * (full payee log; not UI-sliced). Still true after `[CALL_EVENT] END` until a newer START.
+ */
 export function hasTpaAngrySinceLatestCallStart(
   chronological: BotTrackerRecord[],
 ): boolean {

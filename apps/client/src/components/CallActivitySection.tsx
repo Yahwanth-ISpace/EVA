@@ -15,7 +15,7 @@ export interface CallActivitySectionProps {
   callLogTab: "live" | "transcript";
   setCallLogTab: (t: "live" | "transcript") => void;
   isCallInProgress: boolean;
-  /** After any angry classification this call, stays true until the call ends */
+  /** True if the latest verification call had any angry TPA segment (including after the call ends). */
   tpaAngryIndicatorActive?: boolean;
   liveChronological: BotTrackerRecord[];
   hasTranscript: boolean;
@@ -127,8 +127,8 @@ function TpaAngryHeaderIcon() {
   return (
     <span
       className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600 shadow-sm border border-red-200/90"
-      title="TPA speech was classified as angry on at least one turn this call"
-      aria-label="TPA angry tone detected on this call"
+      title="TPA speech was classified as angry at least once on the latest verification call (persists after the call ends until a new call starts)"
+      aria-label="Angry TPA tone occurred on the latest verification call"
       role="img"
     >
       <svg
