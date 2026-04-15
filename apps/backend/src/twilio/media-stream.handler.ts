@@ -619,10 +619,10 @@ export class MediaStreamHandlerService {
 
     const tryTriggerProcess = () => {
       if (state.processing || state.callEnded || !state.streamSid) return;
-      if (state.mode !== 'ivr-bypass' && state.onHold) return;
+      if (state.mode === 'eva' && state.onHold) return;
       const now = Date.now();
       if (
-        state.mode !== 'ivr-bypass' &&
+        state.mode === 'eva' &&
         state.lastSpeakTime > 0 &&
         now - state.lastSpeakTime < ANSWER_WINDOW_MS
       ) {
@@ -1021,7 +1021,7 @@ export class MediaStreamHandlerService {
         if (
           !recallReply &&
           userSaid.length > 0 &&
-          state.mode !== 'ivr-bypass'
+          state.mode === 'eva'
         ) {
           try {
             const emotion = await analyzeEmotionFromText(
@@ -1553,7 +1553,7 @@ export class MediaStreamHandlerService {
         if (combined.length < minBytes) return;
         const now = Date.now();
         if (
-          state.mode !== 'ivr-bypass' &&
+          state.mode === 'eva' &&
           state.lastSpeakTime > 0 &&
           now - state.lastSpeakTime < ANSWER_WINDOW_MS
         ) {
