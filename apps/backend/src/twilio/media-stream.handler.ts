@@ -288,6 +288,85 @@ const STATIC_PATIENT_INFO: PatientInfo = {
   ssn: null,
 };
 
+/** Emotion data structure for tracking detected emotions */
+interface EmotionData {
+  timestamp: number;
+  emotion: string; // 'happy', 'sad', 'angry', 'frustrated', 'neutral', etc.
+  confidence: number; // 0-1 confidence score
+  indicators: string[]; // detected keywords/phrases causing this emotion
+}
+
+/** Analyze audio emotion from transcript and return emotion classification with confidence */
+/** Analyze emotion from text transcript using AI prompt */
+async function analyzeEmotionFromText(
+  transcript: string,
+  aiService?: any,
+): Promise<EmotionData> {
+  try {
+    if (!aiService || !aiService.analyzeEmotionFromText) {
+      // Fallback if AI service not available
+      return {
+        timestamp: Date.now(),
+        emotion: 'neutral',
+        confidence: 0.3,
+        indicators: [],
+      };
+    }
+
+    const result = await aiService.analyzeEmotionFromText(transcript);
+
+    return {
+      timestamp: Date.now(),
+      emotion: result.emotion || 'neutral',
+      confidence: result.confidence || 0.5,
+      indicators: result.indicators || [],
+    };
+  } catch (e) {
+    // Safe fallback if AI analysis fails
+    return {
+      timestamp: Date.now(),
+      emotion: 'neutral',
+      confidence: 0.2,
+      indicators: [],
+    };
+  }
+}
+
+/** Get emoji indicator for emotion */
+function getEmotionEmoji(emotion: string): string {
+  const emojiMap: Record<string, string> = {
+    happy: '😊',
+    sad: '😢',
+    angry: '😠',
+    frustrated: '😤',
+    confused: '😕',
+    neutral: '😐',
+  };
+  return emojiMap[emotion] || '😐';
+}
+
+/** Generate emotion-aware prompt adjustment for AI context */
+function getEmotionAwarePromptContext(
+  emotion: string,
+  confidence: number,
+): string {
+  if (confidence < 0.4) return ''; // Low confidence, no context
+
+  const contextMap: Record<string, string> = {
+    angry:
+      'The user seems angry or upset. Respond with sincere empathy, lower your pitch, speak slower, and apologize if appropriate. Acknowledge their frustration. ',
+    frustrated:
+      'The user appears frustrated. Be genuinely helpful, keep responses concise, and offer clear solutions. Show you understand their feelings. ',
+    sad: 'The user sounds sad or discouraged. Use a warm, supportive tone. Be compassionate and gentle in your response. ',
+    happy:
+      'The user seems happy or satisfied. Maintain an upbeat, positive tone. Be enthusiastic and supportive. ',
+    confused:
+      'The user seems confused. Simplify your explanation, speak clearly, and offer to clarify. Break down information into smaller steps. ',
+  };
+
+  return contextMap[emotion] || '';
+}
+
 interface StreamState {
   buffer: Buffer[];
   streamSid: string | null;
@@ -318,6 +397,10 @@ interface StreamState {
   ivrDigitSent: boolean;
   /** True after we've already said our purpose (e.g. "I need a few benefit details") — avoid repeating it while user is speaking. */
   purposeSaid: boolean;
+  /** Emotion tracking during the call */
+  emotionHistory: EmotionData[];
+  /** Most recent detected emotion */
+  lastEmotion: EmotionData | null;
 }
 
 @Injectable()
@@ -367,6 +450,8 @@ export class MediaStreamHandlerService {
       mode: isIvrBypass ? 'ivr-bypass' : 'eva',
       ivrDigitSent: false,
       purposeSaid: false,
+      emotionHistory: [],
+      lastEmotion: null,
     };
 
     const send = (obj: object) => {
@@ -418,7 +503,7 @@ export class MediaStreamHandlerService {
       }
     };
 
-    const pushToVerificationService = () => {
+    const pushToVerificationService = async () => {
       if (!state.payeeId) {
         this.logger.warn(
           '[MediaStream] Verification NOT saved: payeeId is missing. Pass payeeId in the media-stream URL (e.g. ?payeeId=...) so verification can be stored.',
@@ -436,9 +521,44 @@ export class MediaStreamHandlerService {
       if (!hasAny) {
         return;
       }
-      const fullTranscript = state.conversationTranscript.length
-        ? state.conversationTranscript.join('\n')
-        : undefined;
+
+      // Generate emotion summary for the call
+      let emotionSummary = '';
+      if (state.emotionHistory.length > 0) {
+        const emotionCounts = state.emotionHistory.reduce(
+          (acc, e) => {
+            acc[e.emotion] = (acc[e.emotion] || 0) + 1;
+            return acc;
+          },
+          {} as Record<string, number>,
+        );
+        const avgConfidence =
+          state.emotionHistory.reduce((sum, e) => sum + e.confidence, 0) /
+          state.emotionHistory.length;
+        const dominantEmotion = Object.entries(emotionCounts).sort(
+          (a, b) => b[1] - a[1],
+        )[0];
+
+        emotionSummary = `\n\n--- CALL EMOTION ANALYSIS ---\nDominant Emotion: ${dominantEmotion[0].toUpperCase()} (${dominantEmotion[1]} samples)\nAverage Confidence: ${(avgConfidence * 100).toFixed(1)}%\nEmotion Distribution: ${Object.entries(
+          emotionCounts,
+        )
+          .map(([e, c]) => `${e}(${c})`)
+          .join(
+            ', ',
+          )}\nMost Recent: ${state.lastEmotion?.emotion.toUpperCase()} ${getEmotionEmoji(state.lastEmotion?.emotion || 'neutral')}`;
+
+        await pushLiveTracker(emotionSummary);
+        this.logger.log(
+          `[MediaStream] Call Emotion Summary - Dominant: ${dominantEmotion[0]}, Samples: ${state.emotionHistory.length}, Avg Confidence: ${(avgConfidence * 100).toFixed(1)}%`,
+        );
+      }
+
+      const fullTranscript = (
+        (state.conversationTranscript.length
+          ? state.conversationTranscript.join('\n')
+          : undefined) || ''
+      ).concat(emotionSummary);
+
       this.aiService
         .saveCallVerification(
           state.payeeId,
@@ -478,7 +598,13 @@ export class MediaStreamHandlerService {
             state.extractedData[f] != null &&
             String(state.extractedData[f]).trim(),
         );
-      if (hasAny) pushToVerificationService();
+      if (hasAny)
+        void pushToVerificationService().catch((e) =>
+          this.logger.warn(
+            '[MediaStream] Async verification save failed',
+            (e as Error)?.message,
+          ),
+        );
       const sid = state.callSid;
       if (sid)
         this.twilioService
@@ -548,9 +674,7 @@ export class MediaStreamHandlerService {
         emotionPromise =
           state.mode === 'ivr-bypass'
             ? Promise.resolve(null)
-            : this.audioEmotionService
-                .classifyWav(wavPath)
-                .catch(() => null);
+            : this.audioEmotionService.classifyWav(wavPath).catch(() => null);
 
         let transcript: string;
         try {
@@ -685,7 +809,13 @@ export class MediaStreamHandlerService {
                   state.extractedData[f] != null &&
                   String(state.extractedData[f]).trim(),
               );
-            if (hasAnyData) pushToVerificationService();
+            if (hasAnyData)
+              void pushToVerificationService().catch((e) =>
+                this.logger.warn(
+                  '[MediaStream] Verification save in hold limit failed',
+                  (e as Error)?.message,
+                ),
+              );
             const sid = state.callSid;
             if (sid)
               this.twilioService
@@ -745,7 +875,13 @@ export class MediaStreamHandlerService {
                     state.extractedData[f] != null &&
                     String(state.extractedData[f]).trim(),
                 );
-              if (hasAnyData) pushToVerificationService();
+              if (hasAnyData)
+                void pushToVerificationService().catch((e) =>
+                  this.logger.warn(
+                    '[MediaStream] Verification save in hold timeout (secondary) failed',
+                    (e as Error)?.message,
+                  ),
+                );
               if (state.callSid)
                 this.twilioService
                   .hangUp(state.callSid)
@@ -880,9 +1016,50 @@ export class MediaStreamHandlerService {
         let extractedUpdates: Record<string, string | null> = {};
         let endCall = false;
 
+        // --- EMOTION ANALYSIS: Detect and track user emotion during the call ---
+        let emotionContext = '';
+        if (
+          !recallReply &&
+          userSaid.length > 0 &&
+          state.mode !== 'ivr-bypass'
+        ) {
+          try {
+            const emotion = await analyzeEmotionFromText(
+              userSaid,
+              this.aiService,
+            );
+            state.lastEmotion = emotion;
+            state.emotionHistory.push(emotion);
+
+            // Log emotion with indicator
+            const emoji = getEmotionEmoji(emotion.emotion);
+            const emotionLabel = `[EMOTION: ${emotion.emotion.toUpperCase()} ${emoji} conf:${(emotion.confidence * 100).toFixed(0)}%]`;
+            await pushLiveTracker(emotionLabel);
+            this.logger.debug(
+              `[MediaStream] Emotion detected: ${emotion.emotion} (confidence: ${(emotion.confidence * 100).toFixed(0)}%) | Indicators: ${emotion.indicators.join(', ')}`,
+            );
+
+            // Generate emotion-aware context for AI
+            emotionContext = getEmotionAwarePromptContext(
+              emotion.emotion,
+              emotion.confidence,
+            );
+          } catch (e: any) {
+            this.logger.debug(
+              '[MediaStream] Emotion analysis failed',
+              (e as Error)?.message,
+            );
+          }
+        }
+
         if (!recallReply) {
+          // Prepend emotion context to transcript for AI awareness
+          const contextualTranscript = emotionContext
+            ? `${emotionContext}\nUser said: ${effectiveTranscript}`
+            : effectiveTranscript;
+
           const result = await this.aiService.getNextConversationTurn(
-            effectiveTranscript,
+            contextualTranscript,
             state.extractedData,
             state.patientInfo,
             state.lastAskedField,
@@ -1155,8 +1332,24 @@ export class MediaStreamHandlerService {
         ) {
           const tpaTone = await emotionPromise;
           if (tpaTone) {
-            await pushLiveTracker(`[TPA_EMOTION] ${tpaTone}`);
+            // Track emotion data from TPA tone analysis
+            const toneStr = String(tpaTone).toLowerCase();
+            const toneEmoji = toneStr.includes('happy')
+              ? '😊'
+              : toneStr.includes('angry')
+                ? '😠'
+                : toneStr.includes('frustrated')
+                  ? '😤'
+                  : toneStr.includes('sad')
+                    ? '😢'
+                    : toneStr.includes('confused')
+                      ? '😕'
+                      : '😐';
+
+            await pushLiveTracker(`[TPA_EMOTION] ${tpaTone} ${toneEmoji}`);
             state.conversationTranscript.push(`[TPA_EMOTION] ${tpaTone}`);
+
+            this.logger.debug(`[MediaStream] TPA Tone: ${tpaTone}`);
           }
           state.conversationTranscript.push('User: ' + userSaid);
           await pushLiveTracker(`User: ${userSaid}`);
@@ -1313,7 +1506,12 @@ export class MediaStreamHandlerService {
               String(state.extractedData[f]).trim(),
           )
         ) {
-          pushToVerificationService();
+          void pushToVerificationService().catch((e) =>
+            this.logger.warn(
+              '[MediaStream] Verification save on close failed',
+              (e as Error)?.message,
+            ),
+          );
         } else if (!state.payeeId) {
           this.logger.warn(
             '[MediaStream] Call stopped but payeeId missing — verification NOT saved. Use ?payeeId=... in stream URL.',

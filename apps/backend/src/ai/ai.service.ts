@@ -935,4 +935,69 @@ Respond with ONLY a JSON object. No markdown. Format:
       return out;
     }
   }
+
+  /**
+   * Analyze the emotional tone and sentiment of a user's transcript using AI.
+   * Returns the detected emotion, confidence score, and key indicators.
+   */
+  public async analyzeEmotionFromText(transcript: string): Promise<{
+    emotion: string;
+    confidence: number;
+    indicators: string[];
+  }> {
+    try {
+      const prompt = `Analyze the emotional tone of the following customer message. 
+Respond ONLY with valid JSON (no markdown, no code blocks) in this exact format:
+{
+  "emotion": "one of: happy, sad, angry, frustrated, confused, neutral",
+  "confidence": 0.0 to 1.0,
+  "indicators": ["key phrase 1", "key phrase 2", "key phrase 3"]
+}
+
+Guidelines:
+- emotion: primary emotional state detected
+- confidence: how confident you are in this detection (0.0-1.0)
+- indicators: up to 3 specific words/phrases from the text that indicate this emotion
+
+Message to analyze:
+${transcript}`;
+
+      const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
+      const start = Date.now();
+      const result = await model.generateContent(prompt);
+      this.logger.debug(
+        `[Gemini] analyzeEmotionFromText completed in ${Date.now() - start}ms`,
+      );
+
+      let jsonString = result.response.text().trim() || '{}';
+
+      if (jsonString.startsWith('```')) {
+        jsonString = jsonString.replace(/```json|```/gi, '').trim();
+      }
+
+      const parsed = JSON.parse(jsonString);
+
+      // Ensure confidence is between 0 and 1
+      const confidence = Math.max(
+        0,
+        Math.min(1, parseFloat(parsed.confidence) || 0.5),
+      );
+
+      return {
+        emotion: parsed.emotion?.toLowerCase() || 'neutral',
+        confidence,
+        indicators: Array.isArray(parsed.indicators) ? parsed.indicators : [],
+      };
+    } catch (err) {
+      this.logger.warn(
+        '[Gemini] Error analyzing emotion:',
+        (err as Error)?.message,
+      );
+      return {
+        emotion: 'neutral',
+        confidence: 0.2,
+        indicators: [],
+      };
+    }
+  }
 }
