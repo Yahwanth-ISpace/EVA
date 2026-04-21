@@ -428,8 +428,8 @@ INTERNAL CALL STATE (never read aloud verbatim):
 
     const oneFieldRule =
       nextFieldToAsk === null
-        ? `All ${numFields} fields (${fieldsList}) are collected. ENDING FLOW: (1) If the user JUST GAVE a value in this turn (completing the last field): say "That's all I need, thank you." and set endCall FALSE — do NOT say "Have a good day" yet. (2) If the user said thank you / yes / that's all / we're done / goodbye / I'm good / nothing else: say "Thank you for helping me with the verification. Have a great day." and set endCall TRUE. (3) If the user asked a question: answer it completely, then ask "Is that all you have?" or "Anything else?" and set endCall FALSE; when they say yes or thank you in a later turn, say "Thank you for helping me with the verification. Have a great day." and set endCall TRUE. Do NOT say your name, company, or repeat the introduction.`
-        : `Ask for ONE field only. VARY the phrase every time — use a different one each turn: "What is the ${nextFieldToAsk}?" / "Can I get the ${nextFieldToAsk}?" / "May I have the ${nextFieldToAsk}?" / "Can you provide the ${nextFieldToAsk}?" / "Can I have the ${nextFieldToAsk}?" / "Could you share the ${nextFieldToAsk}?" / "What's the ${nextFieldToAsk}?" If you just got a value from them: acknowledge with ONE of "Got it, thanks." / "Thanks." / "Okay, thank you." / "Noted." then IMMEDIATELY ask for the NEXT field. EXCEPTION: If that value was the LAST missing field (so after this turn all fields are collected), say "That's all I need, thank you." and set endCall FALSE — do NOT ask for another field or say "Have a good day." NEVER say "Thank you, what is the ${nextFieldToAsk}?" or re-ask the same field they just answered. Do NOT say "Is that all you have?" or "Are we good?" after a normal value. Keep nextMessage under 25 words.`;
+        ? `All ${numFields} fields (${fieldsList}) are collected. TWO-STEP ENDING FLOW (never skip step 1): (1) If the user JUST GAVE a value in this turn (completing the last field): say "That's all I have. Thank you for your help." and set endCall FALSE — do NOT say "Have a good day" yet. (2) On the NEXT turn, if the user said thank you / welcome / you're welcome / yes / okay / that's all / we're done / goodbye / I'm good / have a good day / nothing else: say "You're welcome. Have a wonderful day." and set endCall TRUE. (3) If the user asked a question AFTER we said "That's all I have": answer it completely from the call context (or briefly if not in context), then ask "Anything else?" and set endCall FALSE; when they say yes/thank you in a later turn, say "You're welcome. Have a wonderful day." and set endCall TRUE. Do NOT say your name, company, or repeat the introduction. Do NOT collapse steps 1 and 2 into a single turn.`
+        : `IDENTITY-FIRST RULE — if patient_identity_cleared_for_benefits is no, do NOT ask for ${nextFieldToAsk} or any benefit field this turn. Just answer whatever the TPA said (identity question → use CHEAT-SHEET; filler "okay" → "Of course."; nothing → "Sure."). Only when identity is yes, ask for ONE benefit field. VARY the phrase every time — use a different one each turn: "What is the ${nextFieldToAsk}?" / "Can I get the ${nextFieldToAsk}?" / "May I have the ${nextFieldToAsk}?" / "Can you provide the ${nextFieldToAsk}?" / "Can I have the ${nextFieldToAsk}?" / "Could you share the ${nextFieldToAsk}?" / "What's the ${nextFieldToAsk}?" If you just got a value from them: acknowledge with ONE of "Got it, thanks." / "Thanks." / "Okay, thank you." / "Noted." then IMMEDIATELY ask for the NEXT field. EXCEPTION: If that value was the LAST missing field (so after this turn all fields are collected), say "That's all I have. Thank you for your help." and set endCall FALSE — do NOT ask for another field or say "Have a good day." NEVER say "Thank you, what is the ${nextFieldToAsk}?" or re-ask the same field they just answered. Do NOT say "Is that all you have?" or "Are we good?" after a normal value. Keep nextMessage under 25 words.`;
 
     const patientBlock = patientInfo
       ? `
@@ -447,7 +447,16 @@ PURPOSE OF CALL — SAY IT ONCE, THEN MOVE ON (this is the single biggest source
 - WHEN they ask for patient name / spell name / "what is the patient's name" / full name: Answer ONLY with the name, e.g. "The patient is ${patientInfo.fullName}." — English only. Do NOT give DOB unless they also asked for DOB in this turn. Do NOT ask for benefit fields in the same turn. extractedUpdates {}.
 - WHEN they ask for DOB / date of birth / birthday: Answer with DOB only in English, e.g. "The date of birth is ${patientInfo.dobFormatted ?? 'not provided'}." Then ONE short confirmation: "Is that correct?" or "Does that match your records?" Do NOT ask for ${firstFieldName} in this turn. extractedUpdates {}.
 - WHEN they confirm after you gave DOB in the previous turn ("yes" / "correct" / "thanks") and internal state shows patient_identity_cleared_for_benefits is yes: Say "Thanks." then ask for the first missing benefit field (${firstFieldName}) with a varied phrase. extractedUpdates {}.
-- BENEFIT FIELDS (${fieldsList}): Do NOT ask for any benefit field until patient_identity_cleared_for_benefits is yes in INTERNAL CALL STATE. If still "no", only answer identity/purpose questions; wait for them to ask name/DOB. Never re-ask or re-state name+DOB in full unless they ask again. extractedUpdates {} unless they clearly give a benefit value — then extract it.
+- BENEFIT FIELDS (${fieldsList}): HARD RULE — do NOT ask for any benefit field (no "Can I get the group ID / coverage / deductible / copay / validity", no "What is the ...", no "May I have ...") until patient_identity_cleared_for_benefits is YES. If it is NO, your reply must NOT contain any of those field names as a question.
+   • If the TPA just said purpose is stated and then replies with a short "okay" / "alright" / "sure" / "got it": respond with a tiny acknowledgement ("Of course.") and STOP. Do NOT volunteer the first benefit field. Wait for them to ask for patient name / DOB / NPI / Tax ID / member ID first.
+   • If the TPA explicitly hands the floor ("what do you need", "go ahead", "what information", "anything else"): ONLY THEN may you ask the first missing benefit field (${firstFieldName}).
+   • If identity is still NO and the TPA says anything else that is not a question: answer if needed, otherwise say "Sure." or stay brief. Never re-state name+DOB in full unless they ask again.
+   • extractedUpdates {} unless they clearly give a benefit value — then extract it.
+- EXAMPLES while patient_identity_cleared_for_benefits is NO:
+   • TPA "Okay." → EVA: "Of course." (NOT "Can I get the group ID?")
+   • TPA "Alright, go ahead." → EVA may ask first missing benefit field now (this counts as handoff).
+   • TPA "Sure, what do you need?" → EVA may ask first missing benefit field now.
+   • TPA "Thanks." after EVA gave DOB → EVA: "Thanks." then ask first missing benefit field (DOB confirmation flips identity to yes).
 - WHO is calling: ONLY if they ask "who is this?" / "identify yourself" / "who are you": "I'm Reena from Went Dentals. I'm calling to get benefit details." extractedUpdates {}.
 - SSN / tax ID: ${patientInfo.ssn ? 'Give only what they ask for. One confirmation phrase. Do not ask benefit fields same turn.' : `"I don't have that on file."`}
 - WHAT do you need: If patient_identity_cleared_for_benefits is yes, ask first missing benefit field only. If no, say you are waiting for them to verify patient name or date of birth as per their process. extractedUpdates {}.
@@ -459,8 +468,12 @@ PURPOSE OF CALL — SAY IT ONCE, THEN MOVE ON (this is the single biggest source
 
     const recallBlock = `
 CONFIRMATION PHRASES — Use "Is it okay?" / "Is that all you have?" / "Are we good?" / "Are we clear?" / "Does that match?" ONLY when: (1) After you gave DATE OF BIRTH because they asked — one confirmation phrase; next turn after they affirm, ask benefit field if patient_identity_cleared_for_benefits applies. (2) After RECALL — when they ask "what is the [field]?" give the stored value then ONE confirmation phrase at random. (3) When they correct a value. (4) When all benefit fields collected and waiting for goodbye. Never after a normal benefit value (${fieldsList}).
-- When they GIVE a value (number/amount) for a field in normal flow: extract it. If that was the LAST missing field (all ${numFields} now collected), say "That's all I need, thank you." and set endCall FALSE. Otherwise say "Got it, thanks." or "Thanks." or "Okay, thank you." or "Noted." then ask for the NEXT field. Do NOT say "Is that all you have?" or "Are we good?" after a normal value. Do NOT re-ask the same field they just answered.
-- When they CONFIRM ("yes" / "thank you" / "we're good") after you asked "Are we good?" (e.g. after DOB or after recall): say "Thanks." and ask for the next field, or if all ${numFields} collected and they said thank you, say "Thank you for helping me with the verification. Have a great day." and set endCall true.
+- When they GIVE a value (number/amount) for a field in normal flow: extract it. If that was the LAST missing field (all ${numFields} now collected), say "That's all I have. Thank you for your help." and set endCall FALSE — do NOT say "Have a good day" in the same turn. Otherwise say "Got it, thanks." or "Thanks." or "Okay, thank you." or "Noted." then ask for the NEXT field. Do NOT say "Is that all you have?" or "Are we good?" after a normal value. Do NOT re-ask the same field they just answered.
+- When they CONFIRM ("yes" / "thank you" / "we're good") after you confirmed a value ("So the deductible is $25, right?"): ACK with "Thanks." then: (a) if more benefit fields missing, ask the next one; (b) if all ${numFields} collected, say "That's all I have. Thank you for your help." endCall FALSE (wait for their thank-you before the final goodbye).
+- TWO-STEP CLOSING (strict, never skip):
+   1) The turn that completes the last missing field → "That's all I have. Thank you for your help." endCall FALSE.
+   2) The NEXT TPA turn (they say "thank you" / "you're welcome" / "have a good day" / "bye" / "yes") → "You're welcome. Have a wonderful day." endCall TRUE.
+   Do NOT collapse these into one turn. Do NOT say "Have a good day" on the same turn you confirmed the last field.
 - Value after hold: say "So the [field] is [value], right?" then wait for yes; then ask next field. extractedUpdates {}.
 - After patient DOB: give DOB then ONE of "Are we good?" / "Is that all you have?" / "Are we clear?" Only when they say "yes" / "we're good" ask for first benefit field (${firstFieldName}). extractedUpdates {}.
 - When they ask for RECALL ("what is the [field]?" / "do you have the [field]?"): give the value from data then ONE of "Is that all you have?" / "Are we good?" / "Are we clear?" (random). Do NOT ask for next field in same turn. extractedUpdates {}.
@@ -559,7 +572,7 @@ CONVERSATION FLOW:
 - They ask patient name: give name only in English; no benefit field same turn unless identity already cleared and they moved on.
 - Greeting / purpose-of-call questions ("how can I help", "why are you calling", etc.): one varied sentence of purpose in English — no name, no DOB; never the exact same wording as your last purpose line if they ask again. extractedUpdates {}.
 - Benefit values (${fieldsList}): extract, thank, ask next — only when allowed by INTERNAL CALL STATE and missing fields.
-- When all fields collected and user JUST GAVE the last value: "That's all I need, thank you." endCall FALSE.
+- When all fields collected and user JUST GAVE the last value: "That's all I have. Thank you for your help." endCall FALSE. The NEXT turn, when the TPA says any of ("thank you" / "welcome" / "you're welcome" / "have a good day" / "bye" / "yes" / "okay"), reply "You're welcome. Have a wonderful day." and endCall TRUE.
 - END-OF-CALL when all fields collected AND user thanks / goodbye: "Thank you for helping me with the verification. Have a great day." endCall TRUE.
 
 ROLE & TONE:
@@ -627,7 +640,7 @@ WHAT TO SAY (check in this order). Use "Are we good?" / "Is that all you have?" 
 - If they asked a general question (how are you): answer briefly. Do NOT add "Are we good?" Do not ask for a field in same turn. extractedUpdates {}.
 - Otherwise: ${oneFieldRule}
 
-Set endCall to true ONLY when (1) all ${numFields} fields are present AND (2) the user said thank you / yes / that's all / we're done / goodbye. When they JUST gave the last value (completing all fields), say "That's all I need, thank you." and set endCall FALSE. When they then say thank you or yes, say "Thank you for helping me with the verification. Have a great day." and set endCall TRUE. When all collected and they ask a question: answer fully, ask "Is that all you have?" and set endCall FALSE; when they say yes/thank you, say the closing and set endCall TRUE. If even one field is missing, set endCall to false and ask for the first missing field.
+Set endCall to true ONLY when (1) all ${numFields} fields are present AND (2) the user said thank you / yes / that's all / we're done / goodbye / welcome / you're welcome / okay / have a good day AND (3) we have already delivered the "That's all I have" line on a previous turn. When they JUST gave the last value (completing all fields), say "That's all I have. Thank you for your help." and set endCall FALSE. On the NEXT TPA turn when they offer any courtesy, say "You're welcome. Have a wonderful day." and set endCall TRUE. Never collapse the two steps into a single turn. When all collected and they ask a question: answer fully, ask "Is that all you have?" and set endCall FALSE; when they say yes/thank you, say the closing and set endCall TRUE. If even one field is missing, set endCall to false and ask for the first missing field.
 
 Respond with ONLY a JSON object. No markdown. Format:
 {"nextMessage": "Short sentence", "extractedUpdates": {} or {"deductible": "100 dollars"} etc., "endCall": true or false}`;
@@ -766,7 +779,12 @@ Respond with ONLY a JSON object. No markdown. Format:
 
   private isDollars(s: string): boolean {
     const t = String(s).trim().toLowerCase();
-    return /\d+\s*dollars?|\$\s*\d+|\d+\s*\$|dollar\s*\d+/.test(t);
+    if (/\d+\s*dollars?|\$\s*\d+|\d+\s*\$|dollar\s*\d+/.test(t)) return true;
+    // Percent sign disqualifies.
+    if (/%/.test(t)) return false;
+    // Bare integer (or decimal with $ optional) — the TPA was asked a dollar question
+    // so "24", "$24", "2500.00" are all acceptable dollar amounts.
+    return /^\$?\d{1,6}(\.\d{1,2})?$/.test(t);
   }
 
   /** Normalize validity to "21st Dec 2028" format. Returns null if not parseable. */
@@ -954,14 +972,22 @@ Respond with ONLY a JSON object. No markdown. Format:
           };
         }
         const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
-        out.deductible = dol ? `$${dol[1] || dol[2] || dol[3]}` : v;
+        const bareDol = !dol ? v.match(/^\$?(\d{1,6})(?:\.\d{1,2})?$/) : null;
+        out.deductible = dol
+          ? `$${dol[1] || dol[2] || dol[3]}`
+          : bareDol
+            ? `$${bareDol[1]}`
+            : v;
       } else if (field === 'copay') {
         const pct = v.match(/(\d+)\s*%|(\d+)\s*percent/i);
         const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
+        const bareDol = !dol ? v.match(/^\$?(\d{1,6})(?:\.\d{1,2})?$/) : null;
         if (pct) {
           out.copay = `${pct[1] || pct[2]}%`;
         } else if (this.isDollars(v) && dol) {
           out.copay = `$${dol[1] || dol[2] || dol[3]}`;
+        } else if (this.isDollars(v) && bareDol) {
+          out.copay = `$${bareDol[1]}`;
         } else if (!this.isDollars(v) && !this.isPercentage(v)) {
           return {
             ok: false,

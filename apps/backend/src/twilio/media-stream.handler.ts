@@ -395,6 +395,61 @@ function answerIdentityFromContext(
   }
 }
 
+/** Bare acknowledgement — "okay", "alright", "sure", "got it" — with no actual question or content.
+ *  Used after purpose has been said to avoid EVA immediately volunteering a benefit field.
+ *  Returns false for "yes" / "thank you" since those are handled as explicit confirmations elsewhere. */
+function isBareAcknowledgement(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[.!,]+$/, '');
+  if (!t) return false;
+  if (t.length > 28) return false;
+  return /^(ok|okay|alright|all\s*right|sure|got\s*it|understood|i\s*see|gotcha|mm[-\s]?hmm|mhm|mmk)$/i.test(t);
+}
+
+/** TPA is handing control to EVA ("go ahead" / "what do you need" / "what fields" / "what information" /
+ *  "anything else" / "how can I help"). On this signal we flip `patientIdentityReadyForBenefits` to true,
+ *  which allows EVA to start asking benefit fields. */
+function isTpaHandoff(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (t.length < 3) return false;
+  return (
+    /\b(go\s+ahead|please\s+proceed|you\s+(can|may)\s+proceed|proceed)\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+(do\s+you|can\s+i|may\s+i|is\s+it\s+you)\s+(need|want|want\s+to\s+know|looking\s+for|require)\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+(fields|information|details|benefits|info)\s+(do\s+you|are\s+you|you\s+need|you\s+want)\b/.test(
+      t,
+    ) ||
+    /\b(anything|something)\s+else\s+(you\s+need|i\s+can\s+(help|share|provide))\b/.test(
+      t,
+    ) ||
+    /\bhow\s+(can|may)\s+i\s+help\b/.test(t) ||
+    /\bwhat\s+else\s+do\s+you\s+need\b/.test(t) ||
+    /\b(ready|i\s+am\s+ready)\b/.test(t)
+  );
+}
+
+/** Is EVA's proposed reply asking for a benefit field from the orderedFields list?
+ *  We check for common "Can I get / May I have / What is / Could you provide / share"
+ *  followed by any field name in its camel-case or space-separated form. */
+function isBenefitFieldAsk(toSpeak: string, orderedFields: string[]): boolean {
+  if (!toSpeak?.trim() || !orderedFields.length) return false;
+  const t = toSpeak.toLowerCase();
+  const hasQuestion =
+    /\?|\bcan\s+(i|you)\b|\bmay\s+i\b|\bcould\s+(i|you)\b|\bwhat(?:'s|\s+is)\b|\bwhat\s+are\b|\bprovide|\bshare|\btell\s+me\b/i.test(
+      t,
+    );
+  if (!hasQuestion) return false;
+  return orderedFields.some((f) => {
+    if (!f) return false;
+    const direct = f.toLowerCase();
+    // camelCase → space separated, e.g. "groupId" → "group id"
+    const spaced = f.replace(/([A-Z])/g, ' $1').toLowerCase().trim();
+    return t.includes(direct) || t.includes(spaced);
+  });
+}
+
 /** Rep asks who is calling — a one-line identity answer is OK; full "Hi I'm Reena... how are you" is not. */
 function userAskedWhoIsCalling(userSaid: string): boolean {
   const t = userSaid.trim().toLowerCase();
@@ -595,6 +650,19 @@ interface StreamState {
   patientIdentityReadyForBenefits: boolean;
   /** Last EVA reply included patient DOB from DB — next rep line may be confirmation. */
   evaAwaitingYesAfterDob: boolean;
+  /** Count of TPA-led identity questions we have answered from the cache. Used to gate
+   *  the handoff from identity phase to benefit phase — we require the TPA to actually
+   *  perform verification before EVA starts asking for coverage / deductible / copay / validity. */
+  identityAnswersGiven: number;
+  /** After any identity answer we expect the TPA to either (a) ask the next identity item,
+   *  (b) confirm, or (c) signal they are done ("go ahead / what do you need"). This flag
+   *  generalises `evaAwaitingYesAfterDob` to every identity answer. */
+  evaAwaitingYesAfterIdentity: boolean;
+  /** True on the turn we completed the last benefit field — triggers the "That's all I have"
+   *  intermediate line. Next TPA turn will typically be a thank-you / goodbye; then we close. */
+  justCompletedAllFields: boolean;
+  /** Locked after we play the "That's all I have" line so we never ask any benefit field again. */
+  allDoneAnnounced: boolean;
   /** Consecutive turns with skip / inaudible / weak audio — for skip-LLM and abort guardrails. */
   consecutiveNoiseOrEmptyTurns: number;
   /** Set after the Twilio stream plays CONVERSATION_GREETING — used to block repeated intros. */
@@ -682,6 +750,10 @@ export class MediaStreamHandlerService {
       purposeSaid: false,
       patientIdentityReadyForBenefits: false,
       evaAwaitingYesAfterDob: false,
+      identityAnswersGiven: 0,
+      evaAwaitingYesAfterIdentity: false,
+      justCompletedAllFields: false,
+      allDoneAnnounced: false,
       consecutiveNoiseOrEmptyTurns: 0,
       openingGreetingPlayed: false,
     };
@@ -1330,16 +1402,31 @@ export class MediaStreamHandlerService {
           ? state.orderedFields
           : ['coverage', 'deductible', 'copay', 'validity'];
 
-        // Rep confirmed identity after we gave DOB — allow benefit collection in prompts.
-        if (
-          state.patientInfo?.dobFormatted &&
-          state.evaAwaitingYesAfterDob &&
-          /^(yes|yeah|yep|correct|that'?s\s+right|right|ok|okay|sure|thank\s+you|thanks|go\s+ahead)/i.test(
+        // --------------------------------------------------------------------
+        // Identity-phase progression (Phase 2 → Phase 3 transition tracking)
+        // --------------------------------------------------------------------
+        // 1) TPA confirms after ANY identity answer we gave (not just DOB):
+        //    flip `patientIdentityReadyForBenefits` so EVA can start Phase 3.
+        const tpaConfirmed =
+          /^(yes|yeah|yep|correct|that'?s\s+right|right|ok|okay|alright|sure|thank\s+you|thanks|go\s+ahead|got\s+it)/i.test(
             userSaid.trim(),
-          )
+          );
+        if (
+          (state.evaAwaitingYesAfterDob || state.evaAwaitingYesAfterIdentity) &&
+          tpaConfirmed &&
+          state.identityAnswersGiven >= 1
         ) {
           state.patientIdentityReadyForBenefits = true;
           state.evaAwaitingYesAfterDob = false;
+          state.evaAwaitingYesAfterIdentity = false;
+        }
+
+        // 2) TPA explicitly hands off ("go ahead / what do you need / how can I help"):
+        //    permission granted to ask benefit fields, regardless of identity-answer count.
+        if (state.purposeSaid && isTpaHandoff(userSaid)) {
+          state.patientIdentityReadyForBenefits = true;
+          state.evaAwaitingYesAfterDob = false;
+          state.evaAwaitingYesAfterIdentity = false;
         }
 
         const recallReply = getRecallReply(
@@ -1379,11 +1466,33 @@ export class MediaStreamHandlerService {
             askForFieldPhrase(miss ?? 'coverage');
         }
 
+        // Bare-acknowledgement short-circuit: purpose already stated and identity not yet
+        // cleared, and the TPA just said "okay / alright / sure". Do NOT call the LLM; reply
+        // with a tiny ack so EVA doesn't leak a benefit-field ask ahead of identity verification.
+        const earlyAckAfterPurpose =
+          state.purposeSaid &&
+          !state.patientIdentityReadyForBenefits &&
+          !identityAsk &&
+          !recallReply &&
+          isBareAcknowledgement(userSaid);
+
         if (identityDirectReply) {
           // Skip LLM — answer directly from the pre-loaded call context.
           nextMessage = identityDirectReply;
           extractedUpdates = {};
           endCall = false;
+          // Only count it as a real identity answer if we actually had the value in the
+          // cache (not the "I do not have that on my end" fallback).
+          const isNotOnFile = /\bI\s+do\s+not\s+have\b/i.test(identityDirectReply);
+          if (!isNotOnFile) {
+            state.identityAnswersGiven += 1;
+            state.evaAwaitingYesAfterIdentity = true;
+          }
+        } else if (earlyAckAfterPurpose) {
+          nextMessage = 'Of course.';
+          extractedUpdates = {};
+          endCall = false;
+          llmMs = 0;
         } else if (!recallReply && !skipLlmDueToNoise) {
           const llmStart = Date.now();
           const result = await this.aiService.getNextConversationTurn(
@@ -1484,6 +1593,12 @@ export class MediaStreamHandlerService {
         const allCollected = orderedF.every((f) =>
           hasValue(state.extractedData[f] ?? null),
         );
+        // Detect the TRANSITION: all fields are now collected and we have not yet
+        // delivered the "That's all I have" intermediate line. This guarantees the
+        // two-step closing regardless of whether the LLM noticed the transition.
+        if (allCollected && !state.allDoneAnnounced) {
+          state.justCompletedAllFields = true;
+        }
         // Only end when AI explicitly set endCall true (e.g. after user said thank you). When AI said "That's all I need, thank you" it sets endCall false — do not end yet.
         let shouldEndCall = endCall === true;
         if (shouldEndCall && !allCollected) {
@@ -1496,8 +1611,32 @@ export class MediaStreamHandlerService {
           );
           shouldEndCall = false;
         }
+        // NEVER end on the turn we just finished collecting — we want the explicit
+        // "That's all I have" line FIRST, then wait for the TPA's thank-you / confirmation,
+        // and only then play the final goodbye.
+        if (shouldEndCall && state.justCompletedAllFields && !state.allDoneAnnounced) {
+          shouldEndCall = false;
+        }
+        // Inverse: we already said "That's all I have" on a previous turn, and now the
+        // TPA responded with a courtesy ("thank you / welcome / have a good day / bye /
+        // yes"). That is our cue to play the final goodbye even if the LLM didn't flip
+        // endCall (models sometimes miss this).
+        if (
+          !shouldEndCall &&
+          state.allDoneAnnounced &&
+          allCollected &&
+          userSaid &&
+          /^(you'?re\s+welcome|welcome|thank\s+you|thanks|yes|yeah|yep|sure|ok|okay|alright|bye|goodbye|have\s+a\s+(good|great|wonderful|nice)\s+(day|one))/i.test(
+            userSaid.trim(),
+          )
+        ) {
+          shouldEndCall = true;
+        }
         /** Closing when ending the call after user said thank you / yes / that's all. */
-        const CLOSING_PHRASES = ['You are welcome. Have a wonderful day'];
+        const CLOSING_PHRASES = [
+          "You're welcome. Have a wonderful day.",
+          'You are welcome. Have a wonderful day.',
+        ];
         const goodbye =
           CLOSING_PHRASES[Math.floor(Math.random() * CLOSING_PHRASES.length)];
         let toSpeak = (nextMessage ?? '').trim();
@@ -1631,7 +1770,9 @@ export class MediaStreamHandlerService {
                   orderedF2,
                 );
                 if (!state.lastAskedField) {
-                  toSpeak = "That's all I need, thank you.";
+                  toSpeak = "That's all I have. Thank you for your help.";
+                  state.allDoneAnnounced = true;
+                  state.justCompletedAllFields = false;
                   shouldEndCall = false;
                 } else {
                   const ack = [
@@ -1703,6 +1844,47 @@ export class MediaStreamHandlerService {
         if (toSpeak && isIntroPurposePhrase(toSpeak)) {
           state.purposeSaid = true;
         }
+
+        // ---------------------------------------------------------------------------
+        // GUARD: do not let EVA ask for ANY benefit field before identity is cleared.
+        // If the LLM (or a fallback branch) composed something like "Can I get the
+        // group ID?" while patientIdentityReadyForBenefits is still false, swap it
+        // for a neutral ack that keeps the floor with the TPA.
+        // ---------------------------------------------------------------------------
+        if (
+          state.purposeSaid &&
+          !state.patientIdentityReadyForBenefits &&
+          !state.allDoneAnnounced &&
+          toSpeak &&
+          isBenefitFieldAsk(toSpeak, orderedF) &&
+          !identityAsk &&
+          !identityDirectReply
+        ) {
+          this.logger.warn(
+            '[MediaStream] LLM asked benefit field before identity cleared — replacing with neutral ack.',
+          );
+          // If TPA said something meaty (not just "okay"), prefer an inviting line;
+          // otherwise give a minimal ack to let TPA lead verification.
+          toSpeak = isBareAcknowledgement(userSaid)
+            ? 'Of course.'
+            : 'Sure, please go ahead with your verification questions.';
+          // Clear lastAskedField so we don't try to persist a benefit we never really asked.
+          state.lastAskedField = null;
+        }
+
+        // ---------------------------------------------------------------------------
+        // "That's all I have" INTERMEDIATE STEP
+        // When we just completed the last benefit field this turn, override whatever
+        // EVA was about to say with a short closing-summary line, wait for TPA's
+        // thank-you / acknowledgement, then the next turn will play the final goodbye.
+        // ---------------------------------------------------------------------------
+        if (state.justCompletedAllFields && !state.allDoneAnnounced) {
+          toSpeak = "That's all I have. Thank you for your help.";
+          state.allDoneAnnounced = true;
+          state.justCompletedAllFields = false;
+          shouldEndCall = false;
+        }
+
         if (shouldEndCall) {
           // Always use a short, no-intro closing — never repeat introduction at end of call.
           toSpeak = goodbye;
@@ -1733,6 +1915,14 @@ export class MediaStreamHandlerService {
           toSpeak.includes(state.patientInfo.dobFormatted)
         ) {
           state.evaAwaitingYesAfterDob = true;
+          state.evaAwaitingYesAfterIdentity = true;
+        }
+        // Generalised: any time EVA's reply just delivered a cached identity value,
+        // expect the TPA's confirmation on the next turn. This lets the Phase 2 → Phase 3
+        // transition fire after e.g. member ID confirmation, not just DOB.
+        if (identityDirectReply && toSpeak === identityDirectReply) {
+          const isNotOnFile = /\bI\s+do\s+not\s+have\b/i.test(identityDirectReply);
+          if (!isNotOnFile) state.evaAwaitingYesAfterIdentity = true;
         }
         // In-memory transcript updates (sync): needed for verification save on stop.
         const userLineForLog =
