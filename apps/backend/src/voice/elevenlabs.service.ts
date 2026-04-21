@@ -10,9 +10,11 @@ export class ElevenLabsService {
   private readonly logger = new Logger(ElevenLabsService.name);
   private readonly apiKey = process.env.ELEVENLABS_API_KEY?.trim();
   private readonly voiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
-  // English-only for clearer speech; use ELEVENLABS_MODEL_ID=eleven_flash_v2_5 for multilingual
+  // Prefer English monolingual (`eleven_flash_v2`). Multilingual models may drift language — pin with ELEVENLABS_LANGUAGE_CODE=en.
   private readonly modelId =
     process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2';
+  private readonly languageCode =
+    process.env.ELEVENLABS_LANGUAGE_CODE?.trim() || 'en';
 
   constructor() {
     if (!this.apiKey) {
@@ -45,6 +47,9 @@ export class ElevenLabsService {
       {
         text,
         model_id: this.modelId,
+        ...(this.modelId.includes('multilingual')
+          ? { language_code: this.languageCode }
+          : {}),
         voice_settings: {
           stability: 0.35,
           similarity_boost: 0.8,
@@ -83,6 +88,9 @@ export class ElevenLabsService {
       {
         text,
         model_id: this.modelId,
+        ...(this.modelId.includes('multilingual')
+          ? { language_code: this.languageCode }
+          : {}),
         voice_settings: {
           stability: 0.35,
           similarity_boost: 0.8,

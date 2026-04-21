@@ -49,6 +49,11 @@ const HOLD_MAX_MS = 9 * 60 * 1000;
 /** Chunk size to send back to Twilio (20ms = 160 bytes at 8kHz mulaw). Smaller chunks = playback starts faster. */
 const OUTBOUND_CHUNK_BYTES = 160;
 
+/** After this many consecutive noise / empty / inaudible turns, skip LLM and use a fixed English line. */
+const MAX_NOISE_TURNS_BEFORE_SKIP_LLM = 5;
+/** After this many, apologize and end the call (audio unusable). */
+const MAX_NOISE_TURNS_BEFORE_ABORT_CALL = 12;
+
 /** IVR bypass: process audio every N ms to detect "customer agent" quickly (ElevenLabs STT + Whisper fallback). */
 const IVR_BYPASS_FALLBACK_MS = 2500;
 /** IVR bypass: minimum audio bytes before running STT (~0.5 s). */
@@ -318,6 +323,12 @@ interface StreamState {
   ivrDigitSent: boolean;
   /** True after we've already said our purpose (e.g. "I need a few benefit details") — avoid repeating it while user is speaking. */
   purposeSaid: boolean;
+  /** Rep confirmed after we gave DOB (handler detects yes/thanks following DOB answer). */
+  patientIdentityReadyForBenefits: boolean;
+  /** Last EVA reply included patient DOB from DB — next rep line may be confirmation. */
+  evaAwaitingYesAfterDob: boolean;
+  /** Consecutive turns with skip / inaudible / weak audio — for skip-LLM and abort guardrails. */
+  consecutiveNoiseOrEmptyTurns: number;
 }
 
 /**
@@ -426,6 +437,9 @@ export class MediaStreamHandlerService {
       mode: isIvrBypass ? 'ivr-bypass' : 'eva',
       ivrDigitSent: false,
       purposeSaid: false,
+      patientIdentityReadyForBenefits: false,
+      evaAwaitingYesAfterDob: false,
+      consecutiveNoiseOrEmptyTurns: 0,
     };
 
     const send = (obj: object) => {
@@ -1051,11 +1065,12 @@ export class MediaStreamHandlerService {
           effectiveTranscript === 'User did not respond or was inaudible.';
 
         if (skipRepeatForShortAudio) {
+          state.consecutiveNoiseOrEmptyTurns += 1;
           this.logCallFlow(
             state.callSid,
             phaseAfterStt,
             'skip_repeat_short_audio',
-            `audioBytes=${combined.length}`,
+            `audioBytes=${combined.length} noiseStreak=${state.consecutiveNoiseOrEmptyTurns}`,
             Date.now() - turnStart,
           );
           state.processing = false;
@@ -1082,6 +1097,7 @@ export class MediaStreamHandlerService {
               : 'no_last_field',
             Date.now() - turnStart,
           );
+          state.consecutiveNoiseOrEmptyTurns += 1;
           await speak(reaskSame, 'repeat_inaudible');
           state.processing = false;
           startFallbackTimer();
@@ -1092,9 +1108,67 @@ export class MediaStreamHandlerService {
         } else {
         }
 
+        if (
+          userSaid.length > 5 ||
+          looksLikeRealResponse(userSaid) ||
+          transcriptHasValue(userSaid)
+        ) {
+          state.consecutiveNoiseOrEmptyTurns = 0;
+        }
+
+        if (
+          state.consecutiveNoiseOrEmptyTurns >=
+          MAX_NOISE_TURNS_BEFORE_ABORT_CALL
+        ) {
+          this.logCallFlow(
+            state.callSid,
+            phaseAfterStt,
+            'abort_call_noise_limit',
+            `noiseStreak=${state.consecutiveNoiseOrEmptyTurns}`,
+            Date.now() - turnStart,
+          );
+          await speak(
+            'I am sorry, I am having trouble hearing you clearly. I will disconnect so you can try again.',
+            'abort_noise_limit',
+          ).catch(() => {});
+          state.callEnded = true;
+          state.processing = false;
+          const sidAbort = state.callSid;
+          if (sidAbort)
+            this.twilioService
+              .hangUp(sidAbort)
+              .catch((e) =>
+                this.logger.warn(
+                  '[MediaStream] Hang up failed (noise abort)',
+                  (e as Error)?.message,
+                ),
+              );
+          return;
+        }
+
         const orderedF = state.orderedFields.length
           ? state.orderedFields
           : ['coverage', 'deductible', 'copay', 'validity'];
+
+        // Rep confirmed identity after we gave DOB — allow benefit collection in prompts.
+        if (
+          state.patientInfo?.dobFormatted &&
+          state.evaAwaitingYesAfterDob &&
+          /^(yes|yeah|yep|correct|that'?s\s+right|right|ok|okay|sure|thank\s+you|thanks|go\s+ahead)/i.test(
+            userSaid.trim(),
+          )
+        ) {
+          state.patientIdentityReadyForBenefits = true;
+          state.evaAwaitingYesAfterDob = false;
+          this.logCallFlow(
+            state.callSid,
+            'patient_verification',
+            'patient_identity_ready_for_benefits',
+            'rep_confirmed_after_dob',
+            Date.now() - turnStart,
+          );
+        }
+
         const recallReply = getRecallReply(
           userSaid,
           state.extractedData,
@@ -1120,13 +1194,36 @@ export class MediaStreamHandlerService {
           );
         }
 
-        if (!recallReply) {
+        const skipLlmDueToNoise =
+          !recallReply &&
+          state.consecutiveNoiseOrEmptyTurns >=
+            MAX_NOISE_TURNS_BEFORE_SKIP_LLM;
+
+        let noiseSkipMessage = '';
+        if (skipLlmDueToNoise) {
+          const miss =
+            state.lastAskedField ??
+            getFirstMissingField(state.extractedData, orderedF) ??
+            orderedF[0];
+          noiseSkipMessage =
+            "I'm having trouble hearing you clearly. " +
+            askForFieldPhrase(miss ?? 'coverage');
+          this.logCallFlow(
+            state.callSid,
+            phaseForBrain,
+            'llm_skipped_noise_guard',
+            `noiseStreak=${state.consecutiveNoiseOrEmptyTurns} fallbackField=${miss}`,
+            Date.now() - turnStart,
+          );
+        }
+
+        if (!recallReply && !skipLlmDueToNoise) {
           const llmStart = Date.now();
           this.logCallFlow(
             state.callSid,
             phaseForBrain,
             'llm_turn_request_start',
-            `gate=${llmGateHint} lastAskedField=${state.lastAskedField ?? 'none'}`,
+            `gate=${llmGateHint} lastAskedField=${state.lastAskedField ?? 'none'} identityReady=${state.patientIdentityReadyForBenefits}`,
             Date.now() - turnStart,
           );
           if (phaseForBrain === 'patient_verification') {
@@ -1134,7 +1231,7 @@ export class MediaStreamHandlerService {
               state.callSid,
               'patient_verification',
               'step_patient_identity_verification_window_active',
-              'No benefit fields extracted yet — LLM decides opening name/DOB vs benefits',
+              'TPA-led — wait for rep to ask name/DOB before sharing',
               Date.now() - turnStart,
             );
           }
@@ -1144,6 +1241,12 @@ export class MediaStreamHandlerService {
             state.patientInfo,
             state.lastAskedField,
             orderedF,
+            {
+              patientIdentityReadyForBenefits:
+                state.patientIdentityReadyForBenefits ||
+                state.patientInfo === null,
+              purposeStated: state.purposeSaid,
+            },
           );
           nextMessage = result.nextMessage;
           extractedUpdates = result.extractedUpdates;
@@ -1155,6 +1258,10 @@ export class MediaStreamHandlerService {
             `ms=${Date.now() - llmStart} endCall=${endCall} extractedKeys=${Object.keys(extractedUpdates ?? {}).join(',') || 'none'}`,
             Date.now() - turnStart,
           );
+        } else if (skipLlmDueToNoise) {
+          nextMessage = noiseSkipMessage;
+          extractedUpdates = {};
+          endCall = false;
         }
 
         const hasValue = (v: string | null) =>
@@ -1459,6 +1566,12 @@ export class MediaStreamHandlerService {
         } else {
           toSpeak = (toSpeak ?? '').trim();
         }
+        if (
+          state.patientInfo?.dobFormatted &&
+          toSpeak.includes(state.patientInfo.dobFormatted)
+        ) {
+          state.evaAwaitingYesAfterDob = true;
+        }
         // Append conversation transcript (user and EVA values / important exchange) for verification
         if (
           userSaid &&
@@ -1620,7 +1733,7 @@ export class MediaStreamHandlerService {
               'patient_verification',
               'opening_greeting_about_to_play',
               state.patientInfo
-                ? `patientLoaded=${state.patientInfo.fullName} dob=${state.patientInfo.dobFormatted ?? 'none'}`
+                ? `TPA_led_identity_only_answer_when_asked | patientLoaded=${state.patientInfo.fullName} dob=${state.patientInfo.dobFormatted ?? 'none'}`
                 : 'no_patient_info',
             );
             await speak(CONVERSATION_GREETING, 'opening_greeting');
