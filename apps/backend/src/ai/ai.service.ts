@@ -5,6 +5,27 @@ import { VerificationService } from '../verification/verification.service';
 /** Stable Pro model for conversation, extraction, and classification. */
 const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-pro';
 
+/**
+ * Gemini 2.5+ can use an internal "thinking" step before responding, which adds latency.
+ * `thinkingBudget: 0` turns it off where the API supports it (often Flash / Flash-Lite; Pro may ignore or error — then set GEMINI_THINKING_BUDGET=default).
+ * @see https://ai.google.dev/gemini-api/docs/thinking
+ */
+function parseGeminiThinkingBudget(): number | null {
+  const raw = process.env.GEMINI_THINKING_BUDGET?.trim();
+  if (raw === undefined || raw === '') return 0;
+  const lower = raw.toLowerCase();
+  if (
+    lower === 'default' ||
+    lower === 'model' ||
+    lower === 'auto' ||
+    lower === 'unset'
+  ) {
+    return null;
+  }
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /** Optional hints from the voice stream handler (TPA-led verification, purpose flag). */
 export type ConversationCallHints = {
   /** Rep has confirmed after DOB (or no DB patient — handler may set true). */
@@ -27,6 +48,28 @@ export class AiService {
     }
 
     this.gemini = new GoogleGenerativeAI(apiKey);
+
+    const tb = parseGeminiThinkingBudget();
+    this.logger.log(
+      `[Gemini] model=${GEMINI_MODEL} thinkingBudget=${tb === null ? 'default' : tb} (env GEMINI_THINKING_BUDGET: 0=off, -1=dynamic, default=omit)`,
+    );
+  }
+
+  /** Model init for all Gemini calls — disables thinking by default to reduce voice-call latency. */
+  private getGeminiModelInit(): {
+    model: string;
+    generationConfig?: { thinkingConfig: { thinkingBudget: number } };
+  } {
+    const thinkingBudget = parseGeminiThinkingBudget();
+    if (thinkingBudget === null) {
+      return { model: GEMINI_MODEL };
+    }
+    return {
+      model: GEMINI_MODEL,
+      generationConfig: {
+        thinkingConfig: { thinkingBudget },
+      },
+    };
   }
 
   /**
@@ -47,7 +90,7 @@ export class AiService {
     } | null,
     orderedFields?: string[] | null,
   ): Promise<string> {
-    const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
+    const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
     const fieldsList = (
       orderedFields?.length ? orderedFields : AiService.INSURANCE_FIELDS
     ).join(', ');
@@ -180,7 +223,7 @@ ${patientBlock}
     currentQuestion: string,
     orderedFields?: string[] | null,
   ): Promise<'answer' | 'interruption'> {
-    const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
+    const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
     const fieldsList = (
       orderedFields?.length ? orderedFields : AiService.INSURANCE_FIELDS
     ).join(', ');
@@ -230,7 +273,7 @@ Reply with ONLY one word: answer OR interruption`;
     } | null,
     orderedFields?: string[] | null,
   ): Promise<{ updates: Record<string, string | null>; reply: string }> {
-    const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
+    const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
     const fieldsList = (
       orderedFields?.length ? orderedFields : AiService.INSURANCE_FIELDS
     ).join(', ');
@@ -346,7 +389,7 @@ INTERNAL CALL STATE (never read aloud verbatim):
 - patient_identity_cleared_for_benefits: ${identityReady ? 'yes — you may ask for coverage/deductible/copay/validity when appropriate' : 'no — wait for TPA identity questions first; after DOB answered and confirmed, proceed'}
 `;
 
-    const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
+    const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
     const fields = AiService.getOrderedFields(orderedFields);
     const current = JSON.stringify(currentExtracted);
 
@@ -369,7 +412,13 @@ Patient info (database — disclose only when the TPA/rep ASKS): Full name: ${pa
 
 TPA-LED PATIENT VERIFICATION — CRITICAL:
 - NEVER volunteer patient name or date of birth in your first reply or on "How can I help?" / "Hello" alone. The insurance rep asks; you answer. Do NOT recite name and DOB proactively.
-- OPENING / GREETING ("How can I help?" / "How can I help you?" / "Hello" / "Hi" only): Reply in English with at most ONE short sentence: that you need a few benefit details for a patient (e.g. "I need a few benefit details for a patient."). Do NOT say the patient's name or DOB. Do NOT ask for ${firstFieldName} yet unless internal state says patient_identity_cleared_for_benefits is yes. extractedUpdates {}.
+
+PURPOSE OF CALL — ANSWER INTELLIGENTLY (vary wording every time; never copy the same sentence twice when they ask again):
+- Triggers include: "How can I help?", "What can I do for you?", "Why are you calling?", "What's the purpose of this call?", "What is this regarding?", "What information do you need?", "Reason for your call?", "How may I help you today?"
+- Respond with ONE short sentence in English that explains you need benefit / coverage-related details for a patient from their plan — same meaning, different words each time they ask (paraphrase). Do NOT give patient name or DOB here unless they already moved to identity questions.
+- Examples of varied intent (pick one style; invent similar phrasing as needed): "I'm calling to verify a few benefit details for a patient." / "I need to collect some insurance benefit information for one of our patients." / "We're looking to confirm coverage and related benefit information for a patient visit." / "I need benefit verification details for a patient on our side."
+- If purpose_already_stated is yes and they ask the purpose again (e.g. "Sorry, why are you calling again?"), give a fresh paraphrase — do NOT repeat your previous sentence verbatim and do NOT restart the full "Hi I'm Reena" intro.
+- OPENING / GREETING ("How can I help?" / "Hello" / "Hi" only): One short sentence — purpose as above — no name, no DOB. Do NOT ask for ${firstFieldName} yet unless patient_identity_cleared_for_benefits is yes. extractedUpdates {}.
 - WHEN they ask for patient name / spell name / "what is the patient's name" / full name: Answer ONLY with the name, e.g. "The patient is ${patientInfo.fullName}." — English only. Do NOT give DOB unless they also asked for DOB in this turn. Do NOT ask for benefit fields in the same turn. extractedUpdates {}.
 - WHEN they ask for DOB / date of birth / birthday: Answer with DOB only in English, e.g. "The date of birth is ${patientInfo.dobFormatted ?? 'not provided'}." Then ONE short confirmation: "Is that correct?" or "Does that match your records?" Do NOT ask for ${firstFieldName} in this turn. extractedUpdates {}.
 - WHEN they confirm after you gave DOB in the previous turn ("yes" / "correct" / "thanks") and internal state shows patient_identity_cleared_for_benefits is yes: Say "Thanks." then ask for the first missing benefit field (${firstFieldName}) with a varied phrase. extractedUpdates {}.
@@ -412,6 +461,8 @@ ${hintsBlock}
 
 CRITICAL — TPA leads patient identity: Do NOT proactively state patient name or DOB on greeting or "How can I help?" Wait until they ask; then answer briefly in English. Do NOT repeat name+DOB together unless they ask again. Once benefit collection has started, do not restart identity verification unless they ask.
 
+CRITICAL — NO REPEATED OPENING: The call already began with a greeting. NEVER say again "Hi, I'm Reena from Went Dentals" or "Hi, I am Reena..." or ask "how are you doing?" as an opener. NEVER repeat a full self-introduction mid-call. The ONLY exception is if the user explicitly asks who is calling / to identify yourself — then ONE short sentence ("I'm Reena from Went Dentals...") with NO greeting-style "how are you". Do not restate the dental office intro after verification questions or when moving to benefit fields.
+
 STAY IN SYNC — Reply to what the user JUST said. One turn = one exchange.
 
 PACE — Short sentences. Acknowledge values quickly; ask one thing at a time.
@@ -420,7 +471,7 @@ CONVERSATION FLOW:
 - They ask DOB: give DOB from PATIENT INFO + one confirmation phrase only; no benefit field same turn.
 - They confirm after DOB (yes / correct): if patient_identity_cleared_for_benefits is yes, ask first missing benefit (${firstFieldName}). extractedUpdates {}.
 - They ask patient name: give name only in English; no benefit field same turn unless identity already cleared and they moved on.
-- Greeting / "How can I help?": one sentence purpose in English only — no name, no DOB. extractedUpdates {}.
+- Greeting / purpose-of-call questions ("how can I help", "why are you calling", etc.): one varied sentence of purpose in English — no name, no DOB; never the exact same wording as your last purpose line if they ask again. extractedUpdates {}.
 - Benefit values (${fieldsList}): extract, thank, ask next — only when allowed by INTERNAL CALL STATE and missing fields.
 - When all fields collected and user JUST GAVE the last value: "That's all I need, thank you." endCall FALSE.
 - END-OF-CALL when all fields collected AND user thanks / goodbye: "Thank you for helping me with the verification. Have a great day." endCall TRUE.
@@ -483,7 +534,7 @@ WHAT TO SAY (check in this order). Use "Are we good?" / "Is that all you have?" 
 - If they ask for info you don't have (e.g. policy number, member ID — NOT benefit fields): "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?" Then if a benefit field still missing: "Can I get the [first missing field]?" only. For missing benefit fields (coverage, deductible, copay, validity) never say "I don't have that on my end" — only ask "Can I get the [field]?" extractedUpdates {}.
 - If they ask "what are the details you want to know" / "what do you need to know": Ask for first missing field with a VARIED phrase. Do NOT add a confirmation phrase here. Do NOT list all fields. extractedUpdates {}.
 - CRITICAL: NEVER say "I didn't get you" or "couldn't catch" when the user said something substantive. Only use a repeat phrase when transcript is EXACTLY "User did not respond or was inaudible." extractedUpdates as needed.
-- If they say "how can I help" / "how can I help you" etc.: One sentence purpose in English only — no name or DOB. If identity already cleared and missing benefit fields, ask for the next missing field. extractedUpdates {}.
+- If they say "how can I help" / "why are you calling" / "what's the purpose" / similar: One sentence — paraphrase the purpose naturally (different wording than last time if purpose was already stated). No name or DOB unless they ask identity next. If identity already cleared and missing benefit fields, you may briefly confirm purpose then ask for the next missing field. extractedUpdates {}.
 - If transcript is EXACTLY "User did not respond or was inaudible" or silence: Say ONLY one short repeat request. Do NOT add a confirmation phrase or next field in this turn. extractedUpdates {}.
 - If they ask to update or correct a value: put new value in extractedUpdates, say "Updated. I've got that. Thanks." Then "So can I get the next field?" if more needed.
 - If they asked a general question (how are you): answer briefly. Do NOT add "Are we good?" Do not ask for a field in same turn. extractedUpdates {}.
@@ -924,7 +975,7 @@ Respond with ONLY a JSON object. No markdown. Format:
       ${text}
     `;
 
-      const model = this.gemini.getGenerativeModel({ model: GEMINI_MODEL });
+      const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
       const start = Date.now();
       const result = await model.generateContent(prompt);
       this.logger.log(
