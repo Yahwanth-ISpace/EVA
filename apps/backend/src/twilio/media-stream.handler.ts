@@ -320,9 +320,68 @@ interface StreamState {
   purposeSaid: boolean;
 }
 
+/**
+ * High-level phase for structured `[CallFlow]` logs.
+ * `patient_verification` = no benefit fields collected yet (name/DOB verification window).
+ */
+function getConversationPhaseForLog(state: StreamState): string {
+  if (state.callEnded) return 'call_ended';
+  if (state.onHold) return 'hold';
+  if (state.postGoodbyeUntil != null) return 'post_goodbye';
+  const orderedF = state.orderedFields.length
+    ? state.orderedFields
+    : ['coverage', 'deductible', 'copay', 'validity'];
+  const anyBenefit = orderedF.some(
+    (f) =>
+      state.extractedData[f] != null && String(state.extractedData[f]).trim(),
+  );
+  if (!anyBenefit) return 'patient_verification';
+  const allDone = orderedF.every(
+    (f) =>
+      state.extractedData[f] != null && String(state.extractedData[f]).trim(),
+  );
+  if (allDone) return 'all_benefits_collected';
+  return 'benefit_collection';
+}
+
+/** True when the rep/TPA utterance asks for patient name and/or DOB (for emphasis logs). */
+function detectTpaPatientIdentityAsk(userSaid: string): boolean {
+  const t = userSaid.trim().toLowerCase();
+  if (t.length < 4) return false;
+  const asksIdentity =
+    /\b(date of birth|d\.?o\.?b\.?|birth\s*date|birthday|patient'?s?\s+dob)\b/i.test(
+      t,
+    ) ||
+    /\b(patient'?s?\s+name|name\s+of\s+(the\s+)?patient|what\s+is\s+(the\s+)?(patient'?s?\s+)?full\s+name|spell\s+(the\s+)?name|verify\s+(the\s+)?patient)\b/i.test(
+      t,
+    );
+  const questionCue =
+    /\b(what|give|provide|confirm|verify|spell|may\s+i|can\s+i|could\s+i|need|have)\b/i.test(
+      t,
+    );
+  return asksIdentity && (questionCue || t.includes('?'));
+}
+
 @Injectable()
 export class MediaStreamHandlerService {
   private readonly logger = new Logger(MediaStreamHandlerService.name);
+
+  /** Structured per-call timeline log (phase + step + optional ms since turn start). */
+  private logCallFlow(
+    callSid: string | null,
+    phase: string,
+    step: string,
+    detail?: string,
+    msFromTurnStart?: number,
+  ): void {
+    const sid = callSid ?? 'unknown';
+    const timing =
+      msFromTurnStart !== undefined ? ` | +${msFromTurnStart}ms` : '';
+    const tail = detail ? ` | ${detail}` : '';
+    this.logger.log(
+      `[CallFlow] sid=${sid} | phase=${phase} | step=${step}${timing}${tail}`,
+    );
+  }
 
   constructor(
     private readonly transcriptionService: TranscriptionService,
@@ -396,8 +455,19 @@ export class MediaStreamHandlerService {
       }
     };
 
-    const speak = async (text: string) => {
+    const speak = async (text: string, ttsLabel?: string) => {
       if (!text?.trim()) return;
+      const phase = getConversationPhaseForLog(state);
+      const ttsStart = Date.now();
+      const preview =
+        text.length > 120 ? `${text.slice(0, 117)}…` : text.replace(/\s+/g, ' ');
+      this.logCallFlow(
+        state.callSid,
+        phase,
+        'tts_speak_start',
+        `chars=${text.length}${ttsLabel ? ` label=${ttsLabel}` : ''} text="${preview}"`,
+        undefined,
+      );
       try {
         // Prefer streaming TTS so playback starts as soon as first chunks arrive (faster response)
         try {
@@ -413,8 +483,22 @@ export class MediaStreamHandlerService {
         state.lastSpeakTime = Date.now();
         // Clear inbound buffer so the next process only uses audio *after* EVA finished (avoids one-turn delay and EVA repeating)
         state.buffer = [];
+        this.logCallFlow(
+          state.callSid,
+          phase,
+          'tts_speak_complete',
+          `${ttsLabel ? `label=${ttsLabel} ` : ''}playback_ms=${Date.now() - ttsStart}`,
+          undefined,
+        );
       } catch (e) {
         this.logger.warn('[MediaStream] TTS failed', (e as Error)?.message);
+        this.logCallFlow(
+          state.callSid,
+          phase,
+          'tts_speak_failed',
+          (e as Error)?.message ?? 'unknown',
+          undefined,
+        );
       }
     };
 
@@ -511,6 +595,14 @@ export class MediaStreamHandlerService {
         isSilenceAtEnd(combined) || combined.length >= MAX_BUFFER_BYTES;
 
       if (shouldProcess) {
+        const triggerReason =
+          combined.length >= MAX_BUFFER_BYTES ? 'max_buffer' : 'silence_tail';
+        this.logCallFlow(
+          state.callSid,
+          getConversationPhaseForLog(state),
+          'trigger_process_buffer',
+          `reason=${triggerReason} bytes=${combined.length}`,
+        );
         state.buffer = [];
         if (state.fallbackTimer) {
           clearInterval(state.fallbackTimer);
@@ -527,6 +619,15 @@ export class MediaStreamHandlerService {
       if (state.processing || state.callEnded) return;
       state.processing = true;
       const resumeCheckOnly = opts?.resumeCheckOnly === true;
+      const turnStart = Date.now();
+      const phaseAtTurnStart = getConversationPhaseForLog(state);
+      this.logCallFlow(
+        state.callSid,
+        phaseAtTurnStart,
+        'process_buffer_enter',
+        `resumeCheckOnly=${resumeCheckOnly} audioBytes=${combined.length}`,
+        0,
+      );
 
       const tmpDir = os.tmpdir();
       const rawPath = path.join(
@@ -543,29 +644,69 @@ export class MediaStreamHandlerService {
 
       try {
         fs.writeFileSync(rawPath, combined);
+        const wavConvertStart = Date.now();
         this.mulawRawToWav(rawPath, wavPath);
+        this.logCallFlow(
+          state.callSid,
+          getConversationPhaseForLog(state),
+          'ffmpeg_mulaw_to_wav',
+          `ms=${Date.now() - wavConvertStart}`,
+          Date.now() - turnStart,
+        );
 
         emotionPromise =
           state.mode === 'ivr-bypass'
             ? Promise.resolve(null)
-            : this.audioEmotionService
-                .classifyWav(wavPath)
-                .catch(() => null);
+            : this.audioEmotionService.classifyWav(wavPath).catch(() => null);
+        if (state.mode !== 'ivr-bypass') {
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'emotion_classification_dispatched',
+            `wav=${wavPath}`,
+            Date.now() - turnStart,
+          );
+        }
 
         let transcript: string;
         try {
+          const sttStart = Date.now();
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'stt_request_start',
+            resumeCheckOnly ? 'skipWhisperFallback=true' : 'full',
+            Date.now() - turnStart,
+          );
           const result = await this.transcriptionService.transcribeAudio(
             wavPath,
             resumeCheckOnly ? { skipWhisperFallback: true } : undefined,
           );
           transcript = result?.transcript ?? '';
+          const sttMs = Date.now() - sttStart;
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'stt_request_complete',
+            `ms=${sttMs} transcriptChars=${(transcript ?? '').length}`,
+            Date.now() - turnStart,
+          );
         } catch (transcribeErr: any) {
           this.logger.warn(
             '[MediaStream] Transcription failed',
             transcribeErr?.message,
           );
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'stt_request_failed',
+            transcribeErr?.message ?? 'unknown',
+            Date.now() - turnStart,
+          );
           state.processing = false;
-          await speak(getRepeatOnlyPrompt()).catch(() => {});
+          await speak(getRepeatOnlyPrompt(), 'repeat_after_stt_error').catch(
+            () => {},
+          );
           return;
         }
         let userSaid = (transcript ?? '').trim();
@@ -576,6 +717,24 @@ export class MediaStreamHandlerService {
         if (thankYouOnly && combined.length >= MIN_BYTES_BEFORE_REPEAT) {
           userSaid = '';
         }
+
+        const phaseAfterStt = getConversationPhaseForLog(state);
+        if (userSaid && detectTpaPatientIdentityAsk(userSaid)) {
+          this.logCallFlow(
+            state.callSid,
+            phaseAfterStt,
+            'tpa_utterance_patient_name_or_dob_topic',
+            `"${userSaid.slice(0, 200)}${userSaid.length > 200 ? '…' : ''}"`,
+            Date.now() - turnStart,
+          );
+        }
+        this.logCallFlow(
+          state.callSid,
+          phaseAfterStt,
+          'user_transcript_final',
+          `chars=${userSaid.length} preview="${userSaid.slice(0, 120)}${userSaid.length > 120 ? '…' : ''}"`,
+          Date.now() - turnStart,
+        );
 
         // --- IVR bypass: listen for "customer agent" (or "press 4"), then send DTMF 4 so IVR runs option 4 (hold 10s, dial agent)
         if (state.mode === 'ivr-bypass') {
@@ -599,6 +758,13 @@ export class MediaStreamHandlerService {
             }
             state.ivrDigitSent = true;
             state.callEnded = true;
+            this.logCallFlow(
+              state.callSid,
+              'ivr_bypass',
+              'ivr_customer_agent_detected_redirect_dtmf',
+              userSaid.slice(0, 160),
+              Date.now() - turnStart,
+            );
           }
           state.processing = false;
           return;
@@ -613,6 +779,13 @@ export class MediaStreamHandlerService {
               );
             state.orderedFields = orderedFields;
             state.verificationRequirementId = requirementId;
+            this.logCallFlow(
+              state.callSid,
+              getConversationPhaseForLog(state),
+              'verification_requirement_loaded',
+              `fields=${orderedFields.join(',')} requirementId=${requirementId ?? 'none'}`,
+              Date.now() - turnStart,
+            );
           } catch (e: any) {
             this.logger.warn(
               '[MediaStream] Failed to load verification requirement, using default fields',
@@ -625,11 +798,25 @@ export class MediaStreamHandlerService {
               'validity',
             ];
             state.verificationRequirementId = null;
+            this.logCallFlow(
+              state.callSid,
+              getConversationPhaseForLog(state),
+              'verification_requirement_fallback_defaults',
+              e?.message ?? '',
+              Date.now() - turnStart,
+            );
           }
         }
 
         // --- Hold / resume handling ---
         if (state.onHold) {
+          this.logCallFlow(
+            state.callSid,
+            'hold',
+            'hold_branch_enter',
+            `userChars=${userSaid.length}`,
+            Date.now() - turnStart,
+          );
           const matchedResume = userSaid.length > 0 && isResumePhrase(userSaid);
           if (matchedResume) {
             state.onHold = false;
@@ -646,8 +833,15 @@ export class MediaStreamHandlerService {
               state.conversationTranscript.push('User: ' + userSaid.trim());
             state.conversationTranscript.push('EVA: ' + EVA_RESUME_ACK);
             state.buffer = []; // clear so next processing uses only fresh audio after ack (avoids "couldn't catch" from hold-music/stale audio)
+            this.logCallFlow(
+              state.callSid,
+              'hold',
+              'hold_resume_detected',
+              userSaid.slice(0, 120),
+              Date.now() - turnStart,
+            );
             try {
-              await speak(EVA_RESUME_ACK);
+              await speak(EVA_RESUME_ACK, 'hold_resume_ack');
             } catch (e) {
               this.logger.warn(
                 '[MediaStream] Resume ack TTS failed',
@@ -703,6 +897,13 @@ export class MediaStreamHandlerService {
         }
 
         if (!state.onHold && userSaid.length > 0 && isHoldPhrase(userSaid)) {
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'hold_started_by_user',
+            userSaid.slice(0, 120),
+            Date.now() - turnStart,
+          );
           state.onHold = true;
           state.holdStartedAt = Date.now();
           if (state.fallbackTimer) {
@@ -760,13 +961,20 @@ export class MediaStreamHandlerService {
           if (userSaid?.trim())
             state.conversationTranscript.push('User: ' + userSaid.trim());
           state.conversationTranscript.push('EVA: ' + EVA_HOLD_ACK);
-          await speak(EVA_HOLD_ACK);
+          await speak(EVA_HOLD_ACK, 'hold_ack');
           state.processing = false;
           return;
         }
 
         // --- Post-goodbye: we already said closing; if user says anything, say a brief closing and end — never repeat intro or ask "Are we clear?" ---
         if (state.postGoodbyeUntil != null) {
+          this.logCallFlow(
+            state.callSid,
+            'post_goodbye',
+            'post_goodbye_branch_enter',
+            `userChars=${userSaid.length}`,
+            Date.now() - turnStart,
+          );
           if (state.postGoodbyeTimeoutId) {
             clearTimeout(state.postGoodbyeTimeoutId);
             state.postGoodbyeTimeoutId = null;
@@ -794,7 +1002,7 @@ export class MediaStreamHandlerService {
             state.conversationTranscript.push('User: ' + userSaid.trim());
           const postGoodbyeClosing = 'You are most welcome. Have a great day.';
           state.conversationTranscript.push('EVA: ' + postGoodbyeClosing);
-          await speak(postGoodbyeClosing);
+          await speak(postGoodbyeClosing, 'post_goodbye_closing_line');
           doPostGoodbyeHangUp();
           state.processing = false;
           return;
@@ -843,6 +1051,13 @@ export class MediaStreamHandlerService {
           effectiveTranscript === 'User did not respond or was inaudible.';
 
         if (skipRepeatForShortAudio) {
+          this.logCallFlow(
+            state.callSid,
+            phaseAfterStt,
+            'skip_repeat_short_audio',
+            `audioBytes=${combined.length}`,
+            Date.now() - turnStart,
+          );
           state.processing = false;
           return;
         }
@@ -858,7 +1073,16 @@ export class MediaStreamHandlerService {
           )
             state.conversationTranscript.push('User: ' + userSaid);
           state.conversationTranscript.push('EVA: ' + reaskSame);
-          await speak(reaskSame);
+          this.logCallFlow(
+            state.callSid,
+            phaseAfterStt,
+            'path_inaudible_repeat_no_llm',
+            state.lastAskedField
+              ? `lastAskedField=${state.lastAskedField}`
+              : 'no_last_field',
+            Date.now() - turnStart,
+          );
+          await speak(reaskSame, 'repeat_inaudible');
           state.processing = false;
           startFallbackTimer();
           return;
@@ -880,7 +1104,40 @@ export class MediaStreamHandlerService {
         let extractedUpdates: Record<string, string | null> = {};
         let endCall = false;
 
+        const phaseForBrain = getConversationPhaseForLog(state);
+        const llmGateHint =
+          phaseForBrain === 'patient_verification'
+            ? 'patient_verification_before_benefit_fields'
+            : phaseForBrain;
+
+        if (recallReply) {
+          this.logCallFlow(
+            state.callSid,
+            phaseForBrain,
+            'path_recall_answer_no_llm',
+            recallReply.slice(0, 120),
+            Date.now() - turnStart,
+          );
+        }
+
         if (!recallReply) {
+          const llmStart = Date.now();
+          this.logCallFlow(
+            state.callSid,
+            phaseForBrain,
+            'llm_turn_request_start',
+            `gate=${llmGateHint} lastAskedField=${state.lastAskedField ?? 'none'}`,
+            Date.now() - turnStart,
+          );
+          if (phaseForBrain === 'patient_verification') {
+            this.logCallFlow(
+              state.callSid,
+              'patient_verification',
+              'step_patient_identity_verification_window_active',
+              'No benefit fields extracted yet — LLM decides opening name/DOB vs benefits',
+              Date.now() - turnStart,
+            );
+          }
           const result = await this.aiService.getNextConversationTurn(
             effectiveTranscript,
             state.extractedData,
@@ -891,6 +1148,13 @@ export class MediaStreamHandlerService {
           nextMessage = result.nextMessage;
           extractedUpdates = result.extractedUpdates;
           endCall = result.endCall ?? false;
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'llm_turn_request_complete',
+            `ms=${Date.now() - llmStart} endCall=${endCall} extractedKeys=${Object.keys(extractedUpdates ?? {}).join(',') || 'none'}`,
+            Date.now() - turnStart,
+          );
         }
 
         const hasValue = (v: string | null) =>
@@ -913,6 +1177,13 @@ export class MediaStreamHandlerService {
             const corrected = extractValueForField(userSaid, expectedField);
             if (corrected) {
               extractedUpdates = { [expectedField]: corrected };
+              this.logCallFlow(
+                state.callSid,
+                phaseForBrain,
+                'safeguard_after_hold_field_coercion',
+                `${expectedField}=${corrected}`,
+                Date.now() - turnStart,
+              );
             }
           }
         }
@@ -926,6 +1197,13 @@ export class MediaStreamHandlerService {
               orderedF,
             );
           if (!validation.ok) {
+            this.logCallFlow(
+              state.callSid,
+              phaseForBrain,
+              'benefit_validation_failed',
+              validation.correctionMessage?.slice(0, 120) ?? '',
+              Date.now() - turnStart,
+            );
             if (
               userSaid?.trim() &&
               userSaid !== 'User did not respond or was inaudible.'
@@ -935,22 +1213,43 @@ export class MediaStreamHandlerService {
               state.conversationTranscript.push(
                 'EVA: ' + validation.correctionMessage.trim(),
               );
-            await speak(validation.correctionMessage);
+            await speak(validation.correctionMessage ?? '', 'validation_retry');
             state.processing = false;
             return;
           }
           extractedUpdates = validation.normalized;
+          this.logCallFlow(
+            state.callSid,
+            phaseForBrain,
+            'benefit_validation_ok',
+            JSON.stringify(extractedUpdates),
+            Date.now() - turnStart,
+          );
         }
 
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
           for (const [key, val] of Object.entries(extractedUpdates)) {
             if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
           }
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'extracted_data_merged',
+            JSON.stringify(state.extractedData),
+            Date.now() - turnStart,
+          );
         }
 
         state.lastAskedField = getFirstMissingField(
           state.extractedData,
           orderedF,
+        );
+        this.logCallFlow(
+          state.callSid,
+          getConversationPhaseForLog(state),
+          'next_last_asked_field_computed',
+          state.lastAskedField ?? 'none_all_done',
+          Date.now() - turnStart,
         );
 
         const allCollected = orderedF.every((f) =>
@@ -990,6 +1289,13 @@ export class MediaStreamHandlerService {
           toSpeakLooksLikeConfirmingDate
         ) {
           toSpeak = askForFieldPhrase('validity');
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'safeguard_validity_strip_invented_date',
+            '',
+            Date.now() - turnStart,
+          );
         }
         // Safeguard: if user asked for DOB, never include a first-field request in the same turn — wait for "yes we're good" first
         const firstField = orderedF[0];
@@ -1005,6 +1311,13 @@ export class MediaStreamHandlerService {
             'i',
           ).test(toSpeak)
         ) {
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'safeguard_dob_turn_strip_first_benefit_question',
+            `firstField=${firstField}`,
+            Date.now() - turnStart,
+          );
           toSpeak = toSpeak
             .replace(
               new RegExp(
@@ -1154,6 +1467,13 @@ export class MediaStreamHandlerService {
           !/^\.{2,}$/.test(userSaid)
         ) {
           const tpaTone = await emotionPromise;
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'emotion_classification_result',
+            tpaTone ?? 'null',
+            Date.now() - turnStart,
+          );
           if (tpaTone) {
             await pushLiveTracker(`[TPA_EMOTION] ${tpaTone}`);
             state.conversationTranscript.push(`[TPA_EMOTION] ${tpaTone}`);
@@ -1166,7 +1486,14 @@ export class MediaStreamHandlerService {
           await pushLiveTracker(`EVA: ${toSpeak.trim()}`);
         }
         if (toSpeak?.trim()) {
-          await speak(toSpeak);
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'eva_reply_prepared',
+            `${(toSpeak ?? '').slice(0, 160)}${(toSpeak ?? '').length > 160 ? '…' : ''}`,
+            Date.now() - turnStart,
+          );
+          await speak(toSpeak, 'eva_reply');
         }
 
         if (shouldEndCall) {
@@ -1180,10 +1507,26 @@ export class MediaStreamHandlerService {
         }
       } catch (err: any) {
         this.logger.warn('[MediaStream] Process buffer failed', err?.message);
+        this.logCallFlow(
+          state.callSid,
+          getConversationPhaseForLog(state),
+          'process_buffer_error',
+          err?.message ?? 'unknown',
+          Date.now() - turnStart,
+        );
         // Only ask to repeat; do not ask for the field again (same as transcription failure).
-        await speak(getRepeatOnlyPrompt()).catch(() => {});
+        await speak(getRepeatOnlyPrompt(), 'repeat_after_process_error').catch(
+          () => {},
+        );
       } finally {
         await emotionPromise.catch(() => {});
+        this.logCallFlow(
+          state.callSid,
+          getConversationPhaseForLog(state),
+          'process_buffer_turn_complete',
+          `total_turn_ms=${Date.now() - turnStart}`,
+          Date.now() - turnStart,
+        );
         try {
           fs.unlinkSync(rawPath);
         } catch {}
@@ -1212,6 +1555,12 @@ export class MediaStreamHandlerService {
       if (event === 'start') {
         state.streamSid = msg?.streamSid ?? msg?.start?.streamSid ?? null;
         state.callSid = msg?.start?.callSid ?? msg?.callSid ?? null;
+        this.logCallFlow(
+          state.callSid,
+          'connection',
+          'twilio_stream_start',
+          `mode=${state.mode} payeeId=${state.payeeId ?? 'none'}`,
+        );
         if (!state.mode || state.mode === 'eva') {
           // Resolve payeeId from URL param or from call SID (stored when makeCall was used), so patient details are available before greeting
           if (state.callSid) {
@@ -1266,7 +1615,15 @@ export class MediaStreamHandlerService {
             }
             state.lastSpeakTime = Date.now();
             state.conversationTranscript.push('EVA: ' + CONVERSATION_GREETING);
-            await speak(CONVERSATION_GREETING);
+            this.logCallFlow(
+              state.callSid,
+              'patient_verification',
+              'opening_greeting_about_to_play',
+              state.patientInfo
+                ? `patientLoaded=${state.patientInfo.fullName} dob=${state.patientInfo.dobFormatted ?? 'none'}`
+                : 'no_patient_info',
+            );
+            await speak(CONVERSATION_GREETING, 'opening_greeting');
           } catch (e) {
             this.logger.warn(
               '[MediaStream] Greeting failed',
@@ -1287,6 +1644,12 @@ export class MediaStreamHandlerService {
       }
 
       if (event === 'stop') {
+        this.logCallFlow(
+          state.callSid,
+          getConversationPhaseForLog(state),
+          'twilio_stream_stop',
+          `extractedKeys=${Object.keys(state.extractedData).join(',')}`,
+        );
         void pushLiveTracker(
           `[CALL_EVENT] END callSid=${state.callSid ?? 'unknown'}`,
         );
@@ -1364,6 +1727,12 @@ export class MediaStreamHandlerService {
         state.buffer = [];
         clearInterval(state.fallbackTimer!);
         state.fallbackTimer = null;
+        this.logCallFlow(
+          state.callSid,
+          getConversationPhaseForLog(state),
+          'trigger_process_buffer',
+          `reason=fallback_interval_${intervalMs}ms bytes=${combined.length}`,
+        );
         processBuffer(combined);
       }, intervalMs);
     };
