@@ -20,7 +20,10 @@ import type { WebSocket } from 'ws';
 import { AiService } from '../ai/ai.service';
 import { TranscriptionService } from '../transcription/transcription.service';
 import { ElevenLabsAudioStackService } from '../voice/elevenlabs-audio-stack.service';
-import { VerificationService } from '../verification/verification.service';
+import {
+  VerificationService,
+  type PayeeCallContext,
+} from '../verification/verification.service';
 import { VerificationRequirementService } from '../verification-requirement/verification-requirement.service';
 import { BotTrackerService } from '../bot-tracker/bot-tracker.service';
 import { TwilioService } from './twilio.service';
@@ -235,16 +238,161 @@ function transcriptHasValue(transcript: string): boolean {
   return /\d+|dollar|percent|%\s*\$/.test(transcript);
 }
 
-/** True if the reply is the intro/purpose phrase we only say once (e.g. "I need a few benefit details", "here to verify patient details"). */
+/**
+ * True if the reply is the intro/purpose phrase we only say once.
+ * Catches all common variants the LLM produces: "I'm calling to verify / get / collect / confirm
+ * ... patient / benefit / coverage details / information", "I need some benefit details",
+ * "here to verify ...", "reaching out to confirm ...", etc. Keep this broad — any false
+ * positive just gets swapped for an identity/next-field answer, which is always acceptable
+ * once purpose has already been stated in the call.
+ */
 function isIntroPurposePhrase(text: string): boolean {
   const t = text.trim().toLowerCase();
-  return (
-    /i'?m\s+here\s+to\s+verify/i.test(t) ||
-    /verify\s+(a\s+)?(couple\s+of\s+)?patient\s+details/i.test(t) ||
-    /i\s+need\s+(a\s+few|some)\s+benefit\s+(details|information)/i.test(t) ||
-    /i\s+want\s+to\s+verify\s+(the\s+)?patient/i.test(t) ||
-    /calling\s+to\s+verify\s+benefits?\s+for\s+a\s+patient/i.test(t)
-  );
+  if (!t) return false;
+  // "calling / here / reaching out ... to (verify|get|collect|confirm|obtain|gather|check) ... patient|benefit|coverage|details|information"
+  if (
+    /\b(i'?m|i am|we'?re|we are)\s+(calling|here|reaching\s+out|on\s+the\s+(phone|line))\s+(to|for)\s+(verify|get|collect|confirm|obtain|gather|check|follow\s+up|follow-up|look|ask)/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\bcalling\s+to\s+(verify|get|collect|confirm|obtain|gather|check|follow\s+up|follow-up)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/\bi\s+need\s+(a\s+few|some|to\s+get|to\s+collect|to\s+verify)\s+(benefit|patient|coverage|insurance)\s+(detail|info|information)/i.test(t)) {
+    return true;
+  }
+  if (/\b(verify|confirm|collect|gather|get)\s+(a\s+few\s+|some\s+|the\s+)?(benefit|patient|coverage|insurance)\s+(detail|info|information)/i.test(t)) {
+    return true;
+  }
+  if (/\b(i'?m|i am)\s+here\s+to\s+verify\b/i.test(t)) return true;
+  if (/\bi\s+want\s+to\s+verify\s+(the\s+)?patient\b/i.test(t)) return true;
+  if (/\bto\s+(verify|confirm|check)\s+(the\s+)?patient'?s?\s+(benefit|coverage|insurance|eligibility)/i.test(t)) return true;
+  if (/\bget\s+benefit\s+(detail|info|information)/i.test(t)) return true;
+  if (/\bpurpose\s+of\s+(this|the|my)\s+call\s+is\b/i.test(t)) return true;
+  return false;
+}
+
+/** Which identity/verification item the TPA just asked about, if any.
+ *  Used so we can answer directly from `state.callContext` and avoid LLM drift (e.g.
+ *  re-emitting the purpose sentence). Returns null when no identity question is detected. */
+type IdentityAsk =
+  | 'provider_npi'
+  | 'billing_npi'
+  | 'tax_id'
+  | 'member_id'
+  | 'patient_dob'
+  | 'patient_first_name'
+  | 'patient_last_name'
+  | 'patient_full_name'
+  | 'provider_name'
+  | 'subscriber_dob'
+  | 'subscriber_first_name'
+  | 'subscriber_last_name'
+  | 'subscriber_full_name'
+  | null;
+
+function detectIdentityAsk(userSaid: string): IdentityAsk {
+  const t = userSaid.trim().toLowerCase();
+  if (t.length < 3) return null;
+  // Tax ID / EIN
+  if (/\b(tax\s*id|tin|ein|tax\s+identification)\b/.test(t)) return 'tax_id';
+  // Billing vs rendering NPI
+  if (/\b(billing\s+(provider\s+)?npi|billing\s+npi)\b/.test(t)) return 'billing_npi';
+  if (/\b(provider\s+npi|rendering\s+npi|npi\s+(number|of|for))\b/.test(t) || /\bwhat(?:'s|\s+is)\s+(the\s+)?npi\b/.test(t) || /\bnpi\s*\??$/.test(t)) {
+    return 'provider_npi';
+  }
+  // Member ID
+  if (/\b(member\s*id|member\s+number|subscriber\s*id|policy\s*(number|id)|id\s+number)\b/.test(t)) return 'member_id';
+  // Subscriber questions (check before patient so "subscriber first name" matches here)
+  if (/\bsubscriber'?s?\s+(date\s+of\s+birth|dob|birthday)\b/.test(t) || /\bdob\s+(of\s+)?(the\s+)?subscriber\b/.test(t)) {
+    return 'subscriber_dob';
+  }
+  if (/\bsubscriber'?s?\s+first\s+name\b/.test(t)) return 'subscriber_first_name';
+  if (/\bsubscriber'?s?\s+last\s+name\b/.test(t)) return 'subscriber_last_name';
+  if (/\b(subscriber'?s?\s+name|name\s+of\s+(the\s+)?subscriber)\b/.test(t)) return 'subscriber_full_name';
+  // Patient / provider
+  if (/\b(patient'?s?\s+(date\s+of\s+birth|dob|birthday)|patient\s+dob)\b/.test(t) || /\b(date\s+of\s+birth|dob|birthday)\b/.test(t)) {
+    return 'patient_dob';
+  }
+  if (/\bpatient'?s?\s+first\s+name\b/.test(t)) return 'patient_first_name';
+  if (/\bpatient'?s?\s+last\s+name\b/.test(t)) return 'patient_last_name';
+  if (/\b(patient'?s?\s+(full\s+)?name|name\s+of\s+(the\s+)?patient)\b/.test(t)) return 'patient_full_name';
+  if (/\b(provider'?s?\s+(full\s+)?name|name\s+of\s+(the\s+)?(provider|doctor|dentist)|treating\s+(provider|doctor|dentist)|rendering\s+(provider|doctor|dentist)|who\s+is\s+(the\s+)?(provider|doctor|dentist))\b/.test(t)) {
+    return 'provider_name';
+  }
+  return null;
+}
+
+/** Compose a one-line reply for an identity question directly from cached call context.
+ *  Returns null when we don't have the requested field (caller decides what to say).
+ *  When this produces a value we use it verbatim and skip the LLM — that is what keeps
+ *  EVA fast and on-script, and it is what stops the "I am calling to verify..." drift. */
+function answerIdentityFromContext(
+  ask: NonNullable<IdentityAsk>,
+  ctx: PayeeCallContext | null,
+): string | null {
+  if (!ctx) return null;
+  const notOnFile = 'I am sorry, I do not have that on my end. Is there anything else I can share so we can continue?';
+  switch (ask) {
+    case 'provider_npi':
+      return ctx.provider?.npi
+        ? `The provider NPI is ${ctx.provider.npi}.`
+        : notOnFile;
+    case 'billing_npi': {
+      const b = ctx.provider?.billingNpi || ctx.provider?.npi;
+      return b ? `The billing provider NPI is ${b}.` : notOnFile;
+    }
+    case 'tax_id':
+      return ctx.provider?.taxId
+        ? `The provider tax ID is ${ctx.provider.taxId}.`
+        : notOnFile;
+    case 'member_id':
+      return ctx.memberId ? `The member ID is ${ctx.memberId}.` : notOnFile;
+    case 'patient_dob':
+      return ctx.patient.dobFormatted
+        ? `The patient's date of birth is ${ctx.patient.dobFormatted}. Does that match your records?`
+        : notOnFile;
+    case 'patient_first_name':
+      return ctx.patient.firstName
+        ? `The patient's first name is ${ctx.patient.firstName}.`
+        : notOnFile;
+    case 'patient_last_name':
+      return ctx.patient.lastName
+        ? `The patient's last name is ${ctx.patient.lastName}.`
+        : notOnFile;
+    case 'patient_full_name':
+      return ctx.patient.fullName
+        ? `The patient's name is ${ctx.patient.fullName}.`
+        : notOnFile;
+    case 'provider_name':
+      return ctx.provider?.fullName
+        ? `The treating provider is Dr. ${ctx.provider.fullName}.`
+        : notOnFile;
+    case 'subscriber_dob':
+      return ctx.subscriber.dobFormatted
+        ? `The subscriber's date of birth is ${ctx.subscriber.dobFormatted}.`
+        : notOnFile;
+    case 'subscriber_first_name':
+      return ctx.subscriber.firstName
+        ? `The subscriber's first name is ${ctx.subscriber.firstName}.`
+        : notOnFile;
+    case 'subscriber_last_name':
+      return ctx.subscriber.lastName
+        ? `The subscriber's last name is ${ctx.subscriber.lastName}.`
+        : notOnFile;
+    case 'subscriber_full_name':
+      return ctx.subscriber.fullName
+        ? `The subscriber's name is ${ctx.subscriber.fullName}.`
+        : notOnFile;
+    default:
+      return null;
+  }
 }
 
 /** Rep asks who is calling — a one-line identity answer is OK; full "Hi I'm Reena... how are you" is not. */
@@ -386,6 +534,30 @@ const STATIC_PATIENT_INFO: PatientInfo = {
   ssn: null,
 };
 
+/** Static call context used when no payee/appointment is available (testing / inbound smoke tests).
+ * Values here are only used as the final fallback so EVA still has something to say; real calls
+ * get this data from `VerificationService.getPayeeCallContext` at stream start. */
+const STATIC_CALL_CONTEXT: PayeeCallContext = {
+  patient: {
+    firstName: STATIC_PATIENT_INFO.firstName,
+    lastName: STATIC_PATIENT_INFO.lastName,
+    fullName: STATIC_PATIENT_INFO.fullName,
+    dob: null,
+    dobFormatted: STATIC_PATIENT_INFO.dobFormatted,
+    ssn: null,
+  },
+  subscriber: {
+    firstName: STATIC_PATIENT_INFO.firstName,
+    lastName: STATIC_PATIENT_INFO.lastName,
+    fullName: STATIC_PATIENT_INFO.fullName,
+    dobFormatted: STATIC_PATIENT_INFO.dobFormatted,
+  },
+  memberId: process.env.EVA_MEMBER_ID?.trim() || null,
+  provider: null,
+  office: null,
+  payer: null,
+};
+
 interface StreamState {
   buffer: Buffer[];
   streamSid: string | null;
@@ -394,6 +566,9 @@ interface StreamState {
   fallbackTimer: ReturnType<typeof setInterval> | null;
   payeeId: string | null;
   patientInfo: PatientInfo | null;
+  /** Pre-loaded full identity context (provider NPI/Tax ID, member ID, payer, etc.)
+   *  so EVA can answer TPA verification questions immediately without extra DB round-trips. */
+  callContext: PayeeCallContext | null;
   /** Dynamic verification fields (key = field name from VerificationRequirement). */
   extractedData: Record<string, string | null>;
   /** Ordered list of field names to collect (from VerificationRequirement or default). Loaded when payeeId is set. */
@@ -487,6 +662,7 @@ export class MediaStreamHandlerService {
       fallbackTimer: null,
       payeeId: payeeId ?? null,
       patientInfo: null,
+      callContext: null,
       extractedData: {},
       orderedFields: [],
       verificationRequirementId: null,
@@ -1160,12 +1336,24 @@ export class MediaStreamHandlerService {
           state.extractedData,
           orderedF,
         );
+
+        // Identity short-circuit: when the TPA asks a crisp verification question
+        // (NPI / Tax ID / member ID / patient or subscriber name or DOB / provider name)
+        // and we have the cached value, answer directly — skip the LLM entirely. This is
+        // what keeps EVA fast AND prevents the LLM from drifting to "I am calling to verify..."
+        const identityAsk = detectIdentityAsk(userSaid);
+        const identityDirectReply =
+          identityAsk && !recallReply
+            ? answerIdentityFromContext(identityAsk, state.callContext)
+            : null;
+
         let nextMessage = '';
         let extractedUpdates: Record<string, string | null> = {};
         let endCall = false;
 
         const skipLlmDueToNoise =
           !recallReply &&
+          !identityDirectReply &&
           state.consecutiveNoiseOrEmptyTurns >=
             MAX_NOISE_TURNS_BEFORE_SKIP_LLM;
 
@@ -1180,7 +1368,12 @@ export class MediaStreamHandlerService {
             askForFieldPhrase(miss ?? 'coverage');
         }
 
-        if (!recallReply && !skipLlmDueToNoise) {
+        if (identityDirectReply) {
+          // Skip LLM — answer directly from the pre-loaded call context.
+          nextMessage = identityDirectReply;
+          extractedUpdates = {};
+          endCall = false;
+        } else if (!recallReply && !skipLlmDueToNoise) {
           const llmStart = Date.now();
           const result = await this.aiService.getNextConversationTurn(
             effectiveTranscript,
@@ -1194,6 +1387,7 @@ export class MediaStreamHandlerService {
                 state.patientInfo === null,
               purposeStated: state.purposeSaid,
             },
+            state.callContext,
           );
           nextMessage = result.nextMessage;
           extractedUpdates = result.extractedUpdates;
@@ -1369,20 +1563,33 @@ export class MediaStreamHandlerService {
           );
         // Never say "I didn't catch you" when user clearly said something (e.g. "how can I help", "it is 80$") — keep conversation in sync.
         if (looksLikeRealResponse(userSaid) && soundsLikeRepeat) {
-          if (userAsksPurposeOfCallOrOpening(userSaid)) {
+          // Identity question has highest priority — answer from cheat-sheet, skip all else.
+          const idAskHere = detectIdentityAsk(userSaid);
+          const idAnswerHere = idAskHere
+            ? answerIdentityFromContext(idAskHere, state.callContext)
+            : null;
+          if (idAnswerHere) {
+            toSpeak = idAnswerHere;
+          } else if (
+            userAsksPurposeOfCallOrOpening(userSaid) &&
+            !state.purposeSaid
+          ) {
+            // Only say purpose the FIRST time they ask — after that, a short acknowledgement + move on.
             toSpeak = pickPurposeOfCallPhrase();
             state.purposeSaid = true;
+          } else if (userAsksPurposeOfCallOrOpening(userSaid)) {
+            // They asked purpose again — brief one-liner, no intro.
+            toSpeak =
+              'As I mentioned, we just need a few patient benefit details from your end.';
           } else if (
-            /how are you|doing good|doing great/i.test(userSaid.trim()) &&
-            !userAsksPurposeOfCallOrOpening(userSaid)
+            /how are you|doing good|doing great/i.test(userSaid.trim())
           ) {
             if (!state.purposeSaid) {
               toSpeak = pickPurposeOfCallPhrase();
               state.purposeSaid = true;
             } else {
-              toSpeak = state.lastAskedField
-                ? askForFieldPhrase(state.lastAskedField)
-                : askForFieldPhrase(orderedF[0]);
+              // Social pleasantry mid-call — brief, non-purpose reply.
+              toSpeak = "I'm doing well, thank you.";
             }
           } else if (transcriptHasValue(userSaid) && state.lastAskedField) {
             const corrected = extractValueForField(
@@ -1461,16 +1668,26 @@ export class MediaStreamHandlerService {
         } else if (
           toSpeak?.trim() &&
           !userAskedWhoIsCalling(userSaid) &&
-          state.purposeSaid &&
           isIntroPurposePhrase(toSpeak)
         ) {
-          const miss =
-            state.lastAskedField ??
-            getFirstMissingField(state.extractedData, orderedF) ??
-            orderedF[0];
-          toSpeak = miss
-            ? askForFieldPhrase(miss)
-            : getRepeatOnlyPrompt();
+          // Mid-call LLM drift guard: the model produced a purpose/intro line.
+          // Replace with the most useful concrete answer we can give right now —
+          // prefer a direct identity answer if the TPA asked one, otherwise ask
+          // for the next missing benefit field (or a neutral repeat as last resort).
+          const identityFallback =
+            identityAsk && state.callContext
+              ? answerIdentityFromContext(identityAsk, state.callContext)
+              : null;
+          if (identityFallback) {
+            toSpeak = identityFallback;
+          } else if (state.purposeSaid) {
+            const miss =
+              state.lastAskedField ??
+              getFirstMissingField(state.extractedData, orderedF) ??
+              orderedF[0];
+            toSpeak = miss ? askForFieldPhrase(miss) : getRepeatOnlyPrompt();
+          }
+          // else: first time saying purpose — allowed to stand; purposeSaid will be set below.
         }
         if (toSpeak && isIntroPurposePhrase(toSpeak)) {
           state.purposeSaid = true;
@@ -1640,34 +1857,23 @@ export class MediaStreamHandlerService {
         }
         (async () => {
           try {
+            // Kick off the DB fetch for the full call context IN PARALLEL with the opening
+            // greeting TTS. EVA can greet while the patient/provider/payer data loads — this
+            // way the TPA's first verification question already has the answer cached.
+            let contextPromise: Promise<PayeeCallContext | null> =
+              Promise.resolve(null);
             if (state.payeeId) {
-              const info = await this.verificationService.getPayeePatientInfo(
-                state.payeeId,
-              );
-              if (info) {
-                state.patientInfo = {
-                  firstName: info.firstName,
-                  lastName: info.lastName,
-                  fullName: info.fullName,
-                  dobFormatted: info.dobFormatted,
-                  ssn: info.ssn,
-                };
-              } else {
-                state.patientInfo = null;
-                this.logger.warn(
-                  '[MediaStream] Payee not found in DB for payeeId=' +
-                    state.payeeId +
-                    ' — patient details will be unavailable on this call.',
-                );
-              }
+              contextPromise = this.verificationService
+                .getPayeeCallContext(state.payeeId, state.appointmentId)
+                .catch((e: any) => {
+                  this.logger.warn(
+                    '[MediaStream] Failed to load call context',
+                    e?.message,
+                  );
+                  return null;
+                });
             }
-            // Only use static patient info when there is no payeeId (e.g. generic inbound); never when payeeId is set but payee missing.
-            if (!state.patientInfo && !state.payeeId) {
-              state.patientInfo = STATIC_PATIENT_INFO;
-              this.logger.warn(
-                '[MediaStream] Using static patient info (no payeeId on stream). Pass payeeId in the stream URL to use real patient details from the database.',
-              );
-            }
+
             state.lastSpeakTime = Date.now();
             state.conversationTranscript.push('EVA: ' + CONVERSATION_GREETING);
             const greetStart = Date.now();
@@ -1675,6 +1881,39 @@ export class MediaStreamHandlerService {
               CONVERSATION_GREETING,
               'opening_greeting',
             );
+
+            // Resolve context after the greeting starts playing — by the time the TPA
+            // finishes their opener, EVA already has NPI / Tax ID / member ID / names in memory.
+            const ctx = await contextPromise;
+            if (ctx) {
+              state.callContext = ctx;
+              state.patientInfo = {
+                firstName: ctx.patient.firstName,
+                lastName: ctx.patient.lastName,
+                fullName: ctx.patient.fullName,
+                dobFormatted: ctx.patient.dobFormatted,
+                ssn: ctx.patient.ssn,
+              };
+              this.logger.log(
+                `[MediaStream] Call context loaded: patient=${ctx.patient.fullName} provider=${ctx.provider?.fullName ?? 'none'} payer=${ctx.payer?.companyName ?? 'none'} memberId=${ctx.memberId ? 'yes' : 'no'} taxId=${ctx.provider?.taxId ? 'yes' : 'no'}`,
+              );
+            } else if (state.payeeId) {
+              state.patientInfo = null;
+              state.callContext = null;
+              this.logger.warn(
+                '[MediaStream] Payee not found in DB for payeeId=' +
+                  state.payeeId +
+                  ' — patient details will be unavailable on this call.',
+              );
+            }
+            // Only use static patient info when there is no payeeId (e.g. generic inbound); never when payeeId is set but payee missing.
+            if (!state.patientInfo && !state.payeeId) {
+              state.patientInfo = STATIC_PATIENT_INFO;
+              state.callContext = STATIC_CALL_CONTEXT;
+              this.logger.warn(
+                '[MediaStream] Using static patient info (no payeeId on stream). Pass payeeId in the stream URL to use real patient details from the database.',
+              );
+            }
             this.logCallTurn(state.callSid, {
               prepMs: 0,
               sttMs: 0,
