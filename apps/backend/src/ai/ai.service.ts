@@ -784,7 +784,43 @@ Respond with ONLY a JSON object. No markdown. Format:
     if (/%/.test(t)) return false;
     // Bare integer (or decimal with $ optional) — the TPA was asked a dollar question
     // so "24", "$24", "2500.00" are all acceptable dollar amounts.
-    return /^\$?\d{1,6}(\.\d{1,2})?$/.test(t);
+    if (/^\$?\d{1,6}(\.\d{1,2})?$/.test(t)) return true;
+    // Spelled-out numbers like "twenty-four dollars", "fourteen dollars", "one hundred dollars".
+    // STT often produces this when the TPA says numbers aloud and the LLM passes it through.
+    // If the phrase ends with "dollar(s)" and contains a known number word, accept it.
+    if (/\bdollars?\b/.test(t) && this.wordsToNumber(t) != null) return true;
+    return false;
+  }
+
+  /** Parse a simple English number phrase like "twenty-four", "one hundred", "fourteen" → 24, 100, 14.
+   *  Returns null if unrecognised. Supports 0–9999. */
+  private wordsToNumber(phrase: string): number | null {
+    const words: Record<string, number> = {
+      zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+      eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13,
+      fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18,
+      nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60,
+      seventy: 70, eighty: 80, ninety: 90, hundred: 100, thousand: 1000,
+    };
+    const tokens = phrase
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, ' ')
+      .replace(/-/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w && w in words);
+    if (!tokens.length) return null;
+    let total = 0;
+    let current = 0;
+    for (const tok of tokens) {
+      const val = words[tok];
+      if (val === 100) current = Math.max(current, 1) * 100;
+      else if (val === 1000) {
+        total += Math.max(current, 1) * 1000;
+        current = 0;
+      } else current += val;
+    }
+    total += current;
+    return total > 0 ? total : null;
   }
 
   /** Normalize validity to "21st Dec 2028" format. Returns null if not parseable. */
@@ -973,21 +1009,27 @@ Respond with ONLY a JSON object. No markdown. Format:
         }
         const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
         const bareDol = !dol ? v.match(/^\$?(\d{1,6})(?:\.\d{1,2})?$/) : null;
+        const wordNum = !dol && !bareDol ? this.wordsToNumber(v) : null;
         out.deductible = dol
           ? `$${dol[1] || dol[2] || dol[3]}`
           : bareDol
             ? `$${bareDol[1]}`
-            : v;
+            : wordNum != null
+              ? `$${wordNum}`
+              : v;
       } else if (field === 'copay') {
         const pct = v.match(/(\d+)\s*%|(\d+)\s*percent/i);
         const dol = v.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
         const bareDol = !dol ? v.match(/^\$?(\d{1,6})(?:\.\d{1,2})?$/) : null;
+        const wordNum = !dol && !bareDol && !pct ? this.wordsToNumber(v) : null;
         if (pct) {
           out.copay = `${pct[1] || pct[2]}%`;
         } else if (this.isDollars(v) && dol) {
           out.copay = `$${dol[1] || dol[2] || dol[3]}`;
         } else if (this.isDollars(v) && bareDol) {
           out.copay = `$${bareDol[1]}`;
+        } else if (this.isDollars(v) && wordNum != null) {
+          out.copay = `$${wordNum}`;
         } else if (!this.isDollars(v) && !this.isPercentage(v)) {
           return {
             ok: false,
