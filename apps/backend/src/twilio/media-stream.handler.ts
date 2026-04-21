@@ -79,6 +79,40 @@ function isSilenceAtEnd(buffer: Buffer): boolean {
 const CONVERSATION_GREETING =
   "Hi, I'm Reena from Went Dentals. How are you doing?";
 
+/** One sentence, same intent — rotate so we never sound canned when TPA asks purpose (fallback if LLM mis-hears). */
+const PURPOSE_OF_CALL_LINE_VARIANTS = [
+  'I need a few benefit details for a patient.',
+  "I'm calling to collect insurance benefit information for one of our patients.",
+  'Our office needs to verify a few benefit details for a patient.',
+  "I'm reaching out to confirm coverage and related benefit information for a patient.",
+  'I need to verify some benefit items for a patient we have on file.',
+  "I'm following up to get benefit details we need for a patient's visit.",
+  'The call is about gathering benefit verification for a patient appointment.',
+] as const;
+
+function pickPurposeOfCallPhrase(): string {
+  const i = Math.floor(Math.random() * PURPOSE_OF_CALL_LINE_VARIANTS.length);
+  return PURPOSE_OF_CALL_LINE_VARIANTS[i] ?? PURPOSE_OF_CALL_LINE_VARIANTS[0];
+}
+
+/** TPA asks why we are calling / purpose / what they can help with in that sense. */
+function userAsksPurposeOfCallOrOpening(userSaid: string): boolean {
+  const t = userSaid.trim().toLowerCase();
+  if (t.length < 3) return false;
+  return (
+    /how can i help|how may i help|what can i do for you|how can i (direct|assist)|need help with/i.test(
+      t,
+    ) ||
+    /why are you calling|purpose of (this|your|the)?\s*call|reason for (this|your)?\s*call/i.test(
+      t,
+    ) ||
+    /what (is this|do you need) (call )?regarding|what'?s this (call )?about/i.test(t) ||
+    /what (kind of )?information do you need|what details (are you|do you) (looking|calling) for/i.test(
+      t,
+    )
+  );
+}
+
 const EVA_HOLD_ACK = "Sure, I'll hold. Take your time.";
 /** After they say "thanks for waiting", "are you there" etc. — acknowledge only; do not re-ask the question yet. */
 const EVA_RESUME_ACK =
@@ -192,8 +226,51 @@ function isIntroPurposePhrase(text: string): boolean {
     /i'?m\s+here\s+to\s+verify/i.test(t) ||
     /verify\s+(a\s+)?(couple\s+of\s+)?patient\s+details/i.test(t) ||
     /i\s+need\s+(a\s+few|some)\s+benefit\s+(details|information)/i.test(t) ||
-    /i\s+want\s+to\s+verify\s+(the\s+)?patient/i.test(t)
+    /i\s+want\s+to\s+verify\s+(the\s+)?patient/i.test(t) ||
+    /calling\s+to\s+verify\s+benefits?\s+for\s+a\s+patient/i.test(t)
   );
+}
+
+/** Rep asks who is calling — a one-line identity answer is OK; full "Hi I'm Reena... how are you" is not. */
+function userAskedWhoIsCalling(userSaid: string): boolean {
+  const t = userSaid.trim().toLowerCase();
+  if (t.length < 4) return false;
+  return (
+    /\bwho\s+is\s+(this|calling|that)\b/.test(t) ||
+    /\bwho\s+are\s+you\b/.test(t) ||
+    /\bidentify\s+yourself\b/.test(t) ||
+    /\bwhat\s+(company|office)\s+is\s+this\b/.test(t) ||
+    /\bwhere\s+are\s+you\s+calling\s+from\b/.test(t)
+  );
+}
+
+/**
+ * Matches the opening stream greeting or close variants the LLM sometimes repeats mid-call.
+ */
+function isFullOpeningSelfIntro(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (t.length < 15) return false;
+  // Any greeting-style "Hi / Hey + I'm Reena from Went Dentals" (with or without "how are you")
+  if (/(hi|hey|hello),?\s+i'?m\s+reena\s+from\s+went\s+dentals/.test(t)) {
+    return true;
+  }
+  if (/(hi|hey|hello),?\s+i\s+am\s+reena\s+from\s+went\s+dentals/.test(t)) {
+    return true;
+  }
+  if (
+    /i\s+am\s+reena\s+from\s+went\s+dentals/.test(t) &&
+    /how\s+are\s+you/.test(t)
+  ) {
+    return true;
+  }
+  if (
+    t.includes('reena') &&
+    t.includes('went dentals') &&
+    (t.includes('how are you') || t.includes('how are you doing'))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Detect if user is asking to put the call on hold */
@@ -329,6 +406,8 @@ interface StreamState {
   evaAwaitingYesAfterDob: boolean;
   /** Consecutive turns with skip / inaudible / weak audio — for skip-LLM and abort guardrails. */
   consecutiveNoiseOrEmptyTurns: number;
+  /** Set after the Twilio stream plays CONVERSATION_GREETING — used to block repeated intros. */
+  openingGreetingPlayed: boolean;
 }
 
 /**
@@ -440,6 +519,7 @@ export class MediaStreamHandlerService {
       patientIdentityReadyForBenefits: false,
       evaAwaitingYesAfterDob: false,
       consecutiveNoiseOrEmptyTurns: 0,
+      openingGreetingPlayed: false,
     };
 
     const send = (obj: object) => {
@@ -1466,13 +1546,22 @@ export class MediaStreamHandlerService {
           );
         // Never say "I didn't catch you" when user clearly said something (e.g. "how can I help", "it is 80$") — keep conversation in sync.
         if (looksLikeRealResponse(userSaid) && soundsLikeRepeat) {
-          if (
-            /how can I help|how are you|doing good|doing great|how can i help/i.test(
-              userSaid.trim(),
-            )
+          if (userAsksPurposeOfCallOrOpening(userSaid)) {
+            toSpeak = pickPurposeOfCallPhrase();
+            state.purposeSaid = true;
+            this.logCallFlow(
+              state.callSid,
+              getConversationPhaseForLog(state),
+              'fallback_purpose_line_variant',
+              `userAskedPurposeOrOpening`,
+              Date.now() - turnStart,
+            );
+          } else if (
+            /how are you|doing good|doing great/i.test(userSaid.trim()) &&
+            !userAsksPurposeOfCallOrOpening(userSaid)
           ) {
             if (!state.purposeSaid) {
-              toSpeak = 'I need a few benefit details for a patient.';
+              toSpeak = pickPurposeOfCallPhrase();
               state.purposeSaid = true;
             } else {
               toSpeak = state.lastAskedField
@@ -1532,11 +1621,61 @@ export class MediaStreamHandlerService {
               : askForFieldPhrase(firstField);
           }
         }
-        // Never repeat the intro/purpose phrase ("I'm here to verify...", "I need a few benefit details") — say it only once per call; if we already said it, ask for the field or repeat instead.
-        if (toSpeak && state.purposeSaid && isIntroPurposePhrase(toSpeak)) {
-          toSpeak = state.lastAskedField
-            ? askForFieldPhrase(state.lastAskedField)
+        // Never repeat opening greeting / "Hi I'm Reena... how are you" or purpose lines mid-call (LLM regression guard).
+        if (
+          toSpeak?.trim() &&
+          userAskedWhoIsCalling(userSaid) &&
+          isFullOpeningSelfIntro(toSpeak)
+        ) {
+          toSpeak =
+            "I'm Reena from Went Dentals. I'm on the line to get benefit details.";
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'sanitized_intro_short_for_who_is_calling',
+            '',
+            Date.now() - turnStart,
+          );
+        } else if (
+          toSpeak?.trim() &&
+          !userAskedWhoIsCalling(userSaid) &&
+          state.openingGreetingPlayed &&
+          isFullOpeningSelfIntro(toSpeak)
+        ) {
+          const miss =
+            state.lastAskedField ??
+            getFirstMissingField(state.extractedData, orderedF) ??
+            orderedF[0];
+          toSpeak = miss
+            ? askForFieldPhrase(miss)
             : getRepeatOnlyPrompt();
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'sanitized_repeated_full_intro',
+            `fallbackField=${miss ?? 'none'}`,
+            Date.now() - turnStart,
+          );
+        } else if (
+          toSpeak?.trim() &&
+          !userAskedWhoIsCalling(userSaid) &&
+          state.purposeSaid &&
+          isIntroPurposePhrase(toSpeak)
+        ) {
+          const miss =
+            state.lastAskedField ??
+            getFirstMissingField(state.extractedData, orderedF) ??
+            orderedF[0];
+          toSpeak = miss
+            ? askForFieldPhrase(miss)
+            : getRepeatOnlyPrompt();
+          this.logCallFlow(
+            state.callSid,
+            getConversationPhaseForLog(state),
+            'sanitized_repeated_purpose_phrase',
+            `fallbackField=${miss ?? 'none'}`,
+            Date.now() - turnStart,
+          );
         }
         if (toSpeak && isIntroPurposePhrase(toSpeak)) {
           state.purposeSaid = true;
@@ -1737,6 +1876,7 @@ export class MediaStreamHandlerService {
                 : 'no_patient_info',
             );
             await speak(CONVERSATION_GREETING, 'opening_greeting');
+            state.openingGreetingPlayed = true;
           } catch (e) {
             this.logger.warn(
               '[MediaStream] Greeting failed',
