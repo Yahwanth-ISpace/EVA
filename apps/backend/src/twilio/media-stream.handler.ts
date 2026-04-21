@@ -210,10 +210,20 @@ function extractValueForField(
   const percentMatch = t.match(/(\d+)\s*%|(\d+)\s*percent/i);
   const numberMatch = t.match(/\b(\d+)\b/);
   if (field === 'validity') {
-    const validityMatch = t.match(
-      /year|month|dec|jan|feb|valid|till|until|through|twenty|dec/i,
-    );
-    if (validityMatch) return transcript.trim().replace(/\s+/g, ' ');
+    // Validity MUST be a date. If the transcript is a dollar amount or a percentage,
+    // it is clearly NOT a validity answer — return null so we don't pollute the field
+    // with "twenty-four dollars" just because the word "twenty" appeared.
+    if (/dollar|\$|%\s|\s%|\bpercent\b/i.test(t)) return null;
+    // Require an explicit date marker: full month name, abbreviated month, 4-digit year,
+    // "/YY", or a clear recurrence word. Dropped the overly-broad "twenty" and bare
+    // "dec"/"feb" duplicates from the previous regex.
+    const monthRe =
+      /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\b/i;
+    const yearRe = /\b(19|20)\d{2}\b/;
+    const wordRe = /\b(valid|till|until|through|expires?|expiry|thru|to)\b/i;
+    if (monthRe.test(t) || yearRe.test(t) || wordRe.test(t)) {
+      return transcript.trim().replace(/\s+/g, ' ');
+    }
     return null;
   }
   if (dollarMatch) {
@@ -231,6 +241,26 @@ function extractValueForField(
     return num;
   }
   return null;
+}
+
+/** Does the transcript contain an unambiguous dollar amount? Used to skip the
+ *  "reassign to validity" rescue when the user clearly gave a money value. */
+function transcriptIsMoney(transcript: string): boolean {
+  const t = transcript.trim().toLowerCase();
+  return /\$\s*\d+|\d+\s*dollars?|\bdollars?\b/.test(t);
+}
+
+/** Does the transcript look like a date/validity answer (month name, 4-digit year, "till", etc.)? */
+function transcriptIsDate(transcript: string): boolean {
+  const t = transcript.trim().toLowerCase();
+  if (/dollar|\$|%\s|\s%|\bpercent\b/i.test(t)) return false;
+  return (
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\b/i.test(
+      t,
+    ) ||
+    /\b(19|20)\d{2}\b/.test(t) ||
+    /\b(valid|till|until|through|thru|expires?|expiry)\b/i.test(t)
+  );
 }
 
 /** True if transcript looks like it contains a number, dollar amount, or percent (user may be giving a value). */
@@ -1521,15 +1551,28 @@ export class MediaStreamHandlerService {
 
         const hasValue = (v: string | null) =>
           v != null && String(v).trim().length > 0;
-        // After-hold safeguard: we were asking for lastAskedField; if user gave a value but AI put it in the wrong field, assign to lastAskedField only
+        // After-hold safeguard: we were asking for lastAskedField; if user gave a value but AI put
+        // it in the wrong field, assign to lastAskedField only — UNLESS the transcript is clearly
+        // a different type than the expected field (e.g. expected=validity but TPA said "twenty-four
+        // dollars"). In that case, we honour the LLM's routing into the matching money field and
+        // leave validity to be asked again on the next turn.
         const expectedField = state.lastAskedField;
+        const userIsMoney = transcriptIsMoney(userSaid);
+        const userIsDate = transcriptIsDate(userSaid);
+        const typeMismatch =
+          (expectedField === 'validity' && userIsMoney) ||
+          ((expectedField === 'copay' ||
+            expectedField === 'deductible' ||
+            expectedField === 'coverage') &&
+            userIsDate);
         if (
           expectedField &&
           orderedF.includes(expectedField) &&
           !isIdleOrEmpty &&
           transcriptHasValue(userSaid) &&
           extractedUpdates &&
-          Object.keys(extractedUpdates).length > 0
+          Object.keys(extractedUpdates).length > 0 &&
+          !typeMismatch
         ) {
           const hasExpected = hasValue(
             extractedUpdates[expectedField as keyof typeof extractedUpdates] ??
@@ -1541,6 +1584,21 @@ export class MediaStreamHandlerService {
               extractedUpdates = { [expectedField]: corrected };
             }
           }
+        }
+
+        // When there's a clear type mismatch (e.g. dollar amount given while we were asking for
+        // validity), DROP any LLM extraction for the expected field — it will be junk like
+        // {validity: "twenty-four dollars"} which slips past validation. Keep only the correctly
+        // typed fields that the LLM may have routed elsewhere in the same response.
+        if (
+          typeMismatch &&
+          expectedField &&
+          extractedUpdates &&
+          extractedUpdates[expectedField as keyof typeof extractedUpdates]
+        ) {
+          const cleaned: Record<string, string | null> = { ...extractedUpdates };
+          delete cleaned[expectedField as keyof typeof cleaned];
+          extractedUpdates = cleaned;
         }
 
         // Data validation: coverage = %, deductible/copay = $, validity = date (month and year). Polite correction if wrong type.
@@ -1870,6 +1928,74 @@ export class MediaStreamHandlerService {
             : 'Sure, please go ahead with your verification questions.';
           // Clear lastAskedField so we don't try to persist a benefit we never really asked.
           state.lastAskedField = null;
+        }
+
+        // ---------------------------------------------------------------------------
+        // FIELD-ORDER ENFORCEMENT
+        // The LLM frequently drifts — it says "Can I get the deductible?" when the
+        // actual next missing field is validity, or acknowledges ("Got it, thanks")
+        // and silently skips a field we never captured. Source of truth is
+        // `state.lastAskedField` (recomputed above from extractedData). If the LLM's
+        // proposed line is asking for a different field than lastAskedField, rewrite
+        // it so EVA always asks for the correct next missing field.
+        // ---------------------------------------------------------------------------
+        if (
+          state.patientIdentityReadyForBenefits &&
+          !state.allDoneAnnounced &&
+          !state.justCompletedAllFields &&
+          !allCollected &&
+          state.lastAskedField &&
+          toSpeak &&
+          isBenefitFieldAsk(toSpeak, orderedF)
+        ) {
+          const expected = state.lastAskedField;
+          const expectedSpaced = expected
+            .replace(/([A-Z])/g, ' $1')
+            .toLowerCase()
+            .trim();
+          const toSpeakLc = toSpeak.toLowerCase();
+          const alreadyAsksExpected =
+            toSpeakLc.includes(expected.toLowerCase()) ||
+            toSpeakLc.includes(expectedSpaced);
+          if (!alreadyAsksExpected) {
+            this.logger.warn(
+              `[MediaStream] LLM asked wrong field (draft="${toSpeak}") — realigning to expected="${expected}".`,
+            );
+            // Keep any acknowledgement of the value we just received, then ask the right field.
+            const ack = /^(got it|thanks|thank\s*you|okay|noted|alright|great)[.,!]?/i.test(
+              toSpeak,
+            )
+              ? 'Thanks. '
+              : '';
+            toSpeak = ack + askForFieldPhrase(expected);
+          }
+        }
+
+        // TYPE-MISMATCH RETRY: we were asking for X but the TPA answered with a
+        // clearly different type (e.g. dollars given for validity). The extraction
+        // cleanup above already dropped the junk value; now make sure EVA's reply
+        // re-asks the right field with a slightly clearer prompt instead of a bland
+        // "Can I get the validity?" repeat.
+        if (
+          typeMismatch &&
+          expectedField &&
+          state.lastAskedField === expectedField &&
+          !allCollected
+        ) {
+          if (expectedField === 'validity') {
+            toSpeak =
+              'Thanks, but for the validity I need a date — month and year work. Could you share that?';
+          } else if (
+            expectedField === 'copay' ||
+            expectedField === 'deductible' ||
+            expectedField === 'coverage'
+          ) {
+            const unit = expectedField === 'coverage' ? 'a percentage' : 'dollars';
+            toSpeak = `Thanks, but for the ${expectedField.replace(
+              /([A-Z])/g,
+              ' $1',
+            )} I need ${unit}. Could you share that?`;
+          }
         }
 
         // ---------------------------------------------------------------------------
