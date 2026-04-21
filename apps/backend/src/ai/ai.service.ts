@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import type { ModelParams } from '@google/generative-ai';
 import { VerificationService } from '../verification/verification.service';
 
 /** Stable Pro model for conversation, extraction, and classification. */
@@ -55,11 +56,11 @@ export class AiService {
     );
   }
 
-  /** Model init for all Gemini calls — disables thinking by default to reduce voice-call latency. */
-  private getGeminiModelInit(): {
-    model: string;
-    generationConfig?: { thinkingConfig: { thinkingBudget: number } };
-  } {
+  /**
+   * Model init for all Gemini calls — disables thinking by default to reduce voice-call latency.
+   * `thinkingConfig` is supported by the API but not yet on SDK `GenerationConfig` types — cast to ModelParams.
+   */
+  private getGeminiModelInit(): ModelParams {
     const thinkingBudget = parseGeminiThinkingBudget();
     if (thinkingBudget === null) {
       return { model: GEMINI_MODEL };
@@ -69,7 +70,7 @@ export class AiService {
       generationConfig: {
         thinkingConfig: { thinkingBudget },
       },
-    };
+    } as ModelParams;
   }
 
   /**
