@@ -9,6 +9,46 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { TranscriptionService } from 'src/transcription/transcription.service';
 
+/** Full call context pre-loaded at Twilio stream start so EVA can answer
+ * TPA identity/verification questions instantly from cached state. */
+export interface PayeeCallContext {
+  patient: {
+    firstName: string;
+    lastName: string;
+    fullName: string;
+    dob: Date | null;
+    dobFormatted: string | null;
+    ssn: string | null;
+  };
+  subscriber: {
+    firstName: string;
+    lastName: string;
+    fullName: string;
+    dobFormatted: string | null;
+  };
+  memberId: string | null;
+  provider: {
+    firstName: string;
+    lastName: string;
+    fullName: string;
+    npi: string | null;
+    billingNpi: string | null;
+    taxId: string | null;
+    specialty: string | null;
+  } | null;
+  office: {
+    name: string;
+    city: string;
+    state: string;
+  } | null;
+  payer: {
+    companyName: string;
+    groupName: string | null;
+    groupNumber: string | null;
+    planName: string | null;
+  } | null;
+}
+
 @Injectable()
 export class VerificationService {
   private readonly logger = new Logger(VerificationService.name);
@@ -371,6 +411,119 @@ export class VerificationService {
     const date = new Date(d);
     const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+  }
+
+  /**
+   * Pre-fetch the full identity context the TPA is likely to quiz us on at the start of the call
+   * (provider NPI / Tax ID, member ID, patient name + DOB, provider name, subscriber name + DOB).
+   * Called once when the Twilio Media Stream opens so EVA can answer each verification question
+   * immediately without an extra DB round-trip or extra LLM "thinking".
+   *
+   * Fields not in the schema today fall back to env vars:
+   *   - Member ID:          EVA_MEMBER_ID (or per-payer later)
+   *   - Provider Tax ID:    EVA_PROVIDER_TAX_ID
+   *   - Billing Provider NPI: EVA_BILLING_PROVIDER_NPI (falls back to rendering NPI)
+   * Subscriber defaults to the patient (common in dental) unless overridden via env.
+   */
+  async getPayeeCallContext(
+    payeeId: string,
+    appointmentId?: string | null,
+  ): Promise<PayeeCallContext | null> {
+    const payee = await this.prisma.payee.findUnique({
+      where: { id: payeeId },
+      include: {
+        payer: true,
+        appointments: {
+          orderBy: { date: 'desc' },
+          include: { provider: true, office: true },
+        },
+      },
+    });
+    if (!payee) return null;
+
+    // Pick the requested appointment if given, else the most recent one.
+    const appt =
+      (appointmentId?.trim() &&
+        payee.appointments.find((a) => a.id === appointmentId.trim())) ||
+      payee.appointments[0] ||
+      null;
+
+    const patientFullName = `${payee.firstName} ${payee.lastName}`.trim();
+    const patientDobFormatted = payee.dob
+      ? this.formatDobForSpeech(payee.dob)
+      : null;
+
+    const provider = appt?.provider
+      ? {
+          firstName: appt.provider.firstName,
+          lastName: appt.provider.lastName,
+          fullName:
+            `${appt.provider.firstName} ${appt.provider.lastName}`.trim(),
+          npi: appt.provider.npi ?? null,
+          billingNpi:
+            process.env.EVA_BILLING_PROVIDER_NPI?.trim() ||
+            appt.provider.npi ||
+            null,
+          taxId: process.env.EVA_PROVIDER_TAX_ID?.trim() || null,
+          specialty: appt.provider.specialty ?? null,
+        }
+      : null;
+
+    const office = appt?.office
+      ? {
+          name: appt.office.name,
+          city: appt.office.city,
+          state: appt.office.state,
+        }
+      : null;
+
+    const payer = payee.payer
+      ? {
+          companyName: payee.payer.companyName,
+          groupName: payee.payer.groupName ?? null,
+          groupNumber: payee.payer.groupNumber ?? null,
+          planName: payee.payer.planName ?? null,
+        }
+      : null;
+
+    // Subscriber defaults to the patient; override via env if the practice has a different policyholder.
+    const subscriberFirstName =
+      process.env.EVA_SUBSCRIBER_FIRST_NAME?.trim() || payee.firstName;
+    const subscriberLastName =
+      process.env.EVA_SUBSCRIBER_LAST_NAME?.trim() || payee.lastName;
+    const subscriberDobRaw = process.env.EVA_SUBSCRIBER_DOB?.trim();
+    const subscriberDob = subscriberDobRaw
+      ? this.tryFormatDateString(subscriberDobRaw)
+      : patientDobFormatted;
+
+    return {
+      patient: {
+        firstName: payee.firstName,
+        lastName: payee.lastName,
+        fullName: patientFullName,
+        dob: payee.dob,
+        dobFormatted: patientDobFormatted,
+        ssn: payee.ssn ?? null,
+      },
+      subscriber: {
+        firstName: subscriberFirstName,
+        lastName: subscriberLastName,
+        fullName: `${subscriberFirstName} ${subscriberLastName}`.trim(),
+        dobFormatted: subscriberDob,
+      },
+      memberId: process.env.EVA_MEMBER_ID?.trim() || null,
+      provider,
+      office,
+      payer,
+    };
+  }
+
+  /** Accept common date inputs ("1985-03-15", "03/15/1985") and return speech-friendly text. */
+  private tryFormatDateString(raw: string): string | null {
+    if (!raw) return null;
+    const d = new Date(raw);
+    if (!Number.isFinite(d.getTime())) return null;
+    return this.formatDobForSpeech(d);
   }
 
   /**

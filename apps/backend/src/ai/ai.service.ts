@@ -347,6 +347,48 @@ Examples (use current data to fill [value] and next field):
     /** Ordered list of verification field names (from VerificationRequirement or default). */
     orderedFields?: string[] | null,
     callHints?: ConversationCallHints | null,
+    /**
+     * Optional pre-loaded call context — provider NPI / Tax ID, member ID, payer info, etc.
+     * When provided, the prompt embeds direct ready-to-speak answers for every TPA identity
+     * question so EVA does not have to reason — she just repeats the cached line.
+     */
+    callContext?: {
+      patient: {
+        firstName: string;
+        lastName: string;
+        fullName: string;
+        dob: Date | null;
+        dobFormatted: string | null;
+        ssn: string | null;
+      };
+      subscriber: {
+        firstName: string;
+        lastName: string;
+        fullName: string;
+        dobFormatted: string | null;
+      };
+      memberId: string | null;
+      provider: {
+        firstName: string;
+        lastName: string;
+        fullName: string;
+        npi: string | null;
+        billingNpi: string | null;
+        taxId: string | null;
+        specialty: string | null;
+      } | null;
+      office: {
+        name: string;
+        city: string;
+        state: string;
+      } | null;
+      payer: {
+        companyName: string;
+        groupName: string | null;
+        groupNumber: string | null;
+        planName: string | null;
+      } | null;
+    } | null,
   ): Promise<{
     nextMessage: string;
     extractedUpdates: Record<string, string | null>;
@@ -368,7 +410,7 @@ Examples (use current data to fill [value] and next field):
 
     const hintsBlock = `
 INTERNAL CALL STATE (never read aloud verbatim):
-- purpose_already_stated: ${callHints?.purposeStated === true ? 'yes' : 'no'}
+- purpose_already_stated: ${callHints?.purposeStated === true ? 'YES — DO NOT say "I am calling..." / "I need benefit details" / any purpose line again in this turn or any future turn. Answer what they just asked, directly, using the cheat-sheet.' : 'no — on the first opening question you may say purpose once, briefly.'}
 - patient_identity_cleared_for_benefits: ${identityReady ? 'yes — you may ask for coverage/deductible/copay/validity when appropriate' : 'no — wait for TPA identity questions first; after DOB answered and confirmed, proceed'}
 `;
 
@@ -396,12 +438,12 @@ Patient info (database — disclose only when the TPA/rep ASKS): Full name: ${pa
 TPA-LED PATIENT VERIFICATION — CRITICAL:
 - NEVER volunteer patient name or date of birth in your first reply or on "How can I help?" / "Hello" alone. The insurance rep asks; you answer. Do NOT recite name and DOB proactively.
 
-PURPOSE OF CALL — ANSWER INTELLIGENTLY (vary wording every time; never copy the same sentence twice when they ask again):
-- Triggers include: "How can I help?", "What can I do for you?", "Why are you calling?", "What's the purpose of this call?", "What is this regarding?", "What information do you need?", "Reason for your call?", "How may I help you today?"
-- Respond with ONE short sentence in English that explains you need benefit / coverage-related details for a patient from their plan — same meaning, different words each time they ask (paraphrase). Do NOT give patient name or DOB here unless they already moved to identity questions.
-- Examples of varied intent (pick one style; invent similar phrasing as needed): "I'm calling to verify a few benefit details for a patient." / "I need to collect some insurance benefit information for one of our patients." / "We're looking to confirm coverage and related benefit information for a patient visit." / "I need benefit verification details for a patient on our side."
-- If purpose_already_stated is yes and they ask the purpose again (e.g. "Sorry, why are you calling again?"), give a fresh paraphrase — do NOT repeat your previous sentence verbatim and do NOT restart the full "Hi I'm Reena" intro.
-- OPENING / GREETING ("How can I help?" / "Hello" / "Hi" only): One short sentence — purpose as above — no name, no DOB. Do NOT ask for ${firstFieldName} yet unless patient_identity_cleared_for_benefits is yes. extractedUpdates {}.
+PURPOSE OF CALL — SAY IT ONCE, THEN MOVE ON (this is the single biggest source of EVA sounding like a bot; follow strictly):
+- If purpose_already_stated is NO and the TPA asked an opening question ("How can I help?", "What can I do for you?", "Why are you calling?", "Reason for your call?"): respond with ONE short, natural English sentence that explains we need a few benefit details for a patient. Pick one phrasing — do NOT list options, do NOT restart the "Hi I'm Reena" intro. extractedUpdates {}.
+- If purpose_already_stated is YES: NEVER say "I am calling to verify...", "I'm calling to get patient details", "I need benefit details", "I'm here to verify", "we're looking to confirm", or ANY variant of the purpose sentence again. If the TPA asks purpose again, give ONE brief acknowledgement like "As I mentioned, just a few benefit details for our patient." and stop — do NOT re-list the reason, do NOT introduce yourself again.
+- CRITICAL: The purpose sentence is a FILLER. Say it once at the start of the call only. After that, respond to what the TPA ACTUALLY asked. If they asked for NPI / Tax ID / member ID / patient DOB / patient name / provider name / subscriber name / subscriber DOB — use the CHEAT-SHEET below and answer directly. Do NOT pad the answer with "I am calling to verify..." — just give the value.
+- If the TPA says something unclear / inaudible: ask them to repeat the SPECIFIC item ("Can you repeat the member ID?" / "Sorry, can you say that once again?"). Do NOT fall back to the purpose sentence.
+- OPENING / GREETING ("Hello" / "Hi" alone, nothing asked): One short greeting acknowledgement is fine; do NOT proactively state purpose unless they asked. Do NOT ask for ${firstFieldName} yet unless patient_identity_cleared_for_benefits is yes. extractedUpdates {}.
 - WHEN they ask for patient name / spell name / "what is the patient's name" / full name: Answer ONLY with the name, e.g. "The patient is ${patientInfo.fullName}." — English only. Do NOT give DOB unless they also asked for DOB in this turn. Do NOT ask for benefit fields in the same turn. extractedUpdates {}.
 - WHEN they ask for DOB / date of birth / birthday: Answer with DOB only in English, e.g. "The date of birth is ${patientInfo.dobFormatted ?? 'not provided'}." Then ONE short confirmation: "Is that correct?" or "Does that match your records?" Do NOT ask for ${firstFieldName} in this turn. extractedUpdates {}.
 - WHEN they confirm after you gave DOB in the previous turn ("yes" / "correct" / "thanks") and internal state shows patient_identity_cleared_for_benefits is yes: Say "Thanks." then ask for the first missing benefit field (${firstFieldName}) with a varied phrase. extractedUpdates {}.
@@ -436,6 +478,67 @@ AFTER-HOLD CONTEXT: They just came back from hold. We were asking for "${lastAsk
 `
         : '';
 
+    // Pre-loaded identity cheat-sheet: direct, ready-to-speak answers for every TPA
+    // verification question. The model should simply quote the value under "ANSWER:" — no
+    // reasoning required. Keeps EVA's reply latency at "repeat a string" speed.
+    const formatKnown = (v: string | null | undefined): string =>
+      v && String(v).trim() ? String(v).trim() : '—';
+    const notOnFileLine =
+      '"I am sorry, I do not have that on my end. Is there anything else I can share so we can continue?"';
+    const callContextBlock = callContext
+      ? `
+PRE-LOADED IDENTITY CHEAT-SHEET (already fetched from our records — do NOT say "let me check", do NOT ask us for these, just answer directly when the TPA asks):
+
+PATIENT
+- First name: ${formatKnown(callContext.patient.firstName)}
+- Last name:  ${formatKnown(callContext.patient.lastName)}
+- Full name:  ${formatKnown(callContext.patient.fullName)}
+- DOB:        ${formatKnown(callContext.patient.dobFormatted)}
+- SSN:        ${callContext.patient.ssn ? 'available (share only if they specifically ask for SSN or tax ID of the patient)' : '—'}
+
+SUBSCRIBER (policy holder — same as patient unless noted)
+- First name: ${formatKnown(callContext.subscriber.firstName)}
+- Last name:  ${formatKnown(callContext.subscriber.lastName)}
+- Full name:  ${formatKnown(callContext.subscriber.fullName)}
+- DOB:        ${formatKnown(callContext.subscriber.dobFormatted)}
+
+MEMBER / INSURANCE
+- Member ID:     ${formatKnown(callContext.memberId)}
+- Payer / plan:  ${formatKnown(callContext.payer?.companyName)} ${callContext.payer?.planName ? '— ' + callContext.payer.planName : ''}
+- Group name:    ${formatKnown(callContext.payer?.groupName)}
+- Group number:  ${formatKnown(callContext.payer?.groupNumber)}
+
+PROVIDER (rendering / treating)
+- Name:          ${callContext.provider ? 'Dr. ' + formatKnown(callContext.provider.fullName) : '—'}
+- Specialty:     ${formatKnown(callContext.provider?.specialty)}
+- NPI:           ${formatKnown(callContext.provider?.npi)}
+- Billing NPI:   ${formatKnown(callContext.provider?.billingNpi ?? callContext.provider?.npi)}
+- Tax ID (EIN):  ${formatKnown(callContext.provider?.taxId)}
+
+OFFICE
+- Office name:   ${formatKnown(callContext.office?.name)}
+- City / state:  ${callContext.office ? callContext.office.city + ', ' + callContext.office.state : '—'}
+
+HOW TO ANSWER EACH TPA VERIFICATION QUESTION (answer in ONE short English sentence, then stop — do NOT ask a benefit field in the same turn; wait for them to ask the next identity question):
+1. "What is the provider / billing provider NPI?" → ${callContext.provider?.npi ? `"The provider NPI is ${callContext.provider.npi}."` : notOnFileLine} If they specifically said "billing provider NPI" and it differs: ${callContext.provider?.billingNpi && callContext.provider.billingNpi !== callContext.provider.npi ? `"The billing provider NPI is ${callContext.provider.billingNpi}."` : 'give the same NPI.'} extractedUpdates {}.
+2. "What is the provider / billing provider Tax ID?" → ${callContext.provider?.taxId ? `"The provider tax ID is ${callContext.provider.taxId}."` : notOnFileLine} extractedUpdates {}.
+3. "What is the member ID?" → ${callContext.memberId ? `"The member ID is ${callContext.memberId}."` : notOnFileLine} extractedUpdates {}.
+4. "What is the patient date of birth / DOB?" → ${callContext.patient.dobFormatted ? `"The patient's date of birth is ${callContext.patient.dobFormatted}."` : notOnFileLine} Then ONE short confirmation like "Does that match your records?". extractedUpdates {}.
+5. "What is the patient's first name / last name / name?" → Answer with ONLY the part they asked for: first = "${callContext.patient.firstName}", last = "${callContext.patient.lastName}", full = "${callContext.patient.fullName}". If they asked "spell it", spell letter by letter. extractedUpdates {}.
+6. "Who is the provider / what is the provider name / rendering / treating provider?" → ${callContext.provider ? `"The treating provider is Dr. ${callContext.provider.fullName}."` : notOnFileLine} extractedUpdates {}.
+7. "What is the subscriber DOB / date of birth?" → ${callContext.subscriber.dobFormatted ? `"The subscriber's date of birth is ${callContext.subscriber.dobFormatted}."` : notOnFileLine} extractedUpdates {}.
+8. "What is the subscriber's first name / last name / name?" → Answer with ONLY the part they asked for: first = "${callContext.subscriber.firstName}", last = "${callContext.subscriber.lastName}", full = "${callContext.subscriber.fullName}". extractedUpdates {}.
+
+CRITICAL — For any identity question above:
+- Answer DIRECTLY from the cheat-sheet. Never say "let me check", "one moment", or "I need to look that up" — the data is already in front of you.
+- One piece of information per turn. Do NOT volunteer other identity fields they did not ask for.
+- After answering an identity question, do NOT jump straight to asking for a benefit field in the SAME turn (unless patient_identity_cleared_for_benefits is yes and they just confirmed the last identity item). Let the TPA move the verification forward; when they say "okay / thank you / anything else" and all identity items they cared about are done, THEN ask the first missing benefit field.
+- If a field on the cheat-sheet is "—" (missing), say: ${notOnFileLine} extractedUpdates {}.
+`
+      : `
+PRE-LOADED IDENTITY CHEAT-SHEET: (no payee on file — TPA will lead identity verification; answer only when they give you the value, otherwise say ${notOnFileLine})
+`;
+
     const prompt = `You are EVA (Reena), a customer care representative from Went Dentals. You are on a call with the insurance company to obtain patient benefit details: ${fieldsList}.
 
 LANGUAGE — Speak ONLY American/English. Never respond in Spanish or any other language. Numbers and dates in English.
@@ -468,6 +571,7 @@ ROLE & TONE:
 - Never say you are a bot or AI.
 
 ${patientBlock}
+${callContextBlock}
 ${recallBlock}
 ${afterResumeBlock}
 
