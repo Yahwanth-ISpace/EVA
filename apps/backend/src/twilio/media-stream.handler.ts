@@ -1204,7 +1204,14 @@ export class MediaStreamHandlerService {
           (userSaid.length <= 2 &&
             !/^(hi|hey|yes|no|yeah|ok)$/i.test(userSaid.trim())) ||
           (fillerOnly && userSaid.length <= 4);
+        // Any transcript that is ONLY a bracketed / parenthesised audio-event marker
+        // (e.g. "[phone ringing]", "[clicking]", "[click]", "(background noise)") is NOT
+        // a real TPA utterance — STT hallucinated it from room noise. Treat as silence.
+        const bracketedNonSpeech =
+          /^\[[^\]]{1,40}\]\s*\.?\s*$/.test(userSaid.trim()) ||
+          /^\([^)]{1,40}\)\s*\.?\s*$/.test(userSaid.trim());
         const inaudibleLike =
+          bracketedNonSpeech ||
           /^\[?inaudible\]?\.?$/i.test(userSaid) ||
           /^\.{2,}$/.test(userSaid) ||
           /^[\s\.\-]+$/.test(userSaid);
@@ -1213,7 +1220,11 @@ export class MediaStreamHandlerService {
           (noiseOrTooShort && !looksLikeRealResponse(userSaid)) ||
           inaudibleLike;
         // When transcript is empty but we had very little audio, skip saying "repeat" to avoid cutting off the user (next chunk may have speech).
+        // Also: when the transcript is ONLY a bracketed non-speech marker, silently skip — do
+        // NOT re-ask the current field. Re-asking on every "[phone ringing]" is what made EVA
+        // sound like she was interrupting / talking over the TPA.
         const skipRepeatForShortAudio =
+          bracketedNonSpeech ||
           (userSaid.length === 0 &&
             combined.length < MIN_BYTES_BEFORE_REPEAT) ||
           (isIdleOrEmpty && combined.length < 24_000);

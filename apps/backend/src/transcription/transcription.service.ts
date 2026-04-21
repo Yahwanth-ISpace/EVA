@@ -25,19 +25,34 @@ function isNonEnglish(text: string): boolean {
 /**
  * Common STT hallucinations when audio is silence, noise, or unclear. Return empty instead of passing these to the AI.
  * Does NOT filter plain "Thank you" / "Thanks" here (media-stream handler treats thank-you-only + long audio as hallucination).
+ *
+ * IMPORTANT: ANY transcript that is only a bracketed audio-event marker is a hallucination.
+ * Examples: "[phone ringing]", "[phone beeping]", "[click]", "[clicking]", "[static]",
+ * "[music]", "[background music]", "[typing]", "[beep]". These should NEVER reach the AI
+ * — otherwise EVA replies to phantom speech and starts re-asking fields unnecessarily.
  */
 function isLikelyHallucination(text: string): boolean {
   const t = text.trim();
   if (!t.length) return false;
+  // Catch-all: the ENTIRE transcript is a single bracketed annotation like "[phone ringing]".
+  if (/^\[[^\]]{1,40}\]\s*\.?\s*$/.test(t)) return true;
+  // Also catch parenthesized variants some STT engines emit: "(phone ringing)".
+  if (/^\([^)]{1,40}\)\s*\.?\s*$/.test(t)) return true;
   const hallucinationPatterns = [
     /^thank\s+you\s+very\s+much\.?$/i,
     /^thanks\s+very\s+much\.?$/i,
     /^thank\s+you\s+so\s+much\.?$/i,
     /^\[?\s*phone\s+hanging\s+up\s*\]?\.?$/i,
+    /^\[?\s*phone\s+(ringing|beeping|buzzing)\s*\]?\.?$/i,
+    /^\[?\s*(click|clicking|clicks)\s*\]?\.?$/i,
+    /^\[?\s*(typing|keyboard)\s*\]?\.?$/i,
+    /^\[?\s*(static|beep|beeping|tone)\s*\]?\.?$/i,
+    /^\[?\s*(music|background\s+music|hold\s+music)\s*\]?\.?$/i,
     /^\[?\s*pause\s*\]?\.?$/i,
     /^\[?\s*silence\s*\]?\.?$/i,
     /^\[?\s*inaudible\s*\]?\.?$/i,
     /^\[?\s*background\s+noise\s*\]?\.?$/i,
+    /^\[?\s*(noise|ambient\s+noise)\s*\]?\.?$/i,
     /^\.{2,}$/,
   ];
   return hallucinationPatterns.some((re) => re.test(t));
