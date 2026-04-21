@@ -30,20 +30,20 @@ import {
 } from '../audio-emotion/audio-emotion.service';
 import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
 
-/** Minimum speech bytes before we consider processing (~1 sec at 8kHz mulaw). Ensures we have a real utterance, not a brief noise. */
-const MIN_SPEECH_BYTES = 8_000;
-/** Tail bytes to check for silence (~0.75 sec). Wait for a clear pause so user has finished speaking before we respond. */
-const SILENCE_TAIL_BYTES = 6_000;
+/** Minimum speech bytes before we consider processing (~0.6 sec at 8kHz mulaw). Low enough to feel snappy but still rejects noise blips. */
+const MIN_SPEECH_BYTES = 4_800;
+/** Tail bytes to check for silence (~0.35 sec). Short enough that EVA replies almost immediately after the user finishes. */
+const SILENCE_TAIL_BYTES = 2_800;
 /** When transcript is empty, only say "please repeat" if we had at least this much audio (~4 sec). Otherwise skip speaking to avoid cutting off the user. */
 const MIN_BYTES_BEFORE_REPEAT = 32_000;
-/** Fraction of tail bytes that must be "silent" to trigger end-of-speech (0–1). Stricter so we don't process on brief mid-sentence pauses. */
-const SILENCE_RATIO_THRESHOLD = 0.88;
+/** Fraction of tail bytes that must be "silent" to trigger end-of-speech (0–1). 0.78 balances fast turn-end vs. not cutting on brief mid-sentence breaths. */
+const SILENCE_RATIO_THRESHOLD = 0.78;
 /** Max buffer before we process anyway (~10 sec). Long monologues get processed so we don't wait forever. */
 const MAX_BUFFER_BYTES = 80_000;
-/** Fallback: process at most every N ms when silence not detected. Kept high (5.5s) so we don't interrupt the user mid-sentence; prefer silence-based turn end. */
-const FALLBACK_PROCESS_INTERVAL_MS = 5_500;
-/** Minimum ms to wait after EVA speaks before we process user audio (avoid capturing EVA's voice and instant double-response). */
-const ANSWER_WINDOW_MS = 2_200;
+/** Fallback: process at most every N ms when silence not detected. Tightened (2.5s) so an un-detected end-of-turn is caught quickly rather than waiting 5.5s. */
+const FALLBACK_PROCESS_INTERVAL_MS = 2_500;
+/** Minimum ms to wait after EVA speaks before we process user audio (avoid capturing EVA's voice and instant double-response). Kept short so barge-in feels natural. */
+const ANSWER_WINDOW_MS = 900;
 /** Max time allowed on hold before ending the call (9 minutes) */
 const HOLD_MAX_MS = 9 * 60 * 1000;
 /** Chunk size to send back to Twilio (20ms = 160 bytes at 8kHz mulaw). Smaller chunks = playback starts faster. */
@@ -59,9 +59,17 @@ const IVR_BYPASS_FALLBACK_MS = 2500;
 /** IVR bypass: minimum audio bytes before running STT (~0.5 s). */
 const IVR_BYPASS_MIN_BYTES = 4_000;
 
-/** Mulaw: 0xFF and 0x7F are typical silence; treat nearby as silent too */
+/** Mulaw: 0xFF (positive silence) and 0x7F (negative silence) are the two silence poles; treat nearby codes as silent too so we detect end-of-speech reliably. */
 function isSilentByte(b: number): boolean {
-  return b === 0xff || b === 0x7f || Math.abs(b - 0xff) <= 2;
+  // Positive-silence neighborhood (0xFD..0xFF) and negative-silence neighborhood (0x7D..0x7F, 0xFE).
+  return (
+    b === 0xff ||
+    b === 0xfe ||
+    b === 0xfd ||
+    b === 0x7f ||
+    b === 0x7e ||
+    b === 0x7d
+  );
 }
 
 /** Check if the last SILENCE_TAIL_BYTES of buffer are mostly silence */
@@ -73,6 +81,14 @@ function isSilenceAtEnd(buffer: Buffer): boolean {
     if (isSilentByte(tail[i])) silent++;
   }
   return silent / tail.length >= SILENCE_RATIO_THRESHOLD;
+}
+
+/** Collapse whitespace and cap length for log lines. */
+function truncateForLogLine(s: string, maxLen: number): string {
+  const t = s.replace(/\s+/g, ' ').trim();
+  if (!t.length) return '';
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, Math.max(0, maxLen - 1))}…`;
 }
 
 /** First thing EVA says: natural, human intro. Do not ask for any field — wait for the user to respond. */
@@ -410,67 +426,39 @@ interface StreamState {
   openingGreetingPlayed: boolean;
 }
 
-/**
- * High-level phase for structured `[CallFlow]` logs.
- * `patient_verification` = no benefit fields collected yet (name/DOB verification window).
- */
-function getConversationPhaseForLog(state: StreamState): string {
-  if (state.callEnded) return 'call_ended';
-  if (state.onHold) return 'hold';
-  if (state.postGoodbyeUntil != null) return 'post_goodbye';
-  const orderedF = state.orderedFields.length
-    ? state.orderedFields
-    : ['coverage', 'deductible', 'copay', 'validity'];
-  const anyBenefit = orderedF.some(
-    (f) =>
-      state.extractedData[f] != null && String(state.extractedData[f]).trim(),
-  );
-  if (!anyBenefit) return 'patient_verification';
-  const allDone = orderedF.every(
-    (f) =>
-      state.extractedData[f] != null && String(state.extractedData[f]).trim(),
-  );
-  if (allDone) return 'all_benefits_collected';
-  return 'benefit_collection';
-}
-
-/** True when the rep/TPA utterance asks for patient name and/or DOB (for emphasis logs). */
-function detectTpaPatientIdentityAsk(userSaid: string): boolean {
-  const t = userSaid.trim().toLowerCase();
-  if (t.length < 4) return false;
-  const asksIdentity =
-    /\b(date of birth|d\.?o\.?b\.?|birth\s*date|birthday|patient'?s?\s+dob)\b/i.test(
-      t,
-    ) ||
-    /\b(patient'?s?\s+name|name\s+of\s+(the\s+)?patient|what\s+is\s+(the\s+)?(patient'?s?\s+)?full\s+name|spell\s+(the\s+)?name|verify\s+(the\s+)?patient)\b/i.test(
-      t,
-    );
-  const questionCue =
-    /\b(what|give|provide|confirm|verify|spell|may\s+i|can\s+i|could\s+i|need|have)\b/i.test(
-      t,
-    );
-  return asksIdentity && (questionCue || t.includes('?'));
-}
-
 @Injectable()
 export class MediaStreamHandlerService {
   private readonly logger = new Logger(MediaStreamHandlerService.name);
 
-  /** Structured per-call timeline log (phase + step + optional ms since turn start). */
-  private logCallFlow(
+  /**
+   * One line per turn: prep (until STT starts) → STT → LLM → TTS wall times, plus TPA and EVA text.
+   * llmMs null = LLM not called (repeat / recall / skip / inaudible / validation-only, etc.).
+   */
+  private logCallTurn(
     callSid: string | null,
-    phase: string,
-    step: string,
-    detail?: string,
-    msFromTurnStart?: number,
+    p: {
+      prepMs: number;
+      sttMs: number;
+      llmMs: number | null;
+      ttsMs: number;
+      totalMs: number;
+      tpa: string;
+      eva: string;
+      note?: string;
+    },
   ): void {
     const sid = callSid ?? 'unknown';
-    const timing =
-      msFromTurnStart !== undefined ? ` | +${msFromTurnStart}ms` : '';
-    const tail = detail ? ` | ${detail}` : '';
+    const llmStr = p.llmMs === null ? '—' : `${p.llmMs}ms`;
+    const tpa = truncateForLogLine(p.tpa, 400) || '—';
+    const eva = truncateForLogLine(p.eva, 400) || '—';
+    const note = p.note ? ` ${p.note}` : '';
     this.logger.log(
-      `[CallFlow] sid=${sid} | phase=${phase} | step=${step}${timing}${tail}`,
+      `[CallTurn] sid=${sid} prep=${p.prepMs}ms stt=${p.sttMs}ms llm=${llmStr} tts=${p.ttsMs}ms total=${p.totalMs}ms | TPA="${tpa}" | EVA="${eva}"${note}`,
     );
+  }
+
+  private logCallEvent(callSid: string | null, message: string): void {
+    this.logger.log(`[Call] sid=${callSid ?? 'unknown'} ${message}`);
   }
 
   constructor(
@@ -549,50 +537,27 @@ export class MediaStreamHandlerService {
       }
     };
 
-    const speak = async (text: string, ttsLabel?: string) => {
-      if (!text?.trim()) return;
-      const phase = getConversationPhaseForLog(state);
+    /** Returns TTS playback duration in ms (0 if empty or failed). */
+    const speak = async (text: string, _ttsLabel?: string): Promise<number> => {
+      if (!text?.trim()) return 0;
       const ttsStart = Date.now();
-      const preview =
-        text.length > 120 ? `${text.slice(0, 117)}…` : text.replace(/\s+/g, ' ');
-      this.logCallFlow(
-        state.callSid,
-        phase,
-        'tts_speak_start',
-        `chars=${text.length}${ttsLabel ? ` label=${ttsLabel}` : ''} text="${preview}"`,
-        undefined,
-      );
       try {
-        // Prefer streaming TTS so playback starts as soon as first chunks arrive (faster response)
         try {
           for await (const mulawChunk of this.elevenLabsAudioStack.synthesizeStream(
             text,
           )) {
             if (mulawChunk?.length) await playAudio(mulawChunk);
           }
-        } catch (streamErr: any) {
+        } catch {
           const mulawAudio = await this.elevenLabsAudioStack.synthesize(text);
           if (mulawAudio?.length) await playAudio(mulawAudio);
         }
         state.lastSpeakTime = Date.now();
-        // Clear inbound buffer so the next process only uses audio *after* EVA finished (avoids one-turn delay and EVA repeating)
         state.buffer = [];
-        this.logCallFlow(
-          state.callSid,
-          phase,
-          'tts_speak_complete',
-          `${ttsLabel ? `label=${ttsLabel} ` : ''}playback_ms=${Date.now() - ttsStart}`,
-          undefined,
-        );
+        return Date.now() - ttsStart;
       } catch (e) {
         this.logger.warn('[MediaStream] TTS failed', (e as Error)?.message);
-        this.logCallFlow(
-          state.callSid,
-          phase,
-          'tts_speak_failed',
-          (e as Error)?.message ?? 'unknown',
-          undefined,
-        );
+        return 0;
       }
     };
 
@@ -689,14 +654,6 @@ export class MediaStreamHandlerService {
         isSilenceAtEnd(combined) || combined.length >= MAX_BUFFER_BYTES;
 
       if (shouldProcess) {
-        const triggerReason =
-          combined.length >= MAX_BUFFER_BYTES ? 'max_buffer' : 'silence_tail';
-        this.logCallFlow(
-          state.callSid,
-          getConversationPhaseForLog(state),
-          'trigger_process_buffer',
-          `reason=${triggerReason} bytes=${combined.length}`,
-        );
         state.buffer = [];
         if (state.fallbackTimer) {
           clearInterval(state.fallbackTimer);
@@ -714,14 +671,9 @@ export class MediaStreamHandlerService {
       state.processing = true;
       const resumeCheckOnly = opts?.resumeCheckOnly === true;
       const turnStart = Date.now();
-      const phaseAtTurnStart = getConversationPhaseForLog(state);
-      this.logCallFlow(
-        state.callSid,
-        phaseAtTurnStart,
-        'process_buffer_enter',
-        `resumeCheckOnly=${resumeCheckOnly} audioBytes=${combined.length}`,
-        0,
-      );
+      let prepMs = 0;
+      let sttMs = 0;
+      let llmMs: number | null = null;
 
       const tmpDir = os.tmpdir();
       const rawPath = path.join(
@@ -738,69 +690,45 @@ export class MediaStreamHandlerService {
 
       try {
         fs.writeFileSync(rawPath, combined);
-        const wavConvertStart = Date.now();
         this.mulawRawToWav(rawPath, wavPath);
-        this.logCallFlow(
-          state.callSid,
-          getConversationPhaseForLog(state),
-          'ffmpeg_mulaw_to_wav',
-          `ms=${Date.now() - wavConvertStart}`,
-          Date.now() - turnStart,
-        );
 
         emotionPromise =
           state.mode === 'ivr-bypass'
             ? Promise.resolve(null)
             : this.audioEmotionService.classifyWav(wavPath).catch(() => null);
-        if (state.mode !== 'ivr-bypass') {
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'emotion_classification_dispatched',
-            `wav=${wavPath}`,
-            Date.now() - turnStart,
-          );
-        }
 
         let transcript: string;
+        let sttApiStart = turnStart;
         try {
-          const sttStart = Date.now();
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'stt_request_start',
-            resumeCheckOnly ? 'skipWhisperFallback=true' : 'full',
-            Date.now() - turnStart,
-          );
+          sttApiStart = Date.now();
+          prepMs = sttApiStart - turnStart;
           const result = await this.transcriptionService.transcribeAudio(
             wavPath,
             resumeCheckOnly ? { skipWhisperFallback: true } : undefined,
           );
           transcript = result?.transcript ?? '';
-          const sttMs = Date.now() - sttStart;
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'stt_request_complete',
-            `ms=${sttMs} transcriptChars=${(transcript ?? '').length}`,
-            Date.now() - turnStart,
-          );
+          sttMs = Date.now() - sttApiStart;
         } catch (transcribeErr: any) {
           this.logger.warn(
             '[MediaStream] Transcription failed',
             transcribeErr?.message,
           );
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'stt_request_failed',
-            transcribeErr?.message ?? 'unknown',
-            Date.now() - turnStart,
+          const repeat = getRepeatOnlyPrompt();
+          const ttsMs = await speak(repeat, 'repeat_after_stt_error').catch(
+            () => 0,
           );
           state.processing = false;
-          await speak(getRepeatOnlyPrompt(), 'repeat_after_stt_error').catch(
-            () => {},
-          );
+          const sttErrMs = Math.max(0, Date.now() - sttApiStart);
+          this.logCallTurn(state.callSid, {
+            prepMs,
+            sttMs: sttErrMs,
+            llmMs: null,
+            ttsMs,
+            totalMs: Date.now() - turnStart,
+            tpa: '',
+            eva: repeat,
+            note: '(STT failed)',
+          });
           return;
         }
         let userSaid = (transcript ?? '').trim();
@@ -811,24 +739,6 @@ export class MediaStreamHandlerService {
         if (thankYouOnly && combined.length >= MIN_BYTES_BEFORE_REPEAT) {
           userSaid = '';
         }
-
-        const phaseAfterStt = getConversationPhaseForLog(state);
-        if (userSaid && detectTpaPatientIdentityAsk(userSaid)) {
-          this.logCallFlow(
-            state.callSid,
-            phaseAfterStt,
-            'tpa_utterance_patient_name_or_dob_topic',
-            `"${userSaid.slice(0, 200)}${userSaid.length > 200 ? '…' : ''}"`,
-            Date.now() - turnStart,
-          );
-        }
-        this.logCallFlow(
-          state.callSid,
-          phaseAfterStt,
-          'user_transcript_final',
-          `chars=${userSaid.length} preview="${userSaid.slice(0, 120)}${userSaid.length > 120 ? '…' : ''}"`,
-          Date.now() - turnStart,
-        );
 
         // --- IVR bypass: listen for "customer agent" (or "press 4"), then send DTMF 4 so IVR runs option 4 (hold 10s, dial agent)
         if (state.mode === 'ivr-bypass') {
@@ -852,13 +762,16 @@ export class MediaStreamHandlerService {
             }
             state.ivrDigitSent = true;
             state.callEnded = true;
-            this.logCallFlow(
-              state.callSid,
-              'ivr_bypass',
-              'ivr_customer_agent_detected_redirect_dtmf',
-              userSaid.slice(0, 160),
-              Date.now() - turnStart,
-            );
+            this.logCallTurn(state.callSid, {
+              prepMs,
+              sttMs,
+              llmMs: null,
+              ttsMs: 0,
+              totalMs: Date.now() - turnStart,
+              tpa: userSaid,
+              eva: '—',
+              note: '(IVR redirect)',
+            });
           }
           state.processing = false;
           return;
@@ -873,13 +786,6 @@ export class MediaStreamHandlerService {
               );
             state.orderedFields = orderedFields;
             state.verificationRequirementId = requirementId;
-            this.logCallFlow(
-              state.callSid,
-              getConversationPhaseForLog(state),
-              'verification_requirement_loaded',
-              `fields=${orderedFields.join(',')} requirementId=${requirementId ?? 'none'}`,
-              Date.now() - turnStart,
-            );
           } catch (e: any) {
             this.logger.warn(
               '[MediaStream] Failed to load verification requirement, using default fields',
@@ -892,25 +798,11 @@ export class MediaStreamHandlerService {
               'validity',
             ];
             state.verificationRequirementId = null;
-            this.logCallFlow(
-              state.callSid,
-              getConversationPhaseForLog(state),
-              'verification_requirement_fallback_defaults',
-              e?.message ?? '',
-              Date.now() - turnStart,
-            );
           }
         }
 
         // --- Hold / resume handling ---
         if (state.onHold) {
-          this.logCallFlow(
-            state.callSid,
-            'hold',
-            'hold_branch_enter',
-            `userChars=${userSaid.length}`,
-            Date.now() - turnStart,
-          );
           const matchedResume = userSaid.length > 0 && isResumePhrase(userSaid);
           if (matchedResume) {
             state.onHold = false;
@@ -927,21 +819,25 @@ export class MediaStreamHandlerService {
               state.conversationTranscript.push('User: ' + userSaid.trim());
             state.conversationTranscript.push('EVA: ' + EVA_RESUME_ACK);
             state.buffer = []; // clear so next processing uses only fresh audio after ack (avoids "couldn't catch" from hold-music/stale audio)
-            this.logCallFlow(
-              state.callSid,
-              'hold',
-              'hold_resume_detected',
-              userSaid.slice(0, 120),
-              Date.now() - turnStart,
-            );
+            let ttsMsResume = 0;
             try {
-              await speak(EVA_RESUME_ACK, 'hold_resume_ack');
+              ttsMsResume = await speak(EVA_RESUME_ACK, 'hold_resume_ack');
             } catch (e) {
               this.logger.warn(
                 '[MediaStream] Resume ack TTS failed',
                 (e as Error)?.message,
               );
             }
+            this.logCallTurn(state.callSid, {
+              prepMs,
+              sttMs,
+              llmMs: null,
+              ttsMs: ttsMsResume,
+              totalMs: Date.now() - turnStart,
+              tpa: userSaid,
+              eva: EVA_RESUME_ACK,
+              note: '(hold resume)',
+            });
             state.processing = false;
             startFallbackTimer();
             return;
@@ -991,13 +887,6 @@ export class MediaStreamHandlerService {
         }
 
         if (!state.onHold && userSaid.length > 0 && isHoldPhrase(userSaid)) {
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'hold_started_by_user',
-            userSaid.slice(0, 120),
-            Date.now() - turnStart,
-          );
           state.onHold = true;
           state.holdStartedAt = Date.now();
           if (state.fallbackTimer) {
@@ -1055,20 +944,23 @@ export class MediaStreamHandlerService {
           if (userSaid?.trim())
             state.conversationTranscript.push('User: ' + userSaid.trim());
           state.conversationTranscript.push('EVA: ' + EVA_HOLD_ACK);
-          await speak(EVA_HOLD_ACK, 'hold_ack');
+          const ttsMsHold = await speak(EVA_HOLD_ACK, 'hold_ack');
+          this.logCallTurn(state.callSid, {
+            prepMs,
+            sttMs,
+            llmMs: null,
+            ttsMs: ttsMsHold,
+            totalMs: Date.now() - turnStart,
+            tpa: userSaid,
+            eva: EVA_HOLD_ACK,
+            note: '(hold)',
+          });
           state.processing = false;
           return;
         }
 
         // --- Post-goodbye: we already said closing; if user says anything, say a brief closing and end — never repeat intro or ask "Are we clear?" ---
         if (state.postGoodbyeUntil != null) {
-          this.logCallFlow(
-            state.callSid,
-            'post_goodbye',
-            'post_goodbye_branch_enter',
-            `userChars=${userSaid.length}`,
-            Date.now() - turnStart,
-          );
           if (state.postGoodbyeTimeoutId) {
             clearTimeout(state.postGoodbyeTimeoutId);
             state.postGoodbyeTimeoutId = null;
@@ -1096,7 +988,20 @@ export class MediaStreamHandlerService {
             state.conversationTranscript.push('User: ' + userSaid.trim());
           const postGoodbyeClosing = 'You are most welcome. Have a great day.';
           state.conversationTranscript.push('EVA: ' + postGoodbyeClosing);
-          await speak(postGoodbyeClosing, 'post_goodbye_closing_line');
+          const ttsMsPg = await speak(
+            postGoodbyeClosing,
+            'post_goodbye_closing_line',
+          );
+          this.logCallTurn(state.callSid, {
+            prepMs,
+            sttMs,
+            llmMs: null,
+            ttsMs: ttsMsPg,
+            totalMs: Date.now() - turnStart,
+            tpa: userSaid,
+            eva: postGoodbyeClosing,
+            note: '(post-goodbye)',
+          });
           doPostGoodbyeHangUp();
           state.processing = false;
           return;
@@ -1146,13 +1051,16 @@ export class MediaStreamHandlerService {
 
         if (skipRepeatForShortAudio) {
           state.consecutiveNoiseOrEmptyTurns += 1;
-          this.logCallFlow(
-            state.callSid,
-            phaseAfterStt,
-            'skip_repeat_short_audio',
-            `audioBytes=${combined.length} noiseStreak=${state.consecutiveNoiseOrEmptyTurns}`,
-            Date.now() - turnStart,
-          );
+          this.logCallTurn(state.callSid, {
+            prepMs,
+            sttMs,
+            llmMs: null,
+            ttsMs: 0,
+            totalMs: Date.now() - turnStart,
+            tpa: userSaid,
+            eva: '—',
+            note: '(skipped: short audio / no EVA reply)',
+          });
           state.processing = false;
           return;
         }
@@ -1168,17 +1076,18 @@ export class MediaStreamHandlerService {
           )
             state.conversationTranscript.push('User: ' + userSaid);
           state.conversationTranscript.push('EVA: ' + reaskSame);
-          this.logCallFlow(
-            state.callSid,
-            phaseAfterStt,
-            'path_inaudible_repeat_no_llm',
-            state.lastAskedField
-              ? `lastAskedField=${state.lastAskedField}`
-              : 'no_last_field',
-            Date.now() - turnStart,
-          );
           state.consecutiveNoiseOrEmptyTurns += 1;
-          await speak(reaskSame, 'repeat_inaudible');
+          const ttsMsInaud = await speak(reaskSame, 'repeat_inaudible');
+          this.logCallTurn(state.callSid, {
+            prepMs,
+            sttMs,
+            llmMs: null,
+            ttsMs: ttsMsInaud,
+            totalMs: Date.now() - turnStart,
+            tpa: effectiveTranscript,
+            eva: reaskSame,
+            note: '(inaudible / no LLM)',
+          });
           state.processing = false;
           startFallbackTimer();
           return;
@@ -1200,17 +1109,21 @@ export class MediaStreamHandlerService {
           state.consecutiveNoiseOrEmptyTurns >=
           MAX_NOISE_TURNS_BEFORE_ABORT_CALL
         ) {
-          this.logCallFlow(
-            state.callSid,
-            phaseAfterStt,
-            'abort_call_noise_limit',
-            `noiseStreak=${state.consecutiveNoiseOrEmptyTurns}`,
-            Date.now() - turnStart,
+          const abortMsg =
+            'I am sorry, I am having trouble hearing you clearly. I will disconnect so you can try again.';
+          const ttsMsAbort = await speak(abortMsg, 'abort_noise_limit').catch(
+            () => 0,
           );
-          await speak(
-            'I am sorry, I am having trouble hearing you clearly. I will disconnect so you can try again.',
-            'abort_noise_limit',
-          ).catch(() => {});
+          this.logCallTurn(state.callSid, {
+            prepMs,
+            sttMs,
+            llmMs: null,
+            ttsMs: ttsMsAbort,
+            totalMs: Date.now() - turnStart,
+            tpa: userSaid,
+            eva: abortMsg,
+            note: '(abort: noise limit)',
+          });
           state.callEnded = true;
           state.processing = false;
           const sidAbort = state.callSid;
@@ -1240,13 +1153,6 @@ export class MediaStreamHandlerService {
         ) {
           state.patientIdentityReadyForBenefits = true;
           state.evaAwaitingYesAfterDob = false;
-          this.logCallFlow(
-            state.callSid,
-            'patient_verification',
-            'patient_identity_ready_for_benefits',
-            'rep_confirmed_after_dob',
-            Date.now() - turnStart,
-          );
         }
 
         const recallReply = getRecallReply(
@@ -1257,22 +1163,6 @@ export class MediaStreamHandlerService {
         let nextMessage = '';
         let extractedUpdates: Record<string, string | null> = {};
         let endCall = false;
-
-        const phaseForBrain = getConversationPhaseForLog(state);
-        const llmGateHint =
-          phaseForBrain === 'patient_verification'
-            ? 'patient_verification_before_benefit_fields'
-            : phaseForBrain;
-
-        if (recallReply) {
-          this.logCallFlow(
-            state.callSid,
-            phaseForBrain,
-            'path_recall_answer_no_llm',
-            recallReply.slice(0, 120),
-            Date.now() - turnStart,
-          );
-        }
 
         const skipLlmDueToNoise =
           !recallReply &&
@@ -1288,33 +1178,10 @@ export class MediaStreamHandlerService {
           noiseSkipMessage =
             "I'm having trouble hearing you clearly. " +
             askForFieldPhrase(miss ?? 'coverage');
-          this.logCallFlow(
-            state.callSid,
-            phaseForBrain,
-            'llm_skipped_noise_guard',
-            `noiseStreak=${state.consecutiveNoiseOrEmptyTurns} fallbackField=${miss}`,
-            Date.now() - turnStart,
-          );
         }
 
         if (!recallReply && !skipLlmDueToNoise) {
           const llmStart = Date.now();
-          this.logCallFlow(
-            state.callSid,
-            phaseForBrain,
-            'llm_turn_request_start',
-            `gate=${llmGateHint} lastAskedField=${state.lastAskedField ?? 'none'} identityReady=${state.patientIdentityReadyForBenefits}`,
-            Date.now() - turnStart,
-          );
-          if (phaseForBrain === 'patient_verification') {
-            this.logCallFlow(
-              state.callSid,
-              'patient_verification',
-              'step_patient_identity_verification_window_active',
-              'TPA-led — wait for rep to ask name/DOB before sharing',
-              Date.now() - turnStart,
-            );
-          }
           const result = await this.aiService.getNextConversationTurn(
             effectiveTranscript,
             state.extractedData,
@@ -1331,13 +1198,7 @@ export class MediaStreamHandlerService {
           nextMessage = result.nextMessage;
           extractedUpdates = result.extractedUpdates;
           endCall = result.endCall ?? false;
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'llm_turn_request_complete',
-            `ms=${Date.now() - llmStart} endCall=${endCall} extractedKeys=${Object.keys(extractedUpdates ?? {}).join(',') || 'none'}`,
-            Date.now() - turnStart,
-          );
+          llmMs = Date.now() - llmStart;
         } else if (skipLlmDueToNoise) {
           nextMessage = noiseSkipMessage;
           extractedUpdates = {};
@@ -1364,13 +1225,6 @@ export class MediaStreamHandlerService {
             const corrected = extractValueForField(userSaid, expectedField);
             if (corrected) {
               extractedUpdates = { [expectedField]: corrected };
-              this.logCallFlow(
-                state.callSid,
-                phaseForBrain,
-                'safeguard_after_hold_field_coercion',
-                `${expectedField}=${corrected}`,
-                Date.now() - turnStart,
-              );
             }
           }
         }
@@ -1384,13 +1238,7 @@ export class MediaStreamHandlerService {
               orderedF,
             );
           if (!validation.ok) {
-            this.logCallFlow(
-              state.callSid,
-              phaseForBrain,
-              'benefit_validation_failed',
-              validation.correctionMessage?.slice(0, 120) ?? '',
-              Date.now() - turnStart,
-            );
+            const vmsg = validation.correctionMessage ?? '';
             if (
               userSaid?.trim() &&
               userSaid !== 'User did not respond or was inaudible.'
@@ -1400,43 +1248,32 @@ export class MediaStreamHandlerService {
               state.conversationTranscript.push(
                 'EVA: ' + validation.correctionMessage.trim(),
               );
-            await speak(validation.correctionMessage ?? '', 'validation_retry');
+            const ttsMsVal = await speak(vmsg, 'validation_retry');
+            this.logCallTurn(state.callSid, {
+              prepMs,
+              sttMs,
+              llmMs,
+              ttsMs: ttsMsVal,
+              totalMs: Date.now() - turnStart,
+              tpa: userSaid,
+              eva: vmsg,
+              note: '(validation retry)',
+            });
             state.processing = false;
             return;
           }
           extractedUpdates = validation.normalized;
-          this.logCallFlow(
-            state.callSid,
-            phaseForBrain,
-            'benefit_validation_ok',
-            JSON.stringify(extractedUpdates),
-            Date.now() - turnStart,
-          );
         }
 
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
           for (const [key, val] of Object.entries(extractedUpdates)) {
             if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
           }
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'extracted_data_merged',
-            JSON.stringify(state.extractedData),
-            Date.now() - turnStart,
-          );
         }
 
         state.lastAskedField = getFirstMissingField(
           state.extractedData,
           orderedF,
-        );
-        this.logCallFlow(
-          state.callSid,
-          getConversationPhaseForLog(state),
-          'next_last_asked_field_computed',
-          state.lastAskedField ?? 'none_all_done',
-          Date.now() - turnStart,
         );
 
         const allCollected = orderedF.every((f) =>
@@ -1476,13 +1313,6 @@ export class MediaStreamHandlerService {
           toSpeakLooksLikeConfirmingDate
         ) {
           toSpeak = askForFieldPhrase('validity');
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'safeguard_validity_strip_invented_date',
-            '',
-            Date.now() - turnStart,
-          );
         }
         // Safeguard: if user asked for DOB, never include a first-field request in the same turn — wait for "yes we're good" first
         const firstField = orderedF[0];
@@ -1498,13 +1328,6 @@ export class MediaStreamHandlerService {
             'i',
           ).test(toSpeak)
         ) {
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'safeguard_dob_turn_strip_first_benefit_question',
-            `firstField=${firstField}`,
-            Date.now() - turnStart,
-          );
           toSpeak = toSpeak
             .replace(
               new RegExp(
@@ -1549,13 +1372,6 @@ export class MediaStreamHandlerService {
           if (userAsksPurposeOfCallOrOpening(userSaid)) {
             toSpeak = pickPurposeOfCallPhrase();
             state.purposeSaid = true;
-            this.logCallFlow(
-              state.callSid,
-              getConversationPhaseForLog(state),
-              'fallback_purpose_line_variant',
-              `userAskedPurposeOrOpening`,
-              Date.now() - turnStart,
-            );
           } else if (
             /how are you|doing good|doing great/i.test(userSaid.trim()) &&
             !userAsksPurposeOfCallOrOpening(userSaid)
@@ -1629,13 +1445,6 @@ export class MediaStreamHandlerService {
         ) {
           toSpeak =
             "I'm Reena from Went Dentals. I'm on the line to get benefit details.";
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'sanitized_intro_short_for_who_is_calling',
-            '',
-            Date.now() - turnStart,
-          );
         } else if (
           toSpeak?.trim() &&
           !userAskedWhoIsCalling(userSaid) &&
@@ -1649,13 +1458,6 @@ export class MediaStreamHandlerService {
           toSpeak = miss
             ? askForFieldPhrase(miss)
             : getRepeatOnlyPrompt();
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'sanitized_repeated_full_intro',
-            `fallbackField=${miss ?? 'none'}`,
-            Date.now() - turnStart,
-          );
         } else if (
           toSpeak?.trim() &&
           !userAskedWhoIsCalling(userSaid) &&
@@ -1669,13 +1471,6 @@ export class MediaStreamHandlerService {
           toSpeak = miss
             ? askForFieldPhrase(miss)
             : getRepeatOnlyPrompt();
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'sanitized_repeated_purpose_phrase',
-            `fallbackField=${miss ?? 'none'}`,
-            Date.now() - turnStart,
-          );
         }
         if (toSpeak && isIntroPurposePhrase(toSpeak)) {
           state.purposeSaid = true;
@@ -1711,41 +1506,54 @@ export class MediaStreamHandlerService {
         ) {
           state.evaAwaitingYesAfterDob = true;
         }
-        // Append conversation transcript (user and EVA values / important exchange) for verification
-        if (
+        // In-memory transcript updates (sync): needed for verification save on stop.
+        const userLineForLog =
           userSaid &&
           userSaid !== 'User did not respond or was inaudible.' &&
           !/^\[?inaudible\]?\.?$/i.test(userSaid) &&
           !/^\.{2,}$/.test(userSaid)
-        ) {
-          const tpaTone = await emotionPromise;
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'emotion_classification_result',
-            tpaTone ?? 'null',
-            Date.now() - turnStart,
-          );
-          if (tpaTone) {
-            await pushLiveTracker(`[TPA_EMOTION] ${tpaTone}`);
-            state.conversationTranscript.push(`[TPA_EMOTION] ${tpaTone}`);
-          }
-          state.conversationTranscript.push('User: ' + userSaid);
-          await pushLiveTracker(`User: ${userSaid}`);
+            ? userSaid
+            : null;
+        if (userLineForLog) {
+          state.conversationTranscript.push('User: ' + userLineForLog);
         }
         if (toSpeak?.trim()) {
           state.conversationTranscript.push('EVA: ' + toSpeak.trim());
-          await pushLiveTracker(`EVA: ${toSpeak.trim()}`);
+        }
+
+        // Kick off TTS FIRST so the user hears EVA as early as possible.
+        // Tracker DB writes and emotion classification run in parallel (fire-and-forget).
+        let ttsPromise: Promise<number> = Promise.resolve(0);
+        if (toSpeak?.trim()) {
+          ttsPromise = speak(toSpeak, 'eva_reply').catch(() => 0);
+        }
+
+        if (userLineForLog) {
+          void pushLiveTracker(`User: ${userLineForLog}`);
+          void emotionPromise
+            .then((tpaTone) => {
+              if (tpaTone) {
+                state.conversationTranscript.push(`[TPA_EMOTION] ${tpaTone}`);
+                void pushLiveTracker(`[TPA_EMOTION] ${tpaTone}`);
+              }
+            })
+            .catch(() => {});
         }
         if (toSpeak?.trim()) {
-          this.logCallFlow(
-            state.callSid,
-            getConversationPhaseForLog(state),
-            'eva_reply_prepared',
-            `${(toSpeak ?? '').slice(0, 160)}${(toSpeak ?? '').length > 160 ? '…' : ''}`,
-            Date.now() - turnStart,
-          );
-          await speak(toSpeak, 'eva_reply');
+          void pushLiveTracker(`EVA: ${toSpeak.trim()}`);
+        }
+
+        if (toSpeak?.trim()) {
+          const ttsMsMain = await ttsPromise;
+          this.logCallTurn(state.callSid, {
+            prepMs,
+            sttMs,
+            llmMs,
+            ttsMs: ttsMsMain,
+            totalMs: Date.now() - turnStart,
+            tpa: userSaid,
+            eva: toSpeak.trim(),
+          });
         }
 
         if (shouldEndCall) {
@@ -1759,26 +1567,23 @@ export class MediaStreamHandlerService {
         }
       } catch (err: any) {
         this.logger.warn('[MediaStream] Process buffer failed', err?.message);
-        this.logCallFlow(
-          state.callSid,
-          getConversationPhaseForLog(state),
-          'process_buffer_error',
-          err?.message ?? 'unknown',
-          Date.now() - turnStart,
-        );
-        // Only ask to repeat; do not ask for the field again (same as transcription failure).
-        await speak(getRepeatOnlyPrompt(), 'repeat_after_process_error').catch(
-          () => {},
-        );
+        const repeatErr = getRepeatOnlyPrompt();
+        const ttsErr = await speak(
+          repeatErr,
+          'repeat_after_process_error',
+        ).catch(() => 0);
+        this.logCallTurn(state.callSid, {
+          prepMs,
+          sttMs,
+          llmMs,
+          ttsMs: ttsErr,
+          totalMs: Date.now() - turnStart,
+          tpa: '—',
+          eva: repeatErr,
+          note: `(process error: ${err?.message ?? 'unknown'})`,
+        });
       } finally {
         await emotionPromise.catch(() => {});
-        this.logCallFlow(
-          state.callSid,
-          getConversationPhaseForLog(state),
-          'process_buffer_turn_complete',
-          `total_turn_ms=${Date.now() - turnStart}`,
-          Date.now() - turnStart,
-        );
         try {
           fs.unlinkSync(rawPath);
         } catch {}
@@ -1807,11 +1612,9 @@ export class MediaStreamHandlerService {
       if (event === 'start') {
         state.streamSid = msg?.streamSid ?? msg?.start?.streamSid ?? null;
         state.callSid = msg?.start?.callSid ?? msg?.callSid ?? null;
-        this.logCallFlow(
+        this.logCallEvent(
           state.callSid,
-          'connection',
-          'twilio_stream_start',
-          `mode=${state.mode} payeeId=${state.payeeId ?? 'none'}`,
+          `start mode=${state.mode} payeeId=${state.payeeId ?? 'none'}`,
         );
         if (!state.mode || state.mode === 'eva') {
           // Resolve payeeId from URL param or from call SID (stored when makeCall was used), so patient details are available before greeting
@@ -1867,15 +1670,21 @@ export class MediaStreamHandlerService {
             }
             state.lastSpeakTime = Date.now();
             state.conversationTranscript.push('EVA: ' + CONVERSATION_GREETING);
-            this.logCallFlow(
-              state.callSid,
-              'patient_verification',
-              'opening_greeting_about_to_play',
-              state.patientInfo
-                ? `TPA_led_identity_only_answer_when_asked | patientLoaded=${state.patientInfo.fullName} dob=${state.patientInfo.dobFormatted ?? 'none'}`
-                : 'no_patient_info',
+            const greetStart = Date.now();
+            const ttsGreet = await speak(
+              CONVERSATION_GREETING,
+              'opening_greeting',
             );
-            await speak(CONVERSATION_GREETING, 'opening_greeting');
+            this.logCallTurn(state.callSid, {
+              prepMs: 0,
+              sttMs: 0,
+              llmMs: null,
+              ttsMs: ttsGreet,
+              totalMs: Date.now() - greetStart,
+              tpa: '—',
+              eva: CONVERSATION_GREETING,
+              note: '(opening greeting)',
+            });
             state.openingGreetingPlayed = true;
           } catch (e) {
             this.logger.warn(
@@ -1897,12 +1706,7 @@ export class MediaStreamHandlerService {
       }
 
       if (event === 'stop') {
-        this.logCallFlow(
-          state.callSid,
-          getConversationPhaseForLog(state),
-          'twilio_stream_stop',
-          `extractedKeys=${Object.keys(state.extractedData).join(',')}`,
-        );
+        this.logCallEvent(state.callSid, 'stream stopped');
         void pushLiveTracker(
           `[CALL_EVENT] END callSid=${state.callSid ?? 'unknown'}`,
         );
@@ -1980,12 +1784,6 @@ export class MediaStreamHandlerService {
         state.buffer = [];
         clearInterval(state.fallbackTimer!);
         state.fallbackTimer = null;
-        this.logCallFlow(
-          state.callSid,
-          getConversationPhaseForLog(state),
-          'trigger_process_buffer',
-          `reason=fallback_interval_${intervalMs}ms bytes=${combined.length}`,
-        );
         processBuffer(combined);
       }, intervalMs);
     };

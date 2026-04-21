@@ -70,17 +70,9 @@ export class TranscriptionService {
 
     if (useElevenLabs) {
       try {
-        this.logger.log(
-          `[CallTiming] Sending audio to ElevenLabs STT (bytes=${fileSizeBytes})`,
-        );
-        const startStt = Date.now();
         const transcript = await this.transcribeWithElevenLabs(
           filePath,
           apiKey,
-        );
-        const sttMs = Date.now() - startStt;
-        this.logger.log(
-          `[CallTiming] ElevenLabs STT completed in ${sttMs}ms, transcript length=${transcript?.length ?? 0}`,
         );
         if (transcript != null && transcript.trim().length > 0) {
           if (isLikelyHallucination(transcript)) {
@@ -91,7 +83,6 @@ export class TranscriptionService {
             );
             return { transcript: '' };
           }
-          this.logger.log('Transcription (ElevenLabs) successful');
           return { transcript };
         }
         // ElevenLabs returned empty (silence/unclear). Do NOT fall back to Whisper—it often hallucinates e.g. "Thank you very much".
@@ -124,15 +115,7 @@ export class TranscriptionService {
       }
     }
 
-    this.logger.log(
-      `[CallTiming] Sending audio to Whisper fallback (bytes=${fileSizeBytes})`,
-    );
-    const startWhisper = Date.now();
     const result = await this.transcribeWithWhisper(filePath);
-    const whisperMs = Date.now() - startWhisper;
-    this.logger.log(
-      `[CallTiming] Whisper STT completed in ${whisperMs}ms, transcript length=${result.transcript?.length ?? 0}`,
-    );
     if (result.transcript && isLikelyHallucination(result.transcript)) {
       this.logger.debug(
         'Whisper returned likely hallucination ("' +
@@ -220,10 +203,6 @@ export class TranscriptionService {
     });
     form.append('language', 'en');
 
-    this.logger.log(
-      `Whisper (primary STT): sending to ${ai_server_url}/transcription/transcribe (language=en)`,
-    );
-
     const response = await axios.post(
       `${ai_server_url}/transcription/transcribe`,
       form,
@@ -237,10 +216,9 @@ export class TranscriptionService {
       },
     );
 
-    this.logger.log('Transcription (Whisper) successful');
     let transcript = response.data.transcript ?? '';
     if (transcript && isNonEnglish(transcript)) {
-      this.logger.log(
+      this.logger.debug(
         'Transcription (Whisper) non-English detected, returning empty (English only)',
       );
       transcript = '';

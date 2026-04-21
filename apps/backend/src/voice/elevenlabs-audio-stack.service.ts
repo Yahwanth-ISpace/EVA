@@ -39,11 +39,7 @@ export class ElevenLabsAudioStackService {
    */
   async synthesize(text: string): Promise<Buffer> {
     const modulated = addSpeechPauses(text);
-    const startTts = Date.now();
     const mp3Buffer = await this.elevenLabs.synthesizeToBuffer(modulated);
-    this.logger.log(
-      `[CallTiming] ElevenLabs TTS API (buffer) returned in ${Date.now() - startTts}ms`,
-    );
     const tmpDir = os.tmpdir();
     const mp3Path = path.join(
       tmpDir,
@@ -72,9 +68,6 @@ export class ElevenLabsAudioStackService {
         this.logger.warn('ffmpeg mulaw conversion failed', { stderr: stderr || result.error?.message });
         throw new Error(errMsg);
       }
-      this.logger.log(
-        `[CallTiming] ElevenLabs TTS (synthesize) total (API+ffmpeg) in ${Date.now() - startTts}ms`,
-      );
       return result.stdout ?? Buffer.alloc(0);
     } finally {
       try {
@@ -92,11 +85,7 @@ export class ElevenLabsAudioStackService {
    */
   async *synthesizeStream(text: string): AsyncGenerator<Buffer, void, unknown> {
     const modulated = addSpeechPauses(text);
-    const startTtsStream = Date.now();
     const mp3Stream = await this.elevenLabs.synthesizeToStream(modulated);
-    this.logger.log(
-      `[CallTiming] ElevenLabs TTS stream started in ${Date.now() - startTtsStream}ms (first chunk request)`,
-    );
     const child = spawn(
       'ffmpeg',
       ['-i', 'pipe:0', '-f', 'mulaw', '-ar', '8000', '-ac', '1', '-'],
@@ -105,20 +94,10 @@ export class ElevenLabsAudioStackService {
     mp3Stream.pipe(child.stdin);
     child.stdin.on('error', () => {}); // EPIPE when ffmpeg closes early
     child.stderr?.on('data', () => {}); // discard ffmpeg progress to stderr
-    let firstChunk = true;
     for await (const chunk of child.stdout) {
       if (chunk && (chunk as Buffer).length > 0) {
-        if (firstChunk) {
-          this.logger.log(
-            `[CallTiming] ElevenLabs TTS stream first chunk in ${Date.now() - startTtsStream}ms`,
-          );
-          firstChunk = false;
-        }
         yield chunk as Buffer;
       }
     }
-    this.logger.log(
-      `[CallTiming] ElevenLabs TTS stream completed in ${Date.now() - startTtsStream}ms`,
-    );
   }
 }
