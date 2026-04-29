@@ -660,7 +660,7 @@ export class VerificationService {
           copay?: string | null;
           validity?: string | null;
         },
-    transcriptToAppend?: string,
+    transcriptToAppend?: string | null,
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
   ): Promise<{
