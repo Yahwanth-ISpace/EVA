@@ -172,11 +172,17 @@ export class TwilioController {
   })
   @ApiQuery({ name: 'payeeId', required: false, example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
   @ApiQuery({ name: 'appointmentId', required: false })
+  @ApiQuery({
+    name: 'mode',
+    required: false,
+    description: 'Set `tpa-ivr` to navigate payer phone menus before EVA speaks.',
+  })
   @ApiProduces('text/xml')
   async handleInboundStreamPost(
     @Body() body: Record<string, string>,
     @Query('payeeId') payeeIdQuery: string,
     @Query('appointmentId') appointmentIdQuery: string,
+    @Query('mode') modeQuery: string,
     @Res() res: Response,
   ) {
     const payeeId =
@@ -186,37 +192,51 @@ export class TwilioController {
       'inbound';
     const appointmentId =
       appointmentIdQuery?.trim() || body?.appointmentId?.trim() || undefined;
-    this.sendStreamTwiML(payeeId, res, appointmentId);
+    const streamMode = modeQuery?.trim() || undefined;
+    this.sendStreamTwiML(payeeId, res, appointmentId, streamMode);
   }
 
   @Get('inbound-stream')
   @ApiOperation({ summary: 'Same as POST inbound-stream (GET for some Twilio configs)' })
   @ApiQuery({ name: 'payeeId', required: false })
   @ApiQuery({ name: 'appointmentId', required: false })
+  @ApiQuery({
+    name: 'mode',
+    required: false,
+    description: 'Set `tpa-ivr` to navigate payer phone menus before EVA speaks.',
+  })
   @ApiProduces('text/xml')
   async handleInboundStreamGet(
     @Query('payeeId') payeeId: string,
     @Query('appointmentId') appointmentId: string,
+    @Query('mode') mode: string,
     @Res() res: Response,
   ) {
     const id = payeeId || process.env.INBOUND_PAYEE_ID?.trim() || 'inbound';
     const appt = appointmentId?.trim() || undefined;
-    this.sendStreamTwiML(id, res, appt);
+    const streamMode = mode?.trim() || undefined;
+    this.sendStreamTwiML(id, res, appt, streamMode);
   }
 
   private sendStreamTwiML(
     payeeId: string,
     res: Response,
     appointmentId?: string,
+    streamMode?: string,
   ) {
     const apptQ = appointmentId?.trim()
       ? '&appointmentId=' + encodeURIComponent(appointmentId.trim())
       : '';
+    const modeQ =
+      streamMode === 'tpa-ivr'
+        ? '&mode=' + encodeURIComponent('tpa-ivr')
+        : '';
     const streamUrl =
       getStreamBaseUrl() +
       '/twilio/media-stream?payeeId=' +
       encodeURIComponent(payeeId) +
-      apptQ;
+      apptQ +
+      modeQ;
 
     res.type('text/xml').send(`
       <Response>
@@ -264,6 +284,54 @@ export class TwilioController {
   }
 
   /**
+   * Play DTMF digits into an in-progress call, then reconnect the media stream for TPA IVR navigation.
+   * Query: `digits` (Twilio: 0-9, w/W pauses, # *), `payeeId`, optional `appointmentId`.
+   */
+  @Get('tpa-ivr-dtmf')
+  @Post('tpa-ivr-dtmf')
+  @ApiOperation({
+    summary: 'Send DTMF then reconnect TPA IVR stream',
+    description:
+      'Returns TwiML `<Play digits/><Connect><Stream...mode=tpa-ivr/></Connect>`. Used after member ID or DOB prompts.',
+  })
+  @ApiProduces('text/xml')
+  tpaIvrDtmf(
+    @Query('digits') digits: string,
+    @Query('payeeId') payeeId: string,
+    @Query('appointmentId') appointmentId: string,
+    @Res() res: Response,
+  ) {
+    const raw = (digits || '').trim();
+    if (!raw || !/^[\d#*wW]+$/.test(raw)) {
+      throw new BadRequestException(
+        'Query `digits` is required and must contain only 0-9, #, *, w, W.',
+      );
+    }
+    const pid = (payeeId || '').trim();
+    if (!pid) {
+      throw new BadRequestException('Query `payeeId` is required.');
+    }
+    const apptQ = appointmentId?.trim()
+      ? '&appointmentId=' + encodeURIComponent(appointmentId.trim())
+      : '';
+    const streamUrl =
+      getStreamBaseUrl() +
+      '/twilio/media-stream?payeeId=' +
+      encodeURIComponent(pid) +
+      apptQ +
+      '&mode=tpa-ivr';
+
+    res.type('text/xml').send(`
+      <Response>
+        <Play digits="${escapeXmlAttr(raw)}" />
+        <Connect>
+          <Stream url="${escapeXmlAttr(streamUrl)}" />
+        </Connect>
+      </Response>
+    `);
+  }
+
+  /**
    * Start outbound call from EVA's number to the IVR number; stream runs in ivr-bypass mode (STT listens for "customer agent", then sends 4).
    * Body optional: { "to": "+1..." } to override TWILIO_IVR_PHONE_NUMBER.
    */
@@ -308,6 +376,7 @@ export class TwilioController {
       body.to,
       body.payeeId,
       body.appointmentId,
+      { navigateTpaIvr: body.navigateTpaIvr === true },
     );
   }
 

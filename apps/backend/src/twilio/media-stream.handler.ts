@@ -62,6 +62,97 @@ const IVR_BYPASS_FALLBACK_MS = 2500;
 /** IVR bypass: minimum audio bytes before running STT (~0.5 s). */
 const IVR_BYPASS_MIN_BYTES = 4_000;
 
+/** TPA phone tree: stay silent through recording + language prompt (ms from call start). Override via `TPA_IVR_INITIAL_SILENCE_MS`. */
+const TPA_IVR_INITIAL_SILENCE_MS = Number(
+  process.env.TPA_IVR_INITIAL_SILENCE_MS || 16000,
+);
+
+function streamModeUsesIvrTiming(
+  m: 'eva' | 'ivr-bypass' | 'tpa-ivr',
+): boolean {
+  return m === 'ivr-bypass' || m === 'tpa-ivr';
+}
+
+/** Member ID for keypad: digits only; optional `TPA_IVR_MEMBER_SUFFIX` (e.g. `#`). */
+function buildMemberIdDtmf(memberId: string | null | undefined): string {
+  const digits = (memberId || '').replace(/\D/g, '');
+  const suffix = (process.env.TPA_IVR_MEMBER_SUFFIX || '').trim();
+  return digits + suffix;
+}
+
+/** DOB as MMDDYYYY for US payer keypads. Optional `TPA_IVR_DOB_SUFFIX`. */
+function buildDobDtmf(dob: Date | null | undefined): string | null {
+  if (!dob || !Number.isFinite(dob.getTime())) return null;
+  const m = dob.getMonth() + 1;
+  const day = dob.getDate();
+  const y = dob.getFullYear();
+  const core = `${String(m).padStart(2, '0')}${String(day).padStart(2, '0')}${y}`;
+  const suffix = (process.env.TPA_IVR_DOB_SUFFIX || '').trim();
+  return core + suffix;
+}
+
+function tpaIvrSoundsLikeProviderQuestion(t: string): boolean {
+  const s = t.toLowerCase();
+  return (
+    /health care provider|healthcare provider/.test(s) &&
+    /are you|calling from|provider/.test(s)
+  );
+}
+
+function tpaIvrSoundsLikeReasonPrompt(t: string): boolean {
+  const s = t.toLowerCase();
+  if (s.length < 10) return false;
+  return (
+    /what can i help you( with)?( today)?\?*/.test(s) ||
+    /what can i do for you( today)?\?*/.test(s) ||
+    /how can i help you( today)?\?*/.test(s) ||
+    /how may i (direct|assist|help) you( today)?\?*/.test(s)
+  );
+}
+
+function tpaIvrSoundsLikeMemberIdPrompt(t: string): boolean {
+  const s = t.toLowerCase();
+  return (
+    /member\s*(id|i\.?\s*d\.?|number|#)|subscriber\s*(id|number)|identification number|enter.*(your\s*)?(id|member)/.test(
+      s,
+    ) && !/date of birth|dob|birthday/.test(s)
+  );
+}
+
+function tpaIvrSoundsLikeDobPrompt(t: string): boolean {
+  const s = t.toLowerCase();
+  return (
+    /date of birth|birth\s*date|enter.*dob|your birthday|month.*day.*year/.test(
+      s,
+    ) && !/member\s*id/.test(s)
+  );
+}
+
+function tpaIvrSoundsLikeHoldOrRouting(t: string): boolean {
+  return /one moment|pull up (the|your) account|connecting you|please hold|stay on the (line|phone)|transfer(r?ing)? you/i.test(
+    t,
+  );
+}
+
+function tpaIvrSoundsLikeLiveAgent(t: string): boolean {
+  const s = t.trim();
+  if (s.length < 10 || s.length > 500) return false;
+  if (
+    /for english|for spanish|press \d|say or press|enter your \d|this call may be recorded/i.test(
+      s,
+    )
+  ) {
+    return false;
+  }
+  return (
+    (/\b(hi|hello|good (morning|afternoon|evening))\b/i.test(s) &&
+      /\b(i'?m|my name is|this is|speaking)\b/i.test(s)) ||
+    /\bhow can i help you\b/i.test(s) ||
+    /^thank you for (calling|holding|your patience)/i.test(s.trim()) ||
+    /\b(agent|representative) will be with you\b/i.test(s)
+  );
+}
+
 /** Mulaw: 0xFF (positive silence) and 0x7F (negative silence) are the two silence poles; treat nearby codes as silent too so we detect end-of-speech reliably. */
 function isSilentByte(b: number): boolean {
   // Positive-silence neighborhood (0xFD..0xFF) and negative-silence neighborhood (0x7D..0x7F, 0xFE).
@@ -672,7 +763,7 @@ interface StreamState {
   postGoodbyeUntil: number | null;
   postGoodbyeTimeoutId: ReturnType<typeof setTimeout> | null;
   conversationTranscript: string[];
-  mode: 'eva' | 'ivr-bypass';
+  mode: 'eva' | 'ivr-bypass' | 'tpa-ivr';
   ivrDigitSent: boolean;
   /** True after we've already said our purpose (e.g. "I need a few benefit details") — avoid repeating it while user is speaking. */
   purposeSaid: boolean;
@@ -699,9 +790,20 @@ interface StreamState {
   openingGreetingPlayed: boolean;
 }
 
+/** Per-call TPA IVR progress (survives Twilio media stream reconnect after DTMF). */
+type TpaIvrRuntimeState = {
+  callStartedAt: number;
+  saidProviderYes: boolean;
+  saidRepresentative: boolean;
+  memberDtmfSent: boolean;
+  dobDtmfSent: boolean;
+};
+
 @Injectable()
 export class MediaStreamHandlerService {
   private readonly logger = new Logger(MediaStreamHandlerService.name);
+
+  private readonly tpaIvrByCallSid = new Map<string, TpaIvrRuntimeState>();
 
   /**
    * One line per turn: prep (until STT starts) → STT → LLM → TTS wall times, plus TPA and EVA text.
@@ -752,6 +854,7 @@ export class MediaStreamHandlerService {
     appointmentId?: string | null,
   ): void {
     const isIvrBypass = mode === 'ivr-bypass';
+    const isTpaIvr = mode === 'tpa-ivr';
     const state: StreamState = {
       buffer: [],
       streamSid: null,
@@ -775,7 +878,11 @@ export class MediaStreamHandlerService {
       postGoodbyeUntil: null,
       postGoodbyeTimeoutId: null,
       conversationTranscript: [],
-      mode: isIvrBypass ? 'ivr-bypass' : 'eva',
+      mode: isTpaIvr
+        ? 'tpa-ivr'
+        : isIvrBypass
+          ? 'ivr-bypass'
+          : 'eva',
       ivrDigitSent: false,
       purposeSaid: false,
       patientIdentityReadyForBenefits: false,
@@ -914,18 +1021,19 @@ export class MediaStreamHandlerService {
 
     const tryTriggerProcess = () => {
       if (state.processing || state.callEnded || !state.streamSid) return;
-      if (state.mode !== 'ivr-bypass' && state.onHold) return;
+      if (!streamModeUsesIvrTiming(state.mode) && state.onHold) return;
       const now = Date.now();
       if (
-        state.mode !== 'ivr-bypass' &&
+        !streamModeUsesIvrTiming(state.mode) &&
         state.lastSpeakTime > 0 &&
         now - state.lastSpeakTime < ANSWER_WINDOW_MS
       ) {
         return;
       }
       const combined = Buffer.concat(state.buffer);
-      const minBytes =
-        state.mode === 'ivr-bypass' ? IVR_BYPASS_MIN_BYTES : MIN_SPEECH_BYTES;
+      const minBytes = streamModeUsesIvrTiming(state.mode)
+        ? IVR_BYPASS_MIN_BYTES
+        : MIN_SPEECH_BYTES;
       if (combined.length < minBytes) return;
 
       const shouldProcess =
@@ -970,10 +1078,9 @@ export class MediaStreamHandlerService {
         fs.writeFileSync(rawPath, combined);
         this.mulawRawToWav(rawPath, wavPath);
 
-        emotionPromise =
-          state.mode === 'ivr-bypass'
-            ? Promise.resolve(null)
-            : this.audioEmotionService.classifyWav(wavPath).catch(() => null);
+        emotionPromise = streamModeUsesIvrTiming(state.mode)
+          ? Promise.resolve(null)
+          : this.audioEmotionService.classifyWav(wavPath).catch(() => null);
 
         let transcript: string;
         let sttApiStart = turnStart;
@@ -1051,6 +1158,234 @@ export class MediaStreamHandlerService {
               note: '(IVR redirect)',
             });
           }
+          state.processing = false;
+          return;
+        }
+
+        // --- TPA IVR: scripted tree until a live agent is connected, then hand off to EVA ---
+        if (state.mode === 'tpa-ivr') {
+          if (!state.callSid) {
+            state.processing = false;
+            return;
+          }
+          const ivr = this.ensureTpaIvrState(state.callSid);
+          const elapsed = Date.now() - ivr.callStartedAt;
+          const inInitialSilence = elapsed < TPA_IVR_INITIAL_SILENCE_MS;
+          const t = userSaid.trim();
+          let spoke: string | null = null;
+          let redirected = false;
+
+          if (inInitialSilence) {
+            // Recording disclaimer + language: do not speak or press keys.
+            this.logCallTurn(state.callSid, {
+              prepMs,
+              sttMs,
+              llmMs: null,
+              ttsMs: 0,
+              totalMs: Date.now() - turnStart,
+              tpa: t || '—',
+              eva: '—',
+              note: '(TPA IVR initial silence)',
+            });
+            state.processing = false;
+            return;
+          }
+
+          if (
+            !ivr.saidProviderYes &&
+            tpaIvrSoundsLikeProviderQuestion(t)
+          ) {
+            spoke = 'Yes';
+            ivr.saidProviderYes = true;
+          } else if (
+            ivr.saidProviderYes &&
+            !ivr.saidRepresentative &&
+            tpaIvrSoundsLikeReasonPrompt(t)
+          ) {
+            spoke = 'Representative';
+            ivr.saidRepresentative = true;
+          } else if (
+            ivr.saidRepresentative &&
+            !ivr.memberDtmfSent &&
+            tpaIvrSoundsLikeMemberIdPrompt(t) &&
+            state.callSid &&
+            state.payeeId
+          ) {
+            if (!state.callContext && state.payeeId) {
+              const ctx = await this.verificationService
+                .getPayeeCallContext(state.payeeId, state.appointmentId)
+                .catch(() => null);
+              if (ctx) {
+                state.callContext = ctx;
+                state.patientInfo = {
+                  firstName: ctx.patient.firstName,
+                  lastName: ctx.patient.lastName,
+                  fullName: ctx.patient.fullName,
+                  dobFormatted: ctx.patient.dobFormatted,
+                  ssn: ctx.patient.ssn,
+                };
+              }
+            }
+            const mid =
+              state.callContext?.memberId != null
+                ? buildMemberIdDtmf(state.callContext.memberId)
+                : buildMemberIdDtmf(process.env.EVA_MEMBER_ID);
+            if ((mid.match(/\d/g) ?? []).length > 0) {
+              const base = (process.env.BACKEND_URL || '').trim();
+              if (base) {
+                const q = new URLSearchParams({
+                  digits: mid,
+                  payeeId: state.payeeId,
+                });
+                if (state.appointmentId?.trim()) {
+                  q.set('appointmentId', state.appointmentId.trim());
+                }
+                const url = `${base}/twilio/tpa-ivr-dtmf?${q.toString()}`;
+                ivr.memberDtmfSent = true;
+                redirected = true;
+                this.twilioService
+                  .redirectCall(state.callSid, url)
+                  .catch((e: any) =>
+                    this.logger.warn(
+                      '[MediaStream] TPA IVR member DTMF redirect failed',
+                      (e as Error)?.message,
+                    ),
+                  );
+              }
+            } else {
+              this.logger.warn(
+                '[MediaStream] TPA IVR: no member ID digits available (set EVA_MEMBER_ID or call context).',
+              );
+            }
+          } else if (
+            ivr.memberDtmfSent &&
+            !ivr.dobDtmfSent &&
+            tpaIvrSoundsLikeDobPrompt(t) &&
+            state.callSid &&
+            state.payeeId
+          ) {
+            if (!state.callContext && state.payeeId) {
+              const ctx = await this.verificationService
+                .getPayeeCallContext(state.payeeId, state.appointmentId)
+                .catch(() => null);
+              if (ctx) {
+                state.callContext = ctx;
+                state.patientInfo = {
+                  firstName: ctx.patient.firstName,
+                  lastName: ctx.patient.lastName,
+                  fullName: ctx.patient.fullName,
+                  dobFormatted: ctx.patient.dobFormatted,
+                  ssn: ctx.patient.ssn,
+                };
+              }
+            }
+            const dob = state.callContext?.patient?.dob ?? null;
+            const dtmf = buildDobDtmf(dob);
+            if (dtmf) {
+              const base = (process.env.BACKEND_URL || '').trim();
+              if (base) {
+                const q = new URLSearchParams({
+                  digits: dtmf,
+                  payeeId: state.payeeId,
+                });
+                if (state.appointmentId?.trim()) {
+                  q.set('appointmentId', state.appointmentId.trim());
+                }
+                const url = `${base}/twilio/tpa-ivr-dtmf?${q.toString()}`;
+                ivr.dobDtmfSent = true;
+                redirected = true;
+                this.twilioService
+                  .redirectCall(state.callSid, url)
+                  .catch((e: any) =>
+                    this.logger.warn(
+                      '[MediaStream] TPA IVR DOB DTMF redirect failed',
+                      (e as Error)?.message,
+                    ),
+                  );
+              }
+            } else {
+              this.logger.warn(
+                '[MediaStream] TPA IVR: patient DOB missing — cannot send DOB DTMF.',
+              );
+            }
+          } else if (
+            ivr.dobDtmfSent &&
+            tpaIvrSoundsLikeHoldOrRouting(t)
+          ) {
+            this.logCallTurn(state.callSid, {
+              prepMs,
+              sttMs,
+              llmMs: null,
+              ttsMs: 0,
+              totalMs: Date.now() - turnStart,
+              tpa: t,
+              eva: '—',
+              note: '(TPA IVR hold/routing — silent)',
+            });
+            state.processing = false;
+            return;
+          } else if (ivr.dobDtmfSent && tpaIvrSoundsLikeLiveAgent(t)) {
+            const ttsHandoff = await this.handoffTpaIvrToEvaSession(
+              state,
+              speak,
+              pushLiveTracker,
+            );
+            this.logCallTurn(state.callSid, {
+              prepMs,
+              sttMs,
+              llmMs: null,
+              ttsMs: ttsHandoff,
+              totalMs: Date.now() - turnStart,
+              tpa: t,
+              eva: CONVERSATION_GREETING,
+              note: '(TPA IVR → EVA live agent)',
+            });
+            state.processing = false;
+            return;
+          }
+
+          if (redirected) {
+            this.logCallTurn(state.callSid, {
+              prepMs,
+              sttMs,
+              llmMs: null,
+              ttsMs: 0,
+              totalMs: Date.now() - turnStart,
+              tpa: t,
+              eva: '—',
+              note: '(TPA IVR DTMF redirect)',
+            });
+            state.processing = false;
+            return;
+          }
+
+          if (spoke) {
+            const ttsMs = await speak(spoke, 'tpa_ivr').catch(() => 0);
+            this.logCallTurn(state.callSid, {
+              prepMs,
+              sttMs,
+              llmMs: null,
+              ttsMs,
+              totalMs: Date.now() - turnStart,
+              tpa: t,
+              eva: spoke,
+              note: '(TPA IVR)',
+            });
+            void pushLiveTracker(`EVA: ${spoke}`);
+            state.processing = false;
+            return;
+          }
+
+          this.logCallTurn(state.callSid, {
+            prepMs,
+            sttMs,
+            llmMs: null,
+            ttsMs: 0,
+            totalMs: Date.now() - turnStart,
+            tpa: t || '—',
+            eva: '—',
+            note: '(TPA IVR no match)',
+          });
           state.processing = false;
           return;
         }
@@ -2160,7 +2495,7 @@ export class MediaStreamHandlerService {
           state.callSid,
           `start mode=${state.mode} payeeId=${state.payeeId ?? 'none'}`,
         );
-        if (!state.mode || state.mode === 'eva') {
+        if (!state.mode || state.mode === 'eva' || state.mode === 'tpa-ivr') {
           // Resolve payeeId from URL param or from call SID (stored when makeCall was used), so patient details are available before greeting
           if (state.callSid) {
             const ctx = this.twilioService.getStreamContextForCall(
@@ -2180,6 +2515,37 @@ export class MediaStreamHandlerService {
         startFallbackTimer();
         if (state.mode === 'ivr-bypass') {
           // No greeting; we only listen for IVR menu and send DTMF 4 when we hear "customer agent"
+          return;
+        }
+        if (state.mode === 'tpa-ivr') {
+          if (state.callSid) {
+            this.ensureTpaIvrState(state.callSid);
+          }
+          void (async () => {
+            if (!state.payeeId?.trim()) return;
+            const ctx = await this.verificationService
+              .getPayeeCallContext(state.payeeId, state.appointmentId)
+              .catch((e: any) => {
+                this.logger.warn(
+                  '[MediaStream] TPA IVR: failed to load call context',
+                  e?.message,
+                );
+                return null;
+              });
+            if (ctx) {
+              state.callContext = ctx;
+              state.patientInfo = {
+                firstName: ctx.patient.firstName,
+                lastName: ctx.patient.lastName,
+                fullName: ctx.patient.fullName,
+                dobFormatted: ctx.patient.dobFormatted,
+                ssn: ctx.patient.ssn,
+              };
+              this.logger.log(
+                `[MediaStream] TPA IVR context loaded: memberId=${ctx.memberId ? 'yes' : 'no'} dob=${ctx.patient.dob ? 'yes' : 'no'}`,
+              );
+            }
+          })();
           return;
         }
         (async () => {
@@ -2330,18 +2696,18 @@ export class MediaStreamHandlerService {
     // Fallback: if we never detect silence but have enough audio, process every N seconds
     const startFallbackTimer = () => {
       if (state.fallbackTimer) return;
-      const intervalMs =
-        state.mode === 'ivr-bypass'
-          ? IVR_BYPASS_FALLBACK_MS
-          : FALLBACK_PROCESS_INTERVAL_MS;
-      const minBytes =
-        state.mode === 'ivr-bypass' ? IVR_BYPASS_MIN_BYTES : MIN_SPEECH_BYTES;
+      const intervalMs = streamModeUsesIvrTiming(state.mode)
+        ? IVR_BYPASS_FALLBACK_MS
+        : FALLBACK_PROCESS_INTERVAL_MS;
+      const minBytes = streamModeUsesIvrTiming(state.mode)
+        ? IVR_BYPASS_MIN_BYTES
+        : MIN_SPEECH_BYTES;
       state.fallbackTimer = setInterval(() => {
         const combined = Buffer.concat(state.buffer);
         if (combined.length < minBytes) return;
         const now = Date.now();
         if (
-          state.mode !== 'ivr-bypass' &&
+          !streamModeUsesIvrTiming(state.mode) &&
           state.lastSpeakTime > 0 &&
           now - state.lastSpeakTime < ANSWER_WINDOW_MS
         ) {
@@ -2353,6 +2719,106 @@ export class MediaStreamHandlerService {
         processBuffer(combined);
       }, intervalMs);
     };
+  }
+
+  private ensureTpaIvrState(callSid: string | null): TpaIvrRuntimeState {
+    const sid = callSid?.trim();
+    if (!sid) {
+      return {
+        callStartedAt: Date.now(),
+        saidProviderYes: false,
+        saidRepresentative: false,
+        memberDtmfSent: false,
+        dobDtmfSent: false,
+      };
+    }
+    let s = this.tpaIvrByCallSid.get(sid);
+    if (!s) {
+      s = {
+        callStartedAt: Date.now(),
+        saidProviderYes: false,
+        saidRepresentative: false,
+        memberDtmfSent: false,
+        dobDtmfSent: false,
+      };
+      this.tpaIvrByCallSid.set(sid, s);
+    }
+    return s;
+  }
+
+  /** Built-in payer phone tree finished — begin normal EVA verification conversation. */
+  private async handoffTpaIvrToEvaSession(
+    state: StreamState,
+    speak: (text: string, label?: string) => Promise<number>,
+    pushLiveTracker: (line: string) => void | Promise<void>,
+  ): Promise<number> {
+    if (state.callSid) {
+      this.tpaIvrByCallSid.delete(state.callSid);
+    }
+    state.mode = 'eva';
+    void pushLiveTracker(
+      '[CALL_EVENT] TPA_IVR_LIVE_AGENT — EVA greeting',
+    );
+    this.logCallEvent(
+      state.callSid,
+      'TPA IVR handoff: live agent detected',
+    );
+
+    let contextPromise: Promise<PayeeCallContext | null> =
+      Promise.resolve(null);
+    if (state.payeeId) {
+      contextPromise = state.callContext
+        ? Promise.resolve(state.callContext)
+        : this.verificationService
+            .getPayeeCallContext(state.payeeId, state.appointmentId)
+            .catch((e: any) => {
+              this.logger.warn(
+                '[MediaStream] Failed to load call context after TPA IVR',
+                e?.message,
+              );
+              return null;
+            });
+    }
+
+    state.lastSpeakTime = Date.now();
+    state.conversationTranscript.push('EVA: ' + CONVERSATION_GREETING);
+    const ttsMs = await speak(
+      CONVERSATION_GREETING,
+      'opening_after_tpa_ivr',
+    ).catch(() => 0);
+
+    const ctx = await contextPromise;
+    if (ctx) {
+      state.callContext = ctx;
+      state.patientInfo = {
+        firstName: ctx.patient.firstName,
+        lastName: ctx.patient.lastName,
+        fullName: ctx.patient.fullName,
+        dobFormatted: ctx.patient.dobFormatted,
+        ssn: ctx.patient.ssn,
+      };
+      this.logger.log(
+        `[MediaStream] Call context loaded after TPA IVR: patient=${ctx.patient.fullName}`,
+      );
+    } else if (state.payeeId) {
+      state.patientInfo = null;
+      state.callContext = null;
+      this.logger.warn(
+        '[MediaStream] Payee context missing after TPA IVR — patient details may be unavailable.',
+      );
+    }
+
+    if (!state.patientInfo && !state.payeeId) {
+      state.patientInfo = STATIC_PATIENT_INFO;
+      state.callContext = STATIC_CALL_CONTEXT;
+      this.logger.warn(
+        '[MediaStream] Using static patient info (no payeeId after TPA IVR).',
+      );
+    }
+
+    state.openingGreetingPlayed = true;
+    void pushLiveTracker(`EVA: ${CONVERSATION_GREETING}`);
+    return ttsMs;
   }
 
   /** Convert raw mulaw (8kHz mono) file to wav for transcription API */

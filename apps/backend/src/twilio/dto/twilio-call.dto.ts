@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 /** Body for `POST /twilio/call` — start outbound verification call. */
 export class TwilioInitiateCallDto {
@@ -23,6 +23,15 @@ export class TwilioInitiateCallDto {
   @IsOptional()
   @IsString()
   appointmentId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'When true, EVA navigates the payer IVR first (recording/language silence, provider/representative prompts, member ID and DOB DTMF), then begins the normal EVA intro once a live agent is detected.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  navigateTpaIvr?: boolean;
 }
 
 /** Body for `POST /twilio/call-ivr-and-bypass`. */

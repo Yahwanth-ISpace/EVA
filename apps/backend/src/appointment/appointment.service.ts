@@ -69,6 +69,9 @@ export class AppointmentService {
         toPhoneNumber,
         dto.payeeId,
         appointment.id,
+        {
+          navigateTpaIvr: process.env.EVA_NAVIGATE_TPA_IVR === 'true',
+        },
       );
     } else {
       this.logger.warn(
