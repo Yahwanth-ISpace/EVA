@@ -137,6 +137,12 @@ ${patientBlock}
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
   ) {
+    this.verificationService.parseTranscriptForVerification(
+      payeeId,
+      transcriptToAppend,
+      verificationRequirementId,
+      appointmentId,
+    );
     return this.verificationService.verifyFromExtractedCall(
       payeeId,
       extracted,
@@ -796,11 +802,36 @@ Respond with ONLY a JSON object. No markdown. Format:
    *  Returns null if unrecognised. Supports 0–9999. */
   private wordsToNumber(phrase: string): number | null {
     const words: Record<string, number> = {
-      zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
-      eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13,
-      fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18,
-      nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60,
-      seventy: 70, eighty: 80, ninety: 90, hundred: 100, thousand: 1000,
+      zero: 0,
+      one: 1,
+      two: 2,
+      three: 3,
+      four: 4,
+      five: 5,
+      six: 6,
+      seven: 7,
+      eight: 8,
+      nine: 9,
+      ten: 10,
+      eleven: 11,
+      twelve: 12,
+      thirteen: 13,
+      fourteen: 14,
+      fifteen: 15,
+      sixteen: 16,
+      seventeen: 17,
+      eighteen: 18,
+      nineteen: 19,
+      twenty: 20,
+      thirty: 30,
+      forty: 40,
+      fifty: 50,
+      sixty: 60,
+      seventy: 70,
+      eighty: 80,
+      ninety: 90,
+      hundred: 100,
+      thousand: 1000,
     };
     const tokens = phrase
       .toLowerCase()
@@ -1142,6 +1173,124 @@ Respond with ONLY a JSON object. No markdown. Format:
         out[f] = null;
       }
       return out;
+    }
+  }
+
+  /**
+   * Extract verification fields from a transcript by matching fields mentioned in EVA questions to user responses.
+   * Uses Gemini to parse the transcript and extract values based on verification field definitions.
+   *
+   * @param transcript The full transcript with EVA and User dialog
+   * @param verificationFields Array of field definitions with questions
+   * @returns Structured JSON with extracted values
+   */
+  public async extractVerificationFieldsFromTranscript(
+    transcript: string,
+    verificationFields: Array<{
+      question: string;
+      field: string;
+      required: boolean;
+      order: number;
+    }>,
+  ): Promise<
+    Array<{
+      question: string;
+      field: string;
+      required: boolean;
+      order: number;
+      value: string | null;
+    }>
+  > {
+    if (!verificationFields || verificationFields.length === 0) {
+      return [];
+    }
+
+    try {
+      const fieldDefinitions = verificationFields
+        .map((f, i) => `${i + 1}. Field: "${f.field}"`)
+        .join('\n');
+
+      const prompt = `You are analyzing a call transcript between EVA (from a dental practice) and a USER (from an insurance company).
+
+TASK: For each field, find if EVA asked a question that contains/mentions that field, then extract the corresponding answer from the USER.
+
+FIELDS TO EXTRACT:
+${fieldDefinitions}
+
+TRANSCRIPT:
+${transcript}
+
+INSTRUCTIONS:
+1. For each field name, search the transcript to find when EVA mentions or asks about that field
+2. Once you find EVA's question about that field, locate the USER's response immediately after
+3. Extract ONLY the value from USER's answer - remove filler words, keep only the relevant data (numbers, percentages, dates, amounts, etc.)
+4. If a field is mentioned multiple times, use the FIRST occurrence
+5. If the field is not mentioned or the answer is not found, set value to null
+6. Return ONLY valid JSON (no markdown, no code blocks)
+
+Return JSON in this exact format:
+[
+  { "question": "...", "field": "coverage.basic", "required": true, "order": 1, "value": "50%" },
+  { "question": "...", "field": "deductible.YearlyMaxAmount", "required": true, "order": 2, "value": null }
+]`;
+
+      const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
+      const start = Date.now();
+      const result = await model.generateContent(prompt);
+      this.logger.log(
+        `[Gemini] extractVerificationFieldsFromTranscript completed in ${Date.now() - start}ms`,
+      );
+
+      let jsonString = result.response.text().trim() || '[]';
+
+      if (jsonString.startsWith('```')) {
+        jsonString = jsonString.replace(/```json|```/gi, '').trim();
+      }
+
+      let parsed: any[] = [];
+      try {
+        parsed = JSON.parse(jsonString);
+      } catch (parseErr) {
+        this.logger.error(
+          '❌ Failed to parse Gemini JSON response:',
+          jsonString,
+        );
+        parsed = [];
+      }
+
+      // Ensure all fields are present and properly formatted
+      const result_array: Array<{
+        question: string;
+        field: string;
+        required: boolean;
+        order: number;
+        value: string | null;
+      }> = [];
+      for (const field of verificationFields) {
+        const found = parsed.find((p) => p.field === field.field);
+        result_array.push({
+          question: field.question,
+          field: field.field,
+          required: field.required,
+          order: field.order,
+          value: found?.value ?? null,
+        });
+      }
+      this.logger.log('The final response is: {}', result_array);
+      return result_array;
+    } catch (err) {
+      this.logger.error(
+        '❌ Error extracting verification fields from transcript:',
+        err,
+      );
+      // Return array with null values
+      return verificationFields.map((f) => ({
+        question: f.question,
+        field: f.field,
+        required: f.required,
+        order: f.order,
+        value: null,
+      }));
     }
   }
 }

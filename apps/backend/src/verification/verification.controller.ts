@@ -206,4 +206,54 @@ export class VerificationController {
   async findById(@Param('id') id: string, @Req() req: Request) {
     return this.verificationService.findById(id);
   }
+
+  @UseGuards(ApiTokenGuard)
+  @Post(':payeeId/parse-transcript')
+  @ApiBearerAuth('verifications-api-token')
+  @ApiOperation({
+    summary: 'Parse transcript and extract verification fields using Gemini AI',
+    description:
+      'Analyzes a call transcript to extract verification fields by matching fields mentioned in EVA questions to user responses. Uses Gemini AI for intelligent extraction.',
+  })
+  @ApiParam({
+    name: 'payeeId',
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+  })
+  @ApiBody({
+    schema: {
+      example: {
+        transcriptToAppend: 'EVA: What is the coverage?\nUser: 50%',
+        verificationRequirementId: 'optional-id',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully extracted verification fields',
+    schema: {
+      example: {
+        payeeId: 'payee-123',
+        verificationFields: [
+          {
+            question: 'What is the basic coverage?',
+            field: 'coverage.basic',
+            required: true,
+            order: 1,
+            value: '50%',
+          },
+        ],
+      },
+    },
+  })
+  async parseTranscriptForVerification(
+    @Param('payeeId') payeeId: string,
+    @Body('transcriptToAppend') transcriptToAppend: string,
+    @Body('verificationRequirementId') verificationRequirementId?: string,
+  ) {
+    return this.verificationService.parseTranscriptForVerification(
+      payeeId,
+      transcriptToAppend,
+      verificationRequirementId,
+    );
+  }
 }
