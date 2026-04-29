@@ -652,7 +652,7 @@ export class VerificationService {
    */
   async parseTranscriptForVerification(
     payeeId: string,
-    transcriptToAppend: string,
+    transcriptToAppend?: string,
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
   ): Promise<{
@@ -738,7 +738,8 @@ export class VerificationService {
         transcriptToAppend,
         fieldsToExtract,
       );
-    this.logger.log('Extracted verification fields:::: {}', verificationFields);
+    this.logger.log('Extracted verification appointmentId:', appointmentId);
+    this.logger.log('Extracted verificationfields:::: {}', verificationFields);
     return {
       payeeId,
       verificationFields,
