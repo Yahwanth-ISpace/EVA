@@ -699,25 +699,22 @@ export class VerificationService {
     this.logger.log('Appointment ID: {}', appointmentId);
     this.logger.log('Extracted data: {}', extracted);
     // If verification requirement is provided, get the fields from it
-    if (verificationRequirementId) {
-      const verReq = await this.prisma.verificationRequirement.findUnique({
-        where: { id: verificationRequirementId },
-      });
+    if (extracted) {
+      // const verReq = await this.prisma.verificationRequirement.findUnique({
+      //   where: { id: verificationRequirementId },
+      // });
 
-      if (!verReq) {
-        throw new NotFoundException('VerificationRequirement not found');
-      }
-
+      // if (!verReq) {
+      //   throw new NotFoundException('VerificationRequirement not found');
+      // }
+      const verReq = Object.keys(extracted);
       // If verificationFields is stored as JSON array, parse it
-      if (
-        verReq.verificationFields &&
-        Array.isArray(verReq.verificationFields)
-      ) {
-        fieldsToExtract = (verReq.verificationFields as any[]).map((f, i) => ({
-          question: f.question || '',
-          field: f.field || '',
-          required: f.required ?? true,
-          order: f.order ?? i + 1,
+      if (verReq && Array.isArray(verReq)) {
+        fieldsToExtract = (verReq as any[]).map((f, i) => ({
+          question: '',
+          field: f || '',
+          required: true,
+          order: i + 1,
         }));
       }
     } else {
