@@ -652,7 +652,7 @@ export class VerificationService {
    */
   async parseTranscriptForVerification(
     payeeId: string,
-    extracted:
+    extracted?:
       | Record<string, string | null | undefined>
       | {
           coverage?: string | null;
