@@ -1213,7 +1213,7 @@ Respond with ONLY a JSON object. No markdown. Format:
 
       const prompt = `You are analyzing a call transcript between EVA (from a dental practice) and a USER (from an insurance company).
 
-TASK: For each field, find if EVA asked a question that contains/mentions that field, then extract the corresponding answer from the USER.
+TASK: For each field, find if EVA asked a question that contains/mentions that field, then extract the corresponding answer from the USER. Also extract the actual EVA question text.
 
 FIELDS TO EXTRACT:
 ${fieldDefinitions}
@@ -1223,16 +1223,17 @@ ${transcript}
 
 INSTRUCTIONS:
 1. For each field name, search the transcript to find when EVA mentions or asks about that field
-2. Once you find EVA's question about that field, locate the USER's response immediately after
-3. Extract ONLY the value from USER's answer - remove filler words, keep only the relevant data (numbers, percentages, dates, amounts, etc.)
-4. If a field is mentioned multiple times, use the FIRST occurrence
-5. If the field is not mentioned or the answer is not found, set value to null
-6. Return ONLY valid JSON (no markdown, no code blocks)
+2. Extract the EXACT question text that EVA asked (from the transcript) for that field
+3. Once you find EVA's question about that field, locate the USER's response immediately after
+4. Extract ONLY the value from USER's answer - remove filler words, keep only the relevant data (numbers, percentages, dates, amounts, etc.)
+5. If a field is mentioned multiple times, use the FIRST occurrence
+6. If the field is not mentioned or the answer is not found, set value to null and question to null
+7. Return ONLY valid JSON (no markdown, no code blocks)
 
 Return JSON in this exact format:
 [
-  { "question": "...", "field": "coverage.basic", "required": true, "order": 1, "value": "50%" },
-  { "question": "...", "field": "deductible.YearlyMaxAmount", "required": true, "order": 2, "value": null }
+  { "question": "What is your basic coverage?", "field": "coverage.basic", "required": true, "order": 1, "value": "50%" },
+  { "question": "What is the yearly maximum deductible?", "field": "deductible.YearlyMaxAmount", "required": true, "order": 2, "value": null }
 ]`;
 
       const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
@@ -1270,7 +1271,7 @@ Return JSON in this exact format:
       for (const field of verificationFields) {
         const found = parsed.find((p) => p.field === field.field);
         result_array.push({
-          question: field.question,
+          question: found?.question || field.question,
           field: field.field,
           required: field.required,
           order: field.order,
