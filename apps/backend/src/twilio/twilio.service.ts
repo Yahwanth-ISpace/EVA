@@ -106,6 +106,7 @@ export class TwilioService {
     to: string,
     payeeId: string,
     appointmentId?: string | null,
+    options?: { navigateTpaIvr?: boolean },
   ) {
     if (!fromNumber) {
       throw new Error('TWILIO_PHONE_NUMBER environment variable is not set.');
@@ -115,10 +116,12 @@ export class TwilioService {
     const apptQ = apptId
       ? `&appointmentId=${encodeURIComponent(apptId)}`
       : '';
+    const modeQ =
+      options?.navigateTpaIvr === true ? '&mode=tpa-ivr' : '';
     const call = await client.calls.create({
       to,
       from: fromNumber,
-      url: `${backendBaseUrl}/twilio/inbound-stream?payeeId=${encodeURIComponent(payeeId)}${apptQ}`,
+      url: `${backendBaseUrl}/twilio/inbound-stream?payeeId=${encodeURIComponent(payeeId)}${apptQ}${modeQ}`,
       record: true,
     });
 
