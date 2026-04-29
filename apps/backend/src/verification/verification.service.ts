@@ -652,6 +652,14 @@ export class VerificationService {
    */
   async parseTranscriptForVerification(
     payeeId: string,
+    extracted:
+      | Record<string, string | null | undefined>
+      | {
+          coverage?: string | null;
+          deductible?: string | null;
+          copay?: string | null;
+          validity?: string | null;
+        },
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
@@ -679,7 +687,17 @@ export class VerificationService {
       required: boolean;
       order: number;
     }> = [];
-
+    this.logger.log(
+      'Parsing transcript for verification with payeeId: {}',
+      payeeId,
+    );
+    this.logger.log('Transcript to append: {}', transcriptToAppend);
+    this.logger.log(
+      'Verification requirement ID: {}',
+      verificationRequirementId,
+    );
+    this.logger.log('Appointment ID: {}', appointmentId);
+    this.logger.log('Extracted data: {}', extracted);
     // If verification requirement is provided, get the fields from it
     if (verificationRequirementId) {
       const verReq = await this.prisma.verificationRequirement.findUnique({

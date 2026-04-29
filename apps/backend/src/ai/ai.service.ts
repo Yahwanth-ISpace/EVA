@@ -139,6 +139,7 @@ ${patientBlock}
   ) {
     this.verificationService.parseTranscriptForVerification(
       payeeId,
+      extracted
       transcriptToAppend,
       verificationRequirementId,
       appointmentId,
