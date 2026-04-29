@@ -1225,15 +1225,27 @@ INSTRUCTIONS:
 1. For each field name, search the transcript to find when EVA mentions or asks about that field
 2. Extract the EXACT question text that EVA asked (from the transcript) for that field
 3. Once you find EVA's question about that field, locate the USER's response immediately after
-4. Extract ONLY the value from USER's answer - remove filler words, keep only the relevant data (numbers, percentages, dates, amounts, etc.)
-5. If a field is mentioned multiple times, use the FIRST occurrence
-6. If the field is not mentioned or the answer is not found, set value to null and question to null
-7. Return ONLY valid JSON (no markdown, no code blocks)
+4. Extract ONLY the value from USER's answer - CRITICAL: Convert all text numbers to numeric format:
+   - "Twenty dollars" → "$20" or "20"
+   - "Two thousand four hundred" → "2400"
+   - "Eighty percent" → "80%"
+   - Remove all English word representations and convert to numbers/symbols
+5. Format values appropriately:
+   - Money/amounts: Use $ prefix or number only (e.g., "$50", "50")
+   - Percentages: Use % suffix (e.g., "80%", "50%")
+   - Numbers: Plain digits (e.g., "2400", "123")
+   - Dates: Keep date format (e.g., "February 20, 2027", "2/20/2027")
+6. If a field is mentioned multiple times, use the FIRST occurrence
+7. If the field is not mentioned or the answer is not found, set value to null and question to null
+8. Return ONLY valid JSON (no markdown, no code blocks)
 
 Return JSON in this exact format:
 [
-  { "question": "What is your basic coverage?", "field": "coverage.basic", "required": true, "order": 1, "value": "50%" },
-  { "question": "What is the yearly maximum deductible?", "field": "deductible.YearlyMaxAmount", "required": true, "order": 2, "value": null }
+  { "question": "Can I get the patent ID?", "field": "patentId", "required": true, "order": 1, "value": "2400" },
+  { "question": "Can I get the deductible?", "field": "deductible", "required": true, "order": 2, "value": "$20" },
+  { "question": "May I have the copay?", "field": "copay", "required": true, "order": 3, "value": "$30" },
+  { "question": "Can you provide the validity?", "field": "validity", "required": true, "order": 4, "value": "February 20, 2027" },
+  { "question": "May I have the maxBenefit?", "field": "maxBenefit", "required": true, "order": 5, "value": "80%" }
 ]`;
 
       const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
