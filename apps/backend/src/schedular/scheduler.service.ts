@@ -149,7 +149,6 @@ export class SchedulerService {
     const verificationFields: Array<{
       question: string;
       field: string;
-      required: boolean;
       order: number;
     }> = [];
     let order = 1;
