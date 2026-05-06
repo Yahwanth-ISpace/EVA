@@ -50,7 +50,8 @@ export class SchedulerService {
     try {
       let sampleData = await this.getSampleData();
       this.logger.debug(`Sample data fetched::: ${JSON.stringify(sampleData)}`);
-      finalSample = this.transformSampleDataToVerificationFields(sampleData);
+      let finalSample =
+        this.transformSampleDataToVerificationFields(sampleData);
       this.logger.debug(
         `Sample data transformed::: ${JSON.stringify(finalSample)}`,
       );
@@ -132,7 +133,12 @@ export class SchedulerService {
   }
 
   transformSampleDataToVerificationFields(sampleData: Record<string, any>) {
-    const verificationFields = [];
+    const verificationFields: Array<{
+      question: string;
+      field: string;
+      required: boolean;
+      order: number;
+    }> = [];
     let order = 1;
 
     for (const [key, value] of Object.entries(sampleData)) {
@@ -141,7 +147,7 @@ export class SchedulerService {
 
       if (typeof value === 'object' && value !== null && 'question' in value) {
         verificationFields.push({
-          question: value.question,
+          question: value?.question,
           field: key,
           required: true,
           order: order,
