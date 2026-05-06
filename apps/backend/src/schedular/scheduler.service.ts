@@ -126,9 +126,9 @@ export class SchedulerService {
     try {
       this.logger.log(
         'Fetching appointment data from API...',
-        appointmentListApiUrl,
+        sampleDataApiUrl,
       );
-      const response = await axios.get<Appointment[]>(appointmentListApiUrl, {
+      const response = await axios.get<Appointment[]>(sampleDataApiUrl, {
         headers: { Authorization: `Bearer ${appointmentApiToken}` },
       });
       this.logger.log('Successfully fetched appointment data from API');
