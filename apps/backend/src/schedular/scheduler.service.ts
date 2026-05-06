@@ -28,7 +28,7 @@ const appointmentListApiUrl =
   process.env.APPOINTMENT_LIST_API_URL ||
   'https://unsocial-spud-entrap.ngrok-free.dev/appointments';
 const appointmentApiToken =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzYjgyODIwNC0zMDg2LTQ5ZjgtOGJiZC01YTlkODdkZjcxNTYiLCJlbWFpbCI6InRlZW5hQGRlbnRhbHMuY29tIiwicm9sZSI6IlBBWUVFIiwiZmlyc3ROYW1lIjoiVGVlbmEiLCJsYXN0TmFtZSI6IlN0b25lIiwiZG9iIjoiMjAwMi0wMS0zMVQwMDowMTowMC4wMDBaIiwiaWF0IjoxNzc0NTEwMTk5LCJleHAiOjE3NzQ1OTY1OTl9.FI5fRiUfD3IUCHqHlfiNL7OkzODYJh_fnZPR1TK3lDQ';
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzYjgyODIwNC0zMDg2LTQ5ZjgtOGJiZC01YTlkODdkZjcxNTYiLCJlbWFpbCI6InRlZW5hQGRlbnRhbHMuY29tIiwicm9sZSI6IlBBWUVFIiwiZmlyc3ROYW1lIjoiVGVlbmEiLCJsYXN0TmFtZSI6IlN0b25lIiwiZG9iIjoiMjAwMi0wMS0zMVQwMDowMTowMC4wMDBaIiwiaWF0IjoxNzc4MDY5MzM3LCJleHAiOjE3NzgxNTU3Mzd9.S-LCl3EwlQc_4ecqw7DaVUR2lDW65wgkd2chUVETNDw';
 const sampleDataApiUrl =
   process.env.SAMPLE_DATA_API_URL ||
   'http://localhost:3000/scheduler/sample-data';
@@ -48,17 +48,23 @@ export class SchedulerService {
     }
     this.isProcessing = true;
     try {
-      let sampleData = await this.getSampleData();
-      this.logger.debug(`Sample data fetched::: ${JSON.stringify(sampleData)}`);
-      let finalSample =
-        this.transformSampleDataToVerificationFields(sampleData);
+      let appointmentData = await this.getAppointments();
       this.logger.debug(
-        `Sample data transformed::: ${JSON.stringify(finalSample)}`,
+        `Appointment data fetched::: ${JSON.stringify(appointmentData)}`,
+      );
+      let finalAppointments =
+        this.transformAppointmentDataToVerificationFields(appointmentData);
+      this.logger.debug(
+        `Final appointments::: ${JSON.stringify(finalAppointments)}`,
       );
 
-      const response = await axios.get<Appointment[]>(appointmentListApiUrl, {
-        headers: { Authorization: `Bearer ${appointmentApiToken}` },
-      });
+      const response = await axios.post<Appointment[]>(
+        appointmentListApiUrl,
+        finalAppointments,
+        {
+          headers: { Authorization: `Bearer ${appointmentApiToken}` },
+        },
+      );
       this.logger.debug('Successfully called appointment list API');
       this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
 
@@ -116,23 +122,30 @@ export class SchedulerService {
     });
   }
 
-  async getSampleData() {
+  async getAppointments() {
     try {
-      this.logger.log('Fetching sample data from API...', sampleDataApiUrl);
-      const response = await axios.get<Record<string, any>>(sampleDataApiUrl);
-      this.logger.log('Successfully fetched sample data from API');
-      this.logger.debug(`Sample data: ${JSON.stringify(response.data)}`);
+      this.logger.log(
+        'Fetching appointment data from API...',
+        appointmentListApiUrl,
+      );
+      const response = await axios.get<Appointment[]>(appointmentListApiUrl, {
+        headers: { Authorization: `Bearer ${appointmentApiToken}` },
+      });
+      this.logger.log('Successfully fetched appointment data from API');
+      this.logger.debug(`Appointment data: ${JSON.stringify(response.data)}`);
       return response.data;
     } catch (error) {
       this.logger.error(
-        'Failed to fetch sample data from API',
+        'Failed to fetch appointment data from API',
         error instanceof Error ? error.message : error,
       );
       throw error;
     }
   }
 
-  transformSampleDataToVerificationFields(sampleData: Record<string, any>) {
+  transformAppointmentDataToVerificationFields(
+    appointmentData: Record<string, any>,
+  ) {
     const verificationFields: Array<{
       question: string;
       field: string;
@@ -141,7 +154,7 @@ export class SchedulerService {
     }> = [];
     let order = 1;
 
-    for (const [key, value] of Object.entries(sampleData)) {
+    for (const [key, value] of Object.entries(appointmentData)) {
       // Skip the 'history' array
       if (key === 'history') continue;
 
@@ -149,7 +162,6 @@ export class SchedulerService {
         verificationFields.push({
           question: value?.question,
           field: key,
-          required: true,
           order: order,
         });
         order++;

@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
-import * as sampleData from './sample.json';
+import * as appointmentData from './sample.json';
 
 @Controller('scheduler')
 export class SchedulerController {
@@ -11,6 +11,6 @@ export class SchedulerController {
     description: 'Returns the sample.json file content',
   })
   getSampleData(): Record<string, any> {
-    return sampleData;
+    return appointmentData;
   }
 }
