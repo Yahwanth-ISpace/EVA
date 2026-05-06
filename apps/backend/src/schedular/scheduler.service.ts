@@ -30,8 +30,7 @@ const appointmentListApiUrl =
 const appointmentApiToken =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzYjgyODIwNC0zMDg2LTQ5ZjgtOGJiZC01YTlkODdkZjcxNTYiLCJlbWFpbCI6InRlZW5hQGRlbnRhbHMuY29tIiwicm9sZSI6IlBBWUVFIiwiZmlyc3ROYW1lIjoiVGVlbmEiLCJsYXN0TmFtZSI6IlN0b25lIiwiZG9iIjoiMjAwMi0wMS0zMVQwMDowMTowMC4wMDBaIiwiaWF0IjoxNzc0NTEwMTk5LCJleHAiOjE3NzQ1OTY1OTl9.FI5fRiUfD3IUCHqHlfiNL7OkzODYJh_fnZPR1TK3lDQ';
 const sampleDataApiUrl =
-  process.env.SAMPLE_DATA_API_URL ||
-  'http://localhost:3000/scheduler/sample-data';
+  process.env.SAMPLE_DATA_API_URL || 'http://localhost:3000/assets/sample-data';
 
 @Injectable()
 export class SchedulerService {
