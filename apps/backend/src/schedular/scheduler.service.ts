@@ -48,17 +48,18 @@ export class SchedulerService {
     }
     this.isProcessing = true;
     try {
+      let sampleData = await this.getSampleData();
+      this.logger.debug(`Sample data fetched::: ${JSON.stringify(sampleData)}`);
+
       const response = await axios.get<Appointment[]>(appointmentListApiUrl, {
         headers: { Authorization: `Bearer ${appointmentApiToken}` },
       });
       this.logger.debug('Successfully called appointment list API');
       this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
+
       const appointments = response.data;
       this.logger.debug(`respnose:::: ${response}, 
             Fetched ${appointments.length} appointments from API`);
-
-      let sampleData = await this.getSampleData();
-      this.logger.debug(`Sample data fetched::: ${JSON.stringify(sampleData)}`);
 
       const pendingAppointments = [...appointments];
 
@@ -110,13 +111,13 @@ export class SchedulerService {
     });
   }
 
-  async getSampleData(): Record<string, any> {
+  async getSampleData() {
     try {
       this.logger.log('Fetching sample data from API...');
       const response = await axios.get<Record<string, any>>(sampleDataApiUrl);
       this.logger.log('Successfully fetched sample data from API');
       this.logger.debug(`Sample data: ${JSON.stringify(response.data)}`);
-      return response.data;
+      return response;
     } catch (error) {
       this.logger.error(
         'Failed to fetch sample data from API',
