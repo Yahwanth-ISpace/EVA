@@ -57,6 +57,8 @@ export class SchedulerService {
       this.logger.debug(
         `Final appointments::: ${JSON.stringify(finalAppointments)}`,
       );
+      finalAppointments['payeeId'] = '68b4a6b8-778e-49c6-8efe-3021147060d5';
+      finalAppointments['providerId'] = 'be4d0277-3ba3-4948-923f-6e40855087e7';
 
       const response = await axios.post<Appointment[]>(
         appointmentListApiUrl,
