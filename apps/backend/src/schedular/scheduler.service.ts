@@ -26,9 +26,12 @@ const noOfAgents = process.env.NO_OF_AGENTS
   : 1;
 const appointmentListApiUrl =
   process.env.APPOINTMENT_LIST_API_URL ||
-  'https://beea-35-153-127-242.ngrok-free.app/appointments';
+  'https://unsocial-spud-entrap.ngrok-free.dev/appointments';
 const appointmentApiToken =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzYjgyODIwNC0zMDg2LTQ5ZjgtOGJiZC01YTlkODdkZjcxNTYiLCJlbWFpbCI6InRlZW5hQGRlbnRhbHMuY29tIiwicm9sZSI6IlBBWUVFIiwiZmlyc3ROYW1lIjoiVGVlbmEiLCJsYXN0TmFtZSI6IlN0b25lIiwiZG9iIjoiMjAwMi0wMS0zMVQwMDowMTowMC4wMDBaIiwiaWF0IjoxNzc0NTEwMTk5LCJleHAiOjE3NzQ1OTY1OTl9.FI5fRiUfD3IUCHqHlfiNL7OkzODYJh_fnZPR1TK3lDQ';
+const sampleDataApiUrl =
+  process.env.SAMPLE_DATA_API_URL ||
+  'http://localhost:3000/scheduler/sample-data';
 
 @Injectable()
 export class SchedulerService {
@@ -53,6 +56,9 @@ export class SchedulerService {
       const appointments = response.data;
       this.logger.debug(`respnose:::: ${response}, 
             Fetched ${appointments.length} appointments from API`);
+
+      let sampleData = await this.getSampleData();
+      this.logger.debug(`Sample data fetched::: ${JSON.stringify(sampleData)}`);
 
       const pendingAppointments = [...appointments];
 
@@ -102,6 +108,22 @@ export class SchedulerService {
       where: { id: agent.id },
       data: { status: AgentStatus.IN_PROGRESS, startTime: new Date() },
     });
+  }
+
+  async getSampleData(): Record<string, any> {
+    try {
+      this.logger.log('Fetching sample data from API...');
+      const response = await axios.get<Record<string, any>>(sampleDataApiUrl);
+      this.logger.log('Successfully fetched sample data from API');
+      this.logger.debug(`Sample data: ${JSON.stringify(response.data)}`);
+      return response.data;
+    } catch (error) {
+      this.logger.error(
+        'Failed to fetch sample data from API',
+        error instanceof Error ? error.message : error,
+      );
+      throw error;
+    }
   }
 
   private delay(ms: number) {
