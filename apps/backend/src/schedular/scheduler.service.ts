@@ -50,6 +50,10 @@ export class SchedulerService {
     try {
       let sampleData = await this.getSampleData();
       this.logger.debug(`Sample data fetched::: ${JSON.stringify(sampleData)}`);
+      finalSample = this.transformSampleDataToVerificationFields(sampleData);
+      this.logger.debug(
+        `Sample data transformed::: ${JSON.stringify(finalSample)}`,
+      );
 
       const response = await axios.get<Appointment[]>(appointmentListApiUrl, {
         headers: { Authorization: `Bearer ${appointmentApiToken}` },
@@ -117,7 +121,7 @@ export class SchedulerService {
       const response = await axios.get<Record<string, any>>(sampleDataApiUrl);
       this.logger.log('Successfully fetched sample data from API');
       this.logger.debug(`Sample data: ${JSON.stringify(response.data)}`);
-      return response;
+      return response.data;
     } catch (error) {
       this.logger.error(
         'Failed to fetch sample data from API',
@@ -125,6 +129,28 @@ export class SchedulerService {
       );
       throw error;
     }
+  }
+
+  transformSampleDataToVerificationFields(sampleData: Record<string, any>) {
+    const verificationFields = [];
+    let order = 1;
+
+    for (const [key, value] of Object.entries(sampleData)) {
+      // Skip the 'history' array
+      if (key === 'history') continue;
+
+      if (typeof value === 'object' && value !== null && 'question' in value) {
+        verificationFields.push({
+          question: value.question,
+          field: key,
+          required: true,
+          order: order,
+        });
+        order++;
+      }
+    }
+
+    return { verificationFields };
   }
 
   private delay(ms: number) {
