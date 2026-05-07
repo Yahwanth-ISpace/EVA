@@ -39,11 +39,6 @@ export class CreateAppointmentDto {
         field: 'patient_dob',
         order: 1,
       },
-      {
-        question: 'What is the patient’s insurance ID?',
-        field: 'insurance_id',
-        order: 2,
-      },
     ],
   })
   verificationFields?: VerificationField[];
