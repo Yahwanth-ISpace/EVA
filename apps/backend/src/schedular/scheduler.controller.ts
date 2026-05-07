@@ -18,7 +18,7 @@ export class SchedulerController {
     return appointmentData;
   }
 
-  @Get('verification-fields')
+  @Get('appointment')
   @ApiOperation({
     summary: 'Get verification fields transformed from appointment data',
   })
@@ -27,9 +27,8 @@ export class SchedulerController {
     description:
       'Returns the verification fields with questions, field names, and order',
   })
-  getVerificationFields(): AppointmentDetailsDto {
-    return this.schedulerService.transformAppointmentDataToVerificationFields(
-      appointmentData,
-    );
+  getVerificationFields(): string {
+    this.schedulerService.handleCron();
+    return 'call got triggered, Check logs for details.';
   }
 }

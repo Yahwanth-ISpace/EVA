@@ -8,6 +8,7 @@ import {
   AppointmentDetailsDto,
   VerificationField,
 } from 'src/appointment/dto/appointment-details.dto';
+import { AppointmentService } from 'src/appointment/appointment.service';
 
 // Ensure @nestjs/schedule is installed: npm install @nestjs/schedule
 
@@ -28,11 +29,7 @@ export interface Appointment {
 const noOfAgents = process.env.NO_OF_AGENTS
   ? parseInt(process.env.NO_OF_AGENTS)
   : 1;
-const appointmentListApiUrl =
-  process.env.APPOINTMENT_LIST_API_URL ||
-  'https://unsocial-spud-entrap.ngrok-free.dev/appointments';
-const appointmentApiToken =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzYjgyODIwNC0zMDg2LTQ5ZjgtOGJiZC01YTlkODdkZjcxNTYiLCJlbWFpbCI6InRlZW5hQGRlbnRhbHMuY29tIiwicm9sZSI6IlBBWUVFIiwiZmlyc3ROYW1lIjoiVGVlbmEiLCJsYXN0TmFtZSI6IlN0b25lIiwiZG9iIjoiMjAwMi0wMS0zMVQwMDowMTowMC4wMDBaIiwiaWF0IjoxNzc4MDY5MzM3LCJleHAiOjE3NzgxNTU3Mzd9.S-LCl3EwlQc_4ecqw7DaVUR2lDW65wgkd2chUVETNDw';
+
 const sampleDataApiUrl =
   process.env.SAMPLE_DATA_API_URL ||
   'http://localhost:3000/scheduler/sample-data';
@@ -42,9 +39,11 @@ export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
   private isProcessing = false;
 
-  constructor(private prisma: PrismaService) {}
-
-  @Cron(CronExpression.EVERY_MINUTE)
+  constructor(
+    private prisma: PrismaService,
+    private readonly appointmentService: AppointmentService,
+  ) {}
+  // @Cron(CronExpression.EVERY_MINUTE)
   async handleCron() {
     if (this.isProcessing) {
       this.logger.debug('Previous job processing, skipping...');
@@ -65,22 +64,11 @@ export class SchedulerService {
       this.logger.debug(
         `Final appointments::: ${JSON.stringify(finalAppointments)}`,
       );
-
-      const response = await axios.post<Appointment[]>(
-        appointmentListApiUrl,
-        finalAppointments,
-        {
-          headers: { Authorization: `Bearer ${appointmentApiToken}` },
-        },
-      );
-      this.logger.debug('Successfully called appointment list API');
+      // comment below 2 lines after actually calling
+      const response = this.appointmentService.create(appointment);
       this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
 
-      const appointments = response.data;
-      this.logger.debug(`respnose:::: ${response}, 
-            Fetched ${appointments.length} appointments from API`);
-
-      const pendingAppointments = [...appointments];
+      const pendingAppointments = [...finalAppointments];
 
       while (pendingAppointments.length > 0) {
         const agents: AgentDto[] = await this.prisma.agent.findMany({
@@ -98,7 +86,10 @@ export class SchedulerService {
               this.logger.log(
                 `Processing appointment for ${appointment.patiantName} with agent ${agent.name}`,
               );
-              //   call appointment api for each agent and appointment and update agent status to IN_PROGRESS
+              // un comment below lines  call appointment api for each agent and appointment and update agent status to IN_PROGRESS
+              // const response = this.appointmentService.create(appointment);
+              // this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
+
               await this.callAppointmentApi(agent, appointment);
             }
           }
@@ -136,10 +127,7 @@ export class SchedulerService {
         'Fetching appointment data from API...',
         sampleDataApiUrl,
       );
-      const response = await axios.get<Appointment[]>(sampleDataApiUrl, {
-        headers: { Authorization: `Bearer ${appointmentApiToken}` },
-      });
-      this.logger.log('Successfully fetched appointment data from API');
+      const response = await axios.get<Appointment[]>(sampleDataApiUrl);
       this.logger.debug(`Appointment data: ${JSON.stringify(response.data)}`);
       return response.data;
     } catch (error) {
@@ -174,7 +162,6 @@ export class SchedulerService {
         verificationFields.push({
           question: value?.question,
           field: key,
-          required: true,
           order: order,
         });
         order++;

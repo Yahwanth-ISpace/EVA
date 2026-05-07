@@ -43,7 +43,7 @@ export interface ProviderFacilityDetails {
   Provider_FirstName: string;
   Provider_LastName: string;
   Provider_Mi: string;
-  'Tax id': string;
+  Tax_id: string;
   Provider_IsNonPerson: boolean;
   Provider_NPI: string;
   Provider_Network: string;
@@ -66,7 +66,6 @@ export interface CallingScript {
 export interface VerificationField {
   question: string;
   field: string;
-  required?: boolean;
   order: number;
   value?: string;
 }
