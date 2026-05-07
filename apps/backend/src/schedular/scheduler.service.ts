@@ -65,7 +65,7 @@ export class SchedulerService {
         `Final appointments::: ${JSON.stringify(finalAppointments)}`,
       );
       // comment below 2 lines after actually calling
-      const response = this.appointmentService.create(appointment);
+      const response = this.appointmentService.create(finalAppointments);
       this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
 
       const pendingAppointments = [...finalAppointments];
@@ -142,21 +142,13 @@ export class SchedulerService {
   transformAppointmentDataToVerificationFields(
     appointmentData: Record<string, any>,
   ): AppointmentDetailsDto {
+    const transformedData: any = {};
     const verificationFields: VerificationField[] = [];
     let order = 1;
 
     for (const [key, value] of Object.entries(appointmentData)) {
       // Skip the 'history' array and known object keys
-      if (
-        key === 'history' ||
-        key === 'general_details' ||
-        key === 'patient_details' ||
-        key === 'insurance_details' ||
-        key === 'insurance_group' ||
-        key === 'provider_facility_details' ||
-        key === 'calling_script'
-      )
-        continue;
+      if (key === 'history') continue;
 
       if (typeof value === 'object' && value !== null && 'question' in value) {
         verificationFields.push({
@@ -165,19 +157,12 @@ export class SchedulerService {
           order: order,
         });
         order++;
+      } else if (typeof value === 'string' || typeof value === 'number') {
+        transformedData[key] = value;
       }
     }
-
-    return {
-      general_details: appointmentData?.general_details || {},
-      patient_details: appointmentData?.patient_details || {},
-      insurance_details: appointmentData?.insurance_details || {},
-      insurance_group: appointmentData?.insurance_group || {},
-      provider_facility_details:
-        appointmentData?.provider_facility_details || {},
-      calling_script: appointmentData?.calling_script || {},
-      verificationFields,
-    };
+    transformedData['verificationFields'] = verificationFields;
+    return transformedData;
   }
 
   private delay(ms: number) {

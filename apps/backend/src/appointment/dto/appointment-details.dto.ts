@@ -1,14 +1,33 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+export interface VerificationField {
+  question: string;
+  field: string;
+  order: number;
+  value?: string;
+}
 
-export interface GeneralDetails {
+export interface AppointmentDetailsDto {
   ClientID: number;
   UserID: number;
   AppointmentID: number;
   AppointmentDate: string;
   AppointmentNote: string;
-}
-
-export interface PatientDetails {
+  Insurance_GroupName: string;
+  Insurance_GroupNumber: string;
+  InsurancePlan_GroupName: string;
+  InsuranceBusinessKey: string;
+  PristinePlanMasterID: number;
+  PMSType: string;
+  Pgid: string;
+  FeeSchedule: string;
+  PlanType: string;
+  Patient_OfficeID: string;
+  Patient_OfficeName: string;
+  Patient_OfficeStreet1: string;
+  Patient_OfficeStreet2: string;
+  Patient_OfficeCity: string;
+  Patient_OfficeState: string;
+  Patient_OfficeZip: string;
+  json_id: string;
   PatientID: string;
   PatientBusinessKey: string;
   Patient_FirstName: string;
@@ -21,61 +40,25 @@ export interface PatientDetails {
   Insured_LastName: string;
   Insured_DOB: string;
   SubscriberID: string;
-}
-
-export interface InsuranceDetails {
   InsuranceCompany_Name: string;
   InsuranceCompany_Phone: string;
   InsuranceCompany_Phone_Ext: string;
-}
-
-export interface InsuranceGroupItem {
-  question: string;
-  answer: string;
-}
-
-export interface InsuranceGroup {
-  GroupName: InsuranceGroupItem;
-  GroupNumber: InsuranceGroupItem;
-}
-
-export interface ProviderFacilityDetails {
+  PriSecTerQua: string;
   Provider_FirstName: string;
   Provider_LastName: string;
   Provider_Mi: string;
-  Tax_id: string;
   Provider_IsNonPerson: boolean;
   Provider_NPI: string;
   Provider_Network: string;
   Provider_Specialty: string;
   OfficeName: string;
   OfficeBusinessKey: string;
-  OfficeID: number;
+  OfficeID: string;
   OfficeCode: string;
   OfficeStreet1: string;
   OfficeStreet2: string;
   OfficeCity: string;
   OfficeState: string;
   OfficeZip: string;
-}
-
-export interface CallingScript {
-  Client_Specific_Fields: string;
-}
-
-export interface VerificationField {
-  question: string;
-  field: string;
-  order: number;
-  value?: string;
-}
-
-export interface AppointmentDetailsDto {
-  general_details: GeneralDetails;
-  patient_details: PatientDetails;
-  insurance_details: InsuranceDetails;
-  insurance_group: InsuranceGroup;
-  provider_facility_details: ProviderFacilityDetails;
-  calling_script: CallingScript;
   verificationFields: VerificationField[];
 }
