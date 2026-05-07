@@ -66,7 +66,7 @@ export class SchedulerService {
       );
       // comment below 2 lines after actually calling
       const response = this.appointmentService.create(finalAppointments);
-      this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
+      this.logger.log(`API Response:::::::: ${JSON.stringify(response)}`);
 
       const pendingAppointments = [...finalAppointments];
 

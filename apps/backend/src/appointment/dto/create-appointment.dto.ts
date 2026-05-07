@@ -1,8 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString } from 'class-validator';
-import { AppointmentDetailsDto } from './appointment-details.dto';
 
-export class CreateAppointmentDto extends AppointmentDetailsDto {
+export class CreateAppointmentDto {
   @ApiProperty({ example: 'payee-uuid-here' })
   @IsString()
   payeeId: string;
