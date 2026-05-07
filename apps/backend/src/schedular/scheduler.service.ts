@@ -12,20 +12,6 @@ import { AppointmentService } from 'src/appointment/appointment.service';
 
 // Ensure @nestjs/schedule is installed: npm install @nestjs/schedule
 
-export interface ProviderDetails {
-  payeeId: string;
-  providerId: string;
-  officeId: string;
-  date: string;
-  notes: string;
-}
-
-export interface Appointment {
-  patiantName: string;
-  PatiantDOB: string;
-  providerDetails: ProviderDetails;
-}
-
 const noOfAgents = process.env.NO_OF_AGENTS
   ? parseInt(process.env.NO_OF_AGENTS)
   : 1;
@@ -108,9 +94,12 @@ export class SchedulerService {
     }
   }
 
-  async callAppointmentApi(agent: any, appointment: Appointment) {
+  async callAppointmentApi(
+    agent: AgentDto,
+    appointment: AppointmentDetailsDto,
+  ) {
     this.logger.log(
-      `Calling appointment API for ${appointment.patiantName} with agent ${agent.name}`,
+      `Calling appointment API for ${appointment.Patient_FirstName} ${appointment.Patient_LastName} with agent ${agent.name}`,
     );
     await this.prisma.agent.update({
       where: { id: agent.id },
