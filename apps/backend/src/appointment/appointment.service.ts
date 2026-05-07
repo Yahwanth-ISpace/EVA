@@ -18,6 +18,7 @@ export class AppointmentService {
   ) {}
 
   async create(dto: CreateAppointmentDto) {
+    this.logger.debug(`Creating appointment with data: ${JSON.stringify(dto)}`);
     const payee = await this.prisma.payee.findUnique({
       where: { id: dto.payeeId },
     });

@@ -4,6 +4,10 @@ import axios from 'axios';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AgentStatus } from '@prisma/client';
 import { AgentDto } from './dto/agent.dto';
+import {
+  AppointmentDetailsDto,
+  VerificationField,
+} from 'src/appointment/dto/appointment-details.dto';
 
 // Ensure @nestjs/schedule is installed: npm install @nestjs/schedule
 
@@ -54,11 +58,13 @@ export class SchedulerService {
       );
       let finalAppointments =
         this.transformAppointmentDataToVerificationFields(appointmentData);
+
+      finalAppointments['payeeId'] = '68b4a6b8-778e-49c6-8efe-3021147060d5';
+      finalAppointments['providerId'] = 'be4d0277-3ba3-4948-923f-6e40855087e7';
+
       this.logger.debug(
         `Final appointments::: ${JSON.stringify(finalAppointments)}`,
       );
-      finalAppointments['payeeId'] = '68b4a6b8-778e-49c6-8efe-3021147060d5';
-      finalAppointments['providerId'] = 'be4d0277-3ba3-4948-923f-6e40855087e7';
 
       const response = await axios.post<Appointment[]>(
         appointmentListApiUrl,
@@ -147,29 +153,44 @@ export class SchedulerService {
 
   transformAppointmentDataToVerificationFields(
     appointmentData: Record<string, any>,
-  ) {
-    const verificationFields: Array<{
-      question: string;
-      field: string;
-      order: number;
-    }> = [];
+  ): AppointmentDetailsDto {
+    const verificationFields: VerificationField[] = [];
     let order = 1;
 
     for (const [key, value] of Object.entries(appointmentData)) {
-      // Skip the 'history' array
-      if (key === 'history') continue;
+      // Skip the 'history' array and known object keys
+      if (
+        key === 'history' ||
+        key === 'general_details' ||
+        key === 'patient_details' ||
+        key === 'insurance_details' ||
+        key === 'insurance_group' ||
+        key === 'provider_facility_details' ||
+        key === 'calling_script'
+      )
+        continue;
 
       if (typeof value === 'object' && value !== null && 'question' in value) {
         verificationFields.push({
           question: value?.question,
           field: key,
+          required: true,
           order: order,
         });
         order++;
       }
     }
 
-    return { verificationFields };
+    return {
+      general_details: appointmentData?.general_details || {},
+      patient_details: appointmentData?.patient_details || {},
+      insurance_details: appointmentData?.insurance_details || {},
+      insurance_group: appointmentData?.insurance_group || {},
+      provider_facility_details:
+        appointmentData?.provider_facility_details || {},
+      calling_script: appointmentData?.calling_script || {},
+      verificationFields,
+    };
   }
 
   private delay(ms: number) {

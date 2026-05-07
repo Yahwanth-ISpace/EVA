@@ -1,4 +1,71 @@
 {
+  "general_details": {
+    "ClientID": 20,
+    "UserID": 5106,
+    "AppointmentID": 593654,
+    "AppointmentDate": "2026-04-02",
+    "AppointmentNote": ""
+  },
+
+  "patient_details": {
+    "PatientID": "1003245-1717939",
+    "PatientBusinessKey": "1003245-1717939",
+    "Patient_FirstName": "Kirk",
+    "Patient_LastName": "GoldingJr",
+    "Patient_Mi": "",
+    "Patient_DOB": "2018-06-24",
+    "SSN": "",
+    "Patient_Zip": "08106",
+
+    "Insured_FirstName": "Kirk",
+    "Insured_LastName": "GoldingJr",
+    "Insured_DOB": "2018-06-24",
+    "SubscriberID": "122102362"
+  },
+
+  "insurance_details": {
+    "InsuranceCompany_Name": "United Healthcare MA NJ",
+    "InsuranceCompany_Phone": "877-905-0659 ",
+    "InsuranceCompany_Phone_Ext": "",
+ 
+  },
+
+  "insurance_group": {
+    "GroupName": {
+      "question": "What is the insurance group name?",
+      "answer": "MA NJ UHC FamilyCare A/B"
+    },
+    "GroupNumber": {
+      "question": "What is the insurance group number?",
+      "answer": "A/B UHC"
+    }
+  },
+
+  "provider_facility_details": {
+    "Provider_FirstName": "Recall",
+    "Provider_LastName": "Cherry Hill, NJ",
+    "Provider_Mi": "",
+    "Tax id":"200120892"
+    "Provider_IsNonPerson": false,
+    "Provider_NPI": "",
+    "Provider_Network": "In",
+    "Provider_Specialty": "Dental Hygienist",
+
+    "OfficeName": "PDA_CHERRY",
+    "OfficeBusinessKey": "2-1003245",
+    "OfficeID": 64,
+    "OfficeCode": "PDA_CHERRY",
+    "OfficeStreet1": "805 Route 38",
+    "OfficeStreet2": "",
+    "OfficeCity": "Cherry Hill",
+    "OfficeState": "NJ",
+    "OfficeZip": "08002"
+  },
+  
+  "calling_script": {
+    "Client_Specific_Fields": ""
+  },
+
   "Preventive": {
     "question": "What is the Preventive percentage?",
     "answer": null
