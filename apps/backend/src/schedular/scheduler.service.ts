@@ -58,9 +58,6 @@ export class SchedulerService {
       let finalAppointments =
         this.transformAppointmentDataToVerificationFields(appointmentData);
 
-      finalAppointments['payeeId'] = '68b4a6b8-778e-49c6-8efe-3021147060d5';
-      finalAppointments['providerId'] = 'be4d0277-3ba3-4948-923f-6e40855087e7';
-
       this.logger.debug(
         `Final appointments::: ${JSON.stringify(finalAppointments)}`,
       );
@@ -68,7 +65,7 @@ export class SchedulerService {
       const response = this.appointmentService.create(finalAppointments);
       this.logger.log(`API Response:::::::: ${JSON.stringify(response)}`);
 
-      const pendingAppointments = [...finalAppointments];
+      const pendingAppointments = [finalAppointments];
 
       while (pendingAppointments.length > 0) {
         const agents: AgentDto[] = await this.prisma.agent.findMany({
