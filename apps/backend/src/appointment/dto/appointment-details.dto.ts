@@ -1,3 +1,5 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString } from 'class-validator';
 export interface VerificationField {
   question: string;
   field: string;
@@ -5,7 +7,7 @@ export interface VerificationField {
   value?: string;
 }
 
-export interface AppointmentDetailsDto {
+export class AppointmentDetailsDto {
   ClientID: number;
   UserID: number;
   AppointmentID: number;
@@ -60,26 +62,26 @@ export interface AppointmentDetailsDto {
   OfficeCity: string;
   OfficeState: string;
   OfficeZip: string;
-    verificationFields: VerificationField[];
-    
-     @ApiProperty({ example: 'payee-uuid-here' })
-      @IsString()
-      payeeId: string;
-    
-      @ApiProperty({ example: 'provider-uuid-here' })
-      @IsString()
-      providerId: string;
-    
-      @ApiProperty({ example: 'office-uuid-here' })
-      @IsString()
-      officeId: string;
-    
-      @ApiProperty({ example: '2025-04-15T14:00:00.000Z' })
-      @IsString()
-      date: string;
-    
-      @ApiPropertyOptional({ example: 'First cleaning visit' })
-      @IsOptional()
-      @IsString()
-      notes?: string;
+  verificationFields: VerificationField[];
+
+  @ApiProperty({ example: 'payee-uuid-here' })
+  @IsString()
+  payeeId: string;
+
+  @ApiProperty({ example: 'provider-uuid-here' })
+  @IsString()
+  providerId: string;
+
+  @ApiProperty({ example: 'office-uuid-here' })
+  @IsString()
+  officeId: string;
+
+  @ApiProperty({ example: '2025-04-15T14:00:00.000Z' })
+  @IsString()
+  date: string;
+
+  @ApiPropertyOptional({ example: 'First cleaning visit' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
