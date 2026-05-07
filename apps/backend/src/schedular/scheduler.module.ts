@@ -5,9 +5,10 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { SchedulerService } from './scheduler.service';
 import { SchedulerController } from './scheduler.controller';
 import { PrismaModule } from 'src/prisma/prisma.module';
+import { AppointmentModule } from 'src/appointment/appointment.module';
 
 @Module({
-  imports: [PrismaModule, ScheduleModule.forRoot()],
+  imports: [PrismaModule, ScheduleModule.forRoot(), AppointmentModule],
   controllers: [SchedulerController],
   providers: [SchedulerService],
 })
