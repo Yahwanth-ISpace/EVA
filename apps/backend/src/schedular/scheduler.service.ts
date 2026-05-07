@@ -67,7 +67,7 @@ export class SchedulerService {
             const appointment = pendingAppointments.shift();
             if (appointment) {
               this.logger.log(
-                `Processing appointment for ${appointment.patiantName} with agent ${agent.name}`,
+                `Processing appointment for ${appointment.Patient_FirstName} ${appointment.Patient_LastName} with agent ${agent.name}`,
               );
               // un comment below lines  call appointment api for each agent and appointment and update agent status to IN_PROGRESS
               // const response = this.appointmentService.create(appointment);
@@ -113,7 +113,7 @@ export class SchedulerService {
         'Fetching appointment data from API...',
         sampleDataApiUrl,
       );
-      const response = await axios.get<Appointment[]>(sampleDataApiUrl);
+      const response = await axios.get<any[]>(sampleDataApiUrl);
       this.logger.debug(`Appointment data: ${JSON.stringify(response.data)}`);
       return response.data;
     } catch (error) {
