@@ -284,6 +284,47 @@ export class TwilioController {
   }
 
   /**
+   * Play DTMF digits into an in-progress IVR-bypass call, then reconnect the media stream
+   * in ivr-bypass mode so phase 1 can continue until a live agent is reached.
+   * Query: `digits` (Twilio: 0-9, w/W pauses, # *), optional `payeeId`, optional `appointmentId`.
+   */
+  @Get('ivr-bypass-dtmf')
+  @Post('ivr-bypass-dtmf')
+  @ApiOperation({
+    summary: 'Send DTMF then reconnect IVR bypass stream',
+    description:
+      'Returns TwiML `<Play digits/><Connect><Stream...mode=ivr-bypass/></Connect>`.',
+  })
+  @ApiProduces('text/xml')
+  ivrBypassDtmf(
+    @Query('digits') digits: string,
+    @Query('payeeId') payeeId: string,
+    @Query('appointmentId') appointmentId: string,
+    @Res() res: Response,
+  ) {
+    const raw = (digits || '').trim();
+    if (!raw || !/^[\d#*wW]+$/.test(raw)) {
+      throw new BadRequestException(
+        'Query `digits` is required and must contain only 0-9, #, *, w, W.',
+      );
+    }
+    const pid = (payeeId || '').trim();
+    const q = new URLSearchParams({ mode: 'ivr-bypass' });
+    if (pid) q.set('payeeId', pid);
+    if (appointmentId?.trim()) q.set('appointmentId', appointmentId.trim());
+    const streamUrl = `${getStreamBaseUrl()}/twilio/media-stream?${q.toString()}`;
+
+    res.type('text/xml').send(`
+      <Response>
+        <Play digits="${escapeXmlAttr(raw)}" />
+        <Connect>
+          <Stream url="${escapeXmlAttr(streamUrl)}" />
+        </Connect>
+      </Response>
+    `);
+  }
+
+  /**
    * Play DTMF digits into an in-progress call, then reconnect the media stream for TPA IVR navigation.
    * Query: `digits` (Twilio: 0-9, w/W pauses, # *), `payeeId`, optional `appointmentId`.
    */
