@@ -185,6 +185,21 @@ export class SchedulerService {
         transformedData[key] = value;
       }
     }
+
+    // Process history array and add to verificationFields
+    if (appointmentData.history && Array.isArray(appointmentData.history)) {
+      for (const historyItem of appointmentData.history) {
+        if (historyItem.question && historyItem.procedurecode) {
+          verificationFields.push({
+            question: historyItem.question,
+            field: `history.${historyItem.procedurecode}`,
+            order: order,
+          });
+          order++;
+        }
+      }
+    }
+
     transformedData['verificationFields'] = verificationFields;
     return transformedData;
   }
