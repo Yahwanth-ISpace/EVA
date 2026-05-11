@@ -9,6 +9,7 @@ import {
   VerificationField,
 } from 'src/appointment/dto/appointment-details.dto';
 import { AppointmentService } from 'src/appointment/appointment.service';
+import { MongoService } from 'src/mongo/mongo.service';
 
 // Ensure @nestjs/schedule is installed: npm install @nestjs/schedule
 
@@ -28,6 +29,7 @@ export class SchedulerService {
   constructor(
     private prisma: PrismaService,
     private readonly appointmentService: AppointmentService,
+    private readonly mongoService: MongoService,
   ) {}
   // @Cron(CronExpression.EVERY_MINUTE)
   async handleCron() {
@@ -41,6 +43,8 @@ export class SchedulerService {
       this.logger.debug(
         `Appointment data fetched::: ${JSON.stringify(appointmentData)}`,
       );
+      await this.saveRawAppointmentDataToMongo(appointmentData);
+
       let finalAppointments =
         this.transformAppointmentDataToVerificationFields(appointmentData);
 
@@ -48,7 +52,7 @@ export class SchedulerService {
         `Final appointments::: ${JSON.stringify(finalAppointments)}`,
       );
       // comment below 2 lines after actually calling
-      const response = this.appointmentService.create(finalAppointments);
+      const response = await this.appointmentService.create(finalAppointments);
       this.logger.log(`API Response:::::::: ${JSON.stringify(response)}`);
 
       const pendingAppointments = [finalAppointments];
@@ -113,7 +117,7 @@ export class SchedulerService {
         'Fetching appointment data from API...',
         sampleDataApiUrl,
       );
-      const response = await axios.get<any[]>(sampleDataApiUrl);
+      const response = await axios.get<any>(sampleDataApiUrl);
       this.logger.debug(`Appointment data: ${JSON.stringify(response.data)}`);
       return response.data;
     } catch (error) {
@@ -123,6 +127,40 @@ export class SchedulerService {
       );
       throw error;
     }
+  }
+
+  private async saveRawAppointmentDataToMongo(
+    appointmentData: Record<string, any>,
+  ) {
+    const db = await this.mongoService.getDb();
+    const collection = db.collection('appointments');
+
+    const appointmentId = appointmentData?.AppointmentID;
+    const patientId = appointmentData?.PatientID;
+    if (appointmentId != null && patientId != null) {
+      const existing = await collection.findOne({
+        AppointmentID: appointmentId,
+        PatientID: patientId,
+      });
+
+      if (existing) {
+        this.logger.log(
+          `Appointment data already exists in MongoDB for AppointmentID=${appointmentId}, PatientID=${patientId}`,
+        );
+        return existing;
+      }
+    }
+
+    const document = {
+      ...appointmentData,
+      savedAt: new Date(),
+      source: 'scheduler',
+    };
+    const result = await collection.insertOne(document);
+    this.logger.log(
+      `Saved raw appointment data to MongoDB: ${result.insertedId}`,
+    );
+    return result;
   }
 
   transformAppointmentDataToVerificationFields(
