@@ -1,4 +1,4 @@
-import { forwardRef, useMemo } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildLiveActivityChatRows,
   formatLiveLogTimestamp,
@@ -8,8 +8,6 @@ import {
   type TpaEmotionTone,
   type TranscriptTurn,
 } from "../utils/botTracker";
-
-export type CallFooterPhase = "barge" | "end";
 
 export interface CallActivitySectionProps {
   callLogTab: "live" | "transcript";
@@ -21,11 +19,12 @@ export interface CallActivitySectionProps {
   hasTranscript: boolean;
   transcriptText: string;
   onLiveScroll: () => void;
-  callFooterPhase: CallFooterPhase;
-  onBargeInClick: () => void;
+  onHoldClick: () => void;
+  holdLoading?: boolean;
   onEndCallClick: () => void;
   endCallLoading?: boolean;
-  canEndCall: boolean;
+  /** True when we have a Twilio Call SID (required for hold / end APIs). */
+  canControlCall: boolean;
 }
 
 function CallChatColumnHeader() {
@@ -271,18 +270,42 @@ export const CallActivitySection = forwardRef<
     hasTranscript,
     transcriptText,
     onLiveScroll,
-    callFooterPhase,
-    onBargeInClick,
+    onHoldClick,
+    holdLoading = false,
     onEndCallClick,
     endCallLoading = false,
-    canEndCall,
+    canControlCall,
   },
   ref,
 ) {
+  /** Pauses what you see in this panel (snapshot); does not change the phone call. */
+  const [listenMuted, setListenMuted] = useState(false);
+  const frozenLiveRef = useRef<BotTrackerRecord[]>([]);
+
+  const displayLiveChronological = listenMuted
+    ? frozenLiveRef.current
+    : liveChronological;
+
+  const toggleListenMute = () => {
+    setListenMuted((muted) => {
+      if (!muted) {
+        frozenLiveRef.current = [...liveChronological];
+      }
+      return !muted;
+    });
+  };
+
   const liveChatRows = useMemo(
-    () => buildLiveActivityChatRows(liveChronological),
-    [liveChronological],
+    () => buildLiveActivityChatRows(displayLiveChronological),
+    [displayLiveChronological],
   );
+
+  useEffect(() => {
+    if (!isCallInProgress) {
+      setListenMuted(false);
+      frozenLiveRef.current = [];
+    }
+  }, [isCallInProgress]);
 
   return (
     <section className="flex flex-col flex-1 min-h-0 p-4 sm:p-5 border-0 bg-slate-50/40">
@@ -389,7 +412,13 @@ export const CallActivitySection = forwardRef<
               onScroll={onLiveScroll}
               className="flex-1 min-h-0 overflow-y-auto scroll-smooth custom-scrollbar bg-slate-100/50 p-3 sm:p-4"
             >
-              {liveChronological.length > 0 ? (
+              {listenMuted ? (
+                <div className="mb-2 rounded-lg border border-amber-200/90 bg-amber-50/90 px-3 py-2 text-[11px] text-amber-900">
+                  Live feed paused in this panel — new lines still arrive in the
+                  background. Unmute to catch up.
+                </div>
+              ) : null}
+              {displayLiveChronological.length > 0 ? (
                 <div
                   className="flex flex-col gap-3 pr-0.5"
                   role="log"
@@ -493,27 +522,94 @@ export const CallActivitySection = forwardRef<
         </div>
       </div>
 
-      <div className="mt-3 shrink-0 px-0.5">
-        {callFooterPhase === "barge" ? (
-          <button
-            type="button"
-            disabled={!isCallInProgress}
-            onClick={onBargeInClick}
-            className="w-full rounded-lg py-2.5 text-center text-sm font-semibold shadow-sm transition-colors disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none bg-indigo-600 text-white hover:bg-indigo-700"
-          >
-            Barge in
-          </button>
-        ) : (
-          <button
-            type="button"
-            disabled={!canEndCall || endCallLoading}
-            onClick={onEndCallClick}
-            className="w-full rounded-lg py-2.5 text-center text-sm font-semibold shadow-sm transition-colors disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none bg-red-600 text-white hover:bg-red-700"
-          >
-            {endCallLoading ? "Ending…" : "End call"}
-          </button>
-        )}
-      </div>
+      {isCallInProgress ? (
+        <div className="mt-3 shrink-0 px-0.5 space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={!canControlCall || holdLoading}
+              onClick={onHoldClick}
+              title="Twilio hold — EVA media stream stops until the call is redirected back to the stream URL"
+              className="inline-flex flex-1 min-w-[5.5rem] items-center justify-center gap-1.5 rounded-lg border border-amber-300/90 bg-amber-50 px-3 py-2.5 text-sm font-semibold text-amber-900 shadow-sm transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
+            >
+              <svg
+                className="h-4 w-4 shrink-0 opacity-90"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+                aria-hidden
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              {holdLoading ? "Holding…" : "Hold"}
+            </button>
+            <button
+              type="button"
+              onClick={toggleListenMute}
+              aria-pressed={listenMuted}
+              title="Pause new lines in this live view only"
+              className={`inline-flex flex-1 min-w-[5.5rem] items-center justify-center gap-1.5 rounded-lg border px-3 py-2.5 text-sm font-semibold shadow-sm transition-colors ${
+                listenMuted
+                  ? "border-indigo-400 bg-indigo-100 text-indigo-900 hover:bg-indigo-200/80"
+                  : "border-slate-300/90 bg-white text-slate-800 hover:bg-slate-50"
+              }`}
+            >
+              <svg
+                className="h-4 w-4 shrink-0 opacity-90"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.75}
+                aria-hidden
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
+                />
+                {listenMuted ? (
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M4.5 4.5l15 15"
+                  />
+                ) : null}
+              </svg>
+              {listenMuted ? "Unmute" : "Mute"}
+            </button>
+            <button
+              type="button"
+              disabled={!canControlCall || endCallLoading}
+              onClick={onEndCallClick}
+              className="inline-flex flex-1 min-w-[5.5rem] items-center justify-center gap-1.5 rounded-lg bg-red-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
+            >
+              <svg
+                className="h-4 w-4 shrink-0 opacity-95"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+                aria-hidden
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 1.1.9 2 2 2h1m10 0h1a2 2 0 002-2V5a2 2 0 00-2-2m-4 12v1a2 2 0 002 2h1a2 2 0 002-2v-1m-8 0H5a2 2 0 01-2-2v-1a2 2 0 012-2h1"
+                />
+              </svg>
+              {endCallLoading ? "Ending…" : "End"}
+            </button>
+          </div>
+          <p className="text-[10px] text-slate-500 leading-snug px-0.5">
+            Hold and End use Twilio. Mute only freezes this live panel.
+          </p>
+        </div>
+      ) : null}
     </section>
   );
 });

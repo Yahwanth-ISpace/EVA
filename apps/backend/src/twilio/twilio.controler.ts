@@ -24,6 +24,7 @@ import {
   TwilioCallIvrDto,
   TwilioEndCallDto,
   TwilioInitiateCallDto,
+  TwilioPutOnHoldDto,
 } from './dto/twilio-call.dto';
 
 const backendBaseUrl = (process.env.BACKEND_URL || '').trim() || `http://localhost:${process.env.PORT ?? 3000}`;
@@ -421,13 +422,52 @@ export class TwilioController {
     );
   }
 
+  /**
+   * TwiML for hold: brief message + looping music. Twilio fetches this URL when you `PUT`/`POST` redirect the call here.
+   * Optional `TWILIO_HOLD_MUSIC_URL` (mp3/wav); defaults to Twilio sample classical clip.
+   */
+  @Get('hold-music')
+  @Post('hold-music')
+  @ApiOperation({
+    summary: 'Hold music (TwiML)',
+    description:
+      'Returns `<Say>` + `<Play loop="0">` using `TWILIO_HOLD_MUSIC_URL` or a default URL. Used by `POST /twilio/put-on-hold`.',
+  })
+  @ApiProduces('text/xml')
+  holdMusic(@Res() res: Response) {
+    const moh = (
+      process.env.TWILIO_HOLD_MUSIC_URL?.trim() ||
+      'http://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3'
+    ).trim();
+    res.type('text/xml').send(`
+      <Response>
+        <Say voice="alice">Please hold.</Say>
+        <Play loop="0">${escapeXmlAttr(moh)}</Play>
+      </Response>
+    `);
+  }
+
+  @Post('put-on-hold')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('jwt-auth')
+  @ApiOperation({
+    summary: 'Put active Twilio call on hold',
+    description:
+      'Calls Twilio `POST /Calls/{CallSid}.json` with `Url` set to this server’s `/twilio/hold-music` (ends any in-progress `<Connect><Stream>` until you redirect the call elsewhere). Requires JWT.',
+  })
+  @ApiBody({ type: TwilioPutOnHoldDto })
+  async putOnHold(@Body() body: TwilioPutOnHoldDto) {
+    await this.twilioService.putCallOnHold(body.callSid);
+    return { ok: true };
+  }
+
   @Post('end-call')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('jwt-auth')
   @ApiOperation({
     summary: 'End active Twilio call',
     description:
-      'Completes the call by Call SID (e.g. parsed from bot-tracker live events). Requires JWT.',
+      'Twilio REST: sets call `Status` to `completed` for the given Call SID (e.g. from live events). Requires JWT.',
   })
   @ApiBody({ type: TwilioEndCallDto })
   async endCall(@Body() body: TwilioEndCallDto) {

@@ -62,9 +62,13 @@ const IVR_BYPASS_FALLBACK_MS = 2500;
 /** IVR bypass: minimum audio bytes before running STT (~0.5 s). */
 const IVR_BYPASS_MIN_BYTES = 4_000;
 
-/** TPA phone tree: stay silent through recording + language prompt (ms from call start). Override via `TPA_IVR_INITIAL_SILENCE_MS`. */
-const TPA_IVR_INITIAL_SILENCE_MS = Number(
-  process.env.TPA_IVR_INITIAL_SILENCE_MS || 16000,
+/** If no IVR start phrase is detected, begin scripted matching after this many ms. */
+const TPA_IVR_FORCE_START_MS = Number(
+  process.env.TPA_IVR_FORCE_START_MS || 28000,
+);
+/** After English recording disclaimer, auto-skip waiting for Spanish if not heard (ms). */
+const TPA_IVR_SPANISH_WAIT_MS = Number(
+  process.env.TPA_IVR_SPANISH_WAIT_MS || 16000,
 );
 
 function streamModeUsesIvrTiming(
@@ -91,6 +95,112 @@ function buildDobDtmf(dob: Date | null | undefined): string | null {
   return core + suffix;
 }
 
+/** Provider tax ID / TIN for keypad (digits only). Optional `TPA_IVR_TAX_ID_SUFFIX`. */
+function buildTaxIdDtmf(taxId: string | null | undefined): string {
+  const digits = (taxId || '').replace(/\D/g, '');
+  const suffix = (process.env.TPA_IVR_TAX_ID_SUFFIX || '').trim();
+  return digits + suffix;
+}
+
+/** First IVR audio (menus, recording notice, language choice). */
+function tpaIvrSoundsLikeIvrStart(t: string): boolean {
+  const s = t.toLowerCase();
+  if (s.length < 12) return false;
+  return (
+    /this call (may be|will be|is being) (recorded|monitored)/.test(s) ||
+    /recorded (or|and) monitored|quality assurance|training purposes/.test(
+      s,
+    ) ||
+    /for english|for spanish|para español|presione|press\s*[12]/.test(s) ||
+    /welcome to|thank you for calling/.test(s)
+  );
+}
+
+function tpaIvrSoundsLikeEnglishRecordingDisclaimer(t: string): boolean {
+  const s = t.toLowerCase();
+  return (
+    /this call (may be|will be|is) (recorded|monitored)/.test(s) ||
+    /recorded for quality|monitor(ed)? or record(ed)?|training and quality/.test(
+      s,
+    )
+  );
+}
+
+function tpaIvrSoundsLikeSpanishRecordingDisclaimer(t: string): boolean {
+  const s = t.toLowerCase();
+  return (
+    (/español|espanol|ser[aá]\s+grabad|esta llamada|grabaci[oó]n/.test(s) &&
+      /(llamada|ser[aá]|grabad|calidad)/.test(s)) ||
+    /esta llamada.*grab/.test(s)
+  );
+}
+
+function tpaIvrSoundsLikeBenefitSummaryOrDetailPrompt(t: string): boolean {
+  const s = t.toLowerCase();
+  if (s.length < 20) return false;
+  return (
+    /brief\s+benefits?\s+summary|detail\s+facts?|benefits?\s+summary\s+or\s+detail/.test(
+      s,
+    ) ||
+    (/would you like\b/.test(s) &&
+      /brief/.test(s) &&
+      (/detail|summary/.test(s) || /representative/.test(s)))
+  );
+}
+
+function tpaIvrSoundsLikeTaxIdPrompt(t: string): boolean {
+  const s = t.toLowerCase();
+  return (
+    /tax\s*(id|identification)|\btin\b|federal\s*(tax\s*)?id|employer\s*(id|identification)|\be\.?i\.?n\.?\b|enter.*tax/.test(
+      s,
+    ) && !/member\s*(id|number)/.test(s)
+  );
+}
+
+function tpaIvrSoundsLikePullUpAccountRouting(t: string): boolean {
+  const s = t.toLowerCase();
+  return (
+    /thank you.*one moment.*pull\s+up|pull\s+up (the|your) account|while i pull up (the|your) account/.test(
+      s,
+    ) || /one moment.*pull up/.test(s)
+  );
+}
+
+function tpaIvrSoundsLikeAgentOnlineRouting(t: string): boolean {
+  const s = t.toLowerCase();
+  return (
+    /one moment.*get.*agent|get the agent online|agent online to help|connect you to (a\s+)?(live\s+)?agent/.test(
+      s,
+    ) || /representative will be with you/.test(s)
+  );
+}
+
+function tpaIvrSoundsLikeSurveyStayOnLine(t: string): boolean {
+  const s = t.toLowerCase();
+  return (
+    /survey/.test(s) &&
+    (/stay on the line|your experience is important|rate your experience|take the survey/.test(
+      s,
+    ) ||
+      /wait on the call.*survey/.test(s))
+  );
+}
+
+/** Part 2 handoff: live TPA intro (e.g. “calling Dental …, my name is …, how can I help you today”). */
+function tpaIvrSoundsLikeDentalTpaLiveIntro(t: string): boolean {
+  const s = t.toLowerCase();
+  if (s.length < 25) return false;
+  const dental =
+    /calling\s+(dental|the dental)/.test(s) ||
+    /\bdental\s+(clinic|office|plan|clawn|lawn)\b/.test(s);
+  const named =
+    /\bmy name is\b/.test(s) ||
+    /\bthis is\b.{0,30}\b(from|with)\b/.test(s) ||
+    /\b(i am|i'm)\b.{0,20}\b(from|with)\b/.test(s);
+  const offersHelp = /how can i help you( today)?\??/i.test(s);
+  return dental && named && offersHelp;
+}
+
 function tpaIvrSoundsLikeProviderQuestion(t: string): boolean {
   const s = t.toLowerCase();
   return (
@@ -102,6 +212,7 @@ function tpaIvrSoundsLikeProviderQuestion(t: string): boolean {
 function tpaIvrSoundsLikeReasonPrompt(t: string): boolean {
   const s = t.toLowerCase();
   if (s.length < 10) return false;
+  if (tpaIvrSoundsLikeBenefitSummaryOrDetailPrompt(t)) return false;
   return (
     /what can i help you( with)?( today)?\?*/.test(s) ||
     /what can i do for you( today)?\?*/.test(s) ||
@@ -128,15 +239,9 @@ function tpaIvrSoundsLikeDobPrompt(t: string): boolean {
   );
 }
 
-function tpaIvrSoundsLikeHoldOrRouting(t: string): boolean {
-  return /one moment|pull up (the|your) account|connecting you|please hold|stay on the (line|phone)|transfer(r?ing)? you/i.test(
-    t,
-  );
-}
-
-function tpaIvrSoundsLikeLiveAgent(t: string): boolean {
   const s = t.trim();
   if (s.length < 10 || s.length > 500) return false;
+  if (tpaIvrSoundsLikeDentalTpaLiveIntro(s)) return true;
   if (
     /for english|for spanish|press \d|say or press|enter your \d|this call may be recorded/i.test(
       s,
@@ -144,8 +249,6 @@ function tpaIvrSoundsLikeLiveAgent(t: string): boolean {
   ) {
     return false;
   }
-  // Strict handoff rule: do NOT treat generic IVR "how can I help you" as a live person.
-  // Require either a self-introduction, or a hold-return sentence with direct assistance.
   const selfIntro =
     (/\b(hi|hello|good (morning|afternoon|evening))\b/i.test(s) &&
       /\b(i'?m|my name is|this is|speaking)\b/i.test(s)) ||
@@ -156,10 +259,7 @@ function tpaIvrSoundsLikeLiveAgent(t: string): boolean {
       s,
     ) &&
     /\b(how can i help|how may i help|how can i assist)\b/i.test(s);
-  return (
-    selfIntro ||
-    holdReturnWithAssist
-  );
+  return selfIntro || holdReturnWithAssist;
 }
 
 function normalizeIvrDigitToken(token: string): string | null {
@@ -838,22 +938,24 @@ interface StreamState {
   openingGreetingPlayed: boolean;
 }
 
-/** Per-call TPA IVR progress (survives Twilio media stream reconnect after DTMF). */
-type TpaIvrPhase =
-  | 'initial-silence'
-  | 'provider-question'
-  | 'reason-question'
-  | 'member-id'
-  | 'dob'
-  | 'wait-live-agent';
-
+/** Per-call TPA IVR script (Part 1); survives Twilio reconnect after DTMF. */
 type TpaIvrRuntimeState = {
   callStartedAt: number;
-  phase: TpaIvrPhase;
+  /** Heard characteristic IVR open (recording, language menu, etc.). */
+  ivrStarted: boolean;
+  disclaimerEnDone: boolean;
+  disclaimerEsDone: boolean;
+  /** When English disclaimer was first heard (for Spanish wait timeout). */
+  disclaimerEnAt: number | null;
   saidProviderYes: boolean;
-  saidRepresentative: boolean;
+  saidEligibilityBenefits: boolean;
+  saidRepresentativeSummary: boolean;
   memberDtmfSent: boolean;
   dobDtmfSent: boolean;
+  taxIdDtmfSent: boolean;
+  routingPullDone: boolean;
+  routingAgentOnlineDone: boolean;
+  surveyDone: boolean;
 };
 
 @Injectable()
@@ -1243,7 +1345,7 @@ export class MediaStreamHandlerService {
           return;
         }
 
-        // --- TPA IVR: scripted tree until a live agent is connected, then hand off to EVA ---
+        // --- TPA IVR Part 1: payer IVR script (listen → speech/DTMF) → Part 2: live TPA intro → EVA ---
         if (state.mode === 'tpa-ivr') {
           if (!state.callSid) {
             state.processing = false;
@@ -1251,14 +1353,106 @@ export class MediaStreamHandlerService {
           }
           const ivr = this.ensureTpaIvrState(state.callSid);
           const elapsed = Date.now() - ivr.callStartedAt;
-          const inInitialSilence = elapsed < TPA_IVR_INITIAL_SILENCE_MS;
           const t = userSaid.trim();
           let spoke: string | null = null;
           let redirected = false;
 
-          if (inInitialSilence) {
-            ivr.phase = 'initial-silence';
-            // Recording disclaimer + language: do not speak or press keys.
+          const ivrDebugNote = () =>
+            `TPA_IVR flags ivr=${ivr.ivrStarted} en=${ivr.disclaimerEnDone} es=${ivr.disclaimerEsDone} prov=${ivr.saidProviderYes} elig=${ivr.saidEligibilityBenefits} rep=${ivr.saidRepresentativeSummary} mid=${ivr.memberDtmfSent} dob=${ivr.dobDtmfSent} tax=${ivr.taxIdDtmfSent} rPull=${ivr.routingPullDone} rAgent=${ivr.routingAgentOnlineDone} survey=${ivr.surveyDone}`;
+
+          if (
+            ivr.disclaimerEnDone &&
+            !ivr.disclaimerEsDone &&
+            ivr.disclaimerEnAt != null &&
+            Date.now() - ivr.disclaimerEnAt > TPA_IVR_SPANISH_WAIT_MS
+          ) {
+            ivr.disclaimerEsDone = true;
+          }
+
+          if (!ivr.ivrStarted) {
+            if (tpaIvrSoundsLikeIvrStart(t) || elapsed > TPA_IVR_FORCE_START_MS) {
+              ivr.ivrStarted = true;
+              this.logCallEvent(
+                state.callSid,
+                'TPA_IVR_PART1 — IVR start detected (listen-only until scripted responses)',
+              );
+            } else {
+              this.logCallTurn(state.callSid, {
+                prepMs,
+                sttMs,
+                llmMs: null,
+                ttsMs: 0,
+                totalMs: Date.now() - turnStart,
+                tpa: t || '—',
+                eva: '—',
+                note: '(TPA IVR waiting for IVR start — silent)',
+              });
+              state.processing = false;
+              return;
+            }
+          }
+
+          if (tpaIvrSoundsLikeEnglishRecordingDisclaimer(t)) {
+            ivr.disclaimerEnDone = true;
+            if (ivr.disclaimerEnAt == null) ivr.disclaimerEnAt = Date.now();
+          }
+          if (tpaIvrSoundsLikeSpanishRecordingDisclaimer(t)) {
+            ivr.disclaimerEsDone = true;
+          }
+
+          const ensurePayeeCallContext = async () => {
+            if (state.callContext || !state.payeeId) return;
+            const ctx = await this.verificationService
+              .getPayeeCallContext(state.payeeId, state.appointmentId)
+              .catch(() => null);
+            if (ctx) {
+              state.callContext = ctx;
+              state.patientInfo = {
+                firstName: ctx.patient.firstName,
+                lastName: ctx.patient.lastName,
+                fullName: ctx.patient.fullName,
+                dobFormatted: ctx.patient.dobFormatted,
+                ssn: ctx.patient.ssn,
+              };
+            }
+          };
+
+          // --- Part 2 handoff: after DOB, routing + survey prompts are silent; then live TPA intro ---
+          if (ivr.dobDtmfSent) {
+            if (tpaIvrSoundsLikePullUpAccountRouting(t)) {
+              ivr.routingPullDone = true;
+            }
+            if (tpaIvrSoundsLikeAgentOnlineRouting(t)) {
+              ivr.routingAgentOnlineDone = true;
+            }
+            if (tpaIvrSoundsLikeSurveyStayOnLine(t)) {
+              ivr.surveyDone = true;
+            }
+
+            const handoffLive =
+              tpaIvrSoundsLikeDentalTpaLiveIntro(t) ||
+              (ivr.surveyDone && tpaIvrSoundsLikeLiveAgent(t));
+            if (handoffLive) {
+              const ttsHandoff = await this.handoffToEvaSession(
+                state,
+                speak,
+                pushLiveTracker,
+                'tpa-ivr',
+              );
+              this.logCallTurn(state.callSid, {
+                prepMs,
+                sttMs,
+                llmMs: null,
+                ttsMs: ttsHandoff,
+                totalMs: Date.now() - turnStart,
+                tpa: t,
+                eva: CONVERSATION_GREETING,
+                note: '(TPA IVR Part 2 → EVA live agent)',
+              });
+              state.processing = false;
+              return;
+            }
+
             this.logCallTurn(state.callSid, {
               prepMs,
               sttMs,
@@ -1267,55 +1461,78 @@ export class MediaStreamHandlerService {
               totalMs: Date.now() - turnStart,
               tpa: t || '—',
               eva: '—',
-              note: '(TPA IVR initial silence)',
+              note: `(TPA IVR Part 1 post-DOB — silent until live TPA) ${ivrDebugNote()}`,
             });
             state.processing = false;
             return;
           }
-          if (ivr.phase === 'initial-silence') {
-            ivr.phase = 'provider-question';
-          }
 
           if (
-            ivr.phase === 'provider-question' &&
             !ivr.saidProviderYes &&
             tpaIvrSoundsLikeProviderQuestion(t)
           ) {
             spoke = 'Yes';
             ivr.saidProviderYes = true;
-            ivr.phase = 'reason-question';
           } else if (
-            ivr.phase === 'reason-question' &&
             ivr.saidProviderYes &&
-            !ivr.saidRepresentative &&
+            !ivr.saidEligibilityBenefits &&
             tpaIvrSoundsLikeReasonPrompt(t)
           ) {
-            spoke = 'Representative';
-            ivr.saidRepresentative = true;
-            ivr.phase = 'member-id';
+            spoke = 'Eligibility Benefits';
+            ivr.saidEligibilityBenefits = true;
           } else if (
-            ivr.phase === 'member-id' &&
-            ivr.saidRepresentative &&
-            !ivr.memberDtmfSent &&
-            tpaIvrSoundsLikeMemberIdPrompt(t) &&
-            state.callSid &&
+            ivr.saidEligibilityBenefits &&
+            !ivr.saidRepresentativeSummary &&
+            tpaIvrSoundsLikeBenefitSummaryOrDetailPrompt(t)
+          ) {
+            spoke = 'Representative';
+            ivr.saidRepresentativeSummary = true;
+          } else if (
+            ivr.saidProviderYes &&
+            !ivr.taxIdDtmfSent &&
+            tpaIvrSoundsLikeTaxIdPrompt(t) &&
             state.payeeId
           ) {
-            if (!state.callContext && state.payeeId) {
-              const ctx = await this.verificationService
-                .getPayeeCallContext(state.payeeId, state.appointmentId)
-                .catch(() => null);
-              if (ctx) {
-                state.callContext = ctx;
-                state.patientInfo = {
-                  firstName: ctx.patient.firstName,
-                  lastName: ctx.patient.lastName,
-                  fullName: ctx.patient.fullName,
-                  dobFormatted: ctx.patient.dobFormatted,
-                  ssn: ctx.patient.ssn,
-                };
+            await ensurePayeeCallContext();
+            const taxRaw =
+              state.callContext?.provider?.taxId != null
+                ? state.callContext.provider.taxId
+                : process.env.EVA_PROVIDER_TAX_ID?.trim() || '';
+            const taxDigits = buildTaxIdDtmf(taxRaw);
+            if ((taxDigits.match(/\d/g) ?? []).length > 0) {
+              const base = (process.env.BACKEND_URL || '').trim();
+              if (base) {
+                const q = new URLSearchParams({
+                  digits: taxDigits,
+                  payeeId: state.payeeId,
+                });
+                if (state.appointmentId?.trim()) {
+                  q.set('appointmentId', state.appointmentId.trim());
+                }
+                const url = `${base}/twilio/tpa-ivr-dtmf?${q.toString()}`;
+                ivr.taxIdDtmfSent = true;
+                redirected = true;
+                this.twilioService
+                  .redirectCall(state.callSid, url)
+                  .catch((e: any) =>
+                    this.logger.warn(
+                      '[MediaStream] TPA IVR tax ID DTMF redirect failed',
+                      (e as Error)?.message,
+                    ),
+                  );
               }
+            } else {
+              this.logger.warn(
+                '[MediaStream] TPA IVR: tax ID prompt heard but no digits (set EVA_PROVIDER_TAX_ID or provider taxId on appointment).',
+              );
             }
+          } else if (
+            ivr.saidRepresentativeSummary &&
+            !ivr.memberDtmfSent &&
+            tpaIvrSoundsLikeMemberIdPrompt(t) &&
+            state.payeeId
+          ) {
+            await ensurePayeeCallContext();
             const mid =
               state.callContext?.memberId != null
                 ? buildMemberIdDtmf(state.callContext.memberId)
@@ -1332,7 +1549,6 @@ export class MediaStreamHandlerService {
                 }
                 const url = `${base}/twilio/tpa-ivr-dtmf?${q.toString()}`;
                 ivr.memberDtmfSent = true;
-                ivr.phase = 'dob';
                 redirected = true;
                 this.twilioService
                   .redirectCall(state.callSid, url)
@@ -1349,28 +1565,12 @@ export class MediaStreamHandlerService {
               );
             }
           } else if (
-            ivr.phase === 'dob' &&
             ivr.memberDtmfSent &&
             !ivr.dobDtmfSent &&
             tpaIvrSoundsLikeDobPrompt(t) &&
-            state.callSid &&
             state.payeeId
           ) {
-            if (!state.callContext && state.payeeId) {
-              const ctx = await this.verificationService
-                .getPayeeCallContext(state.payeeId, state.appointmentId)
-                .catch(() => null);
-              if (ctx) {
-                state.callContext = ctx;
-                state.patientInfo = {
-                  firstName: ctx.patient.firstName,
-                  lastName: ctx.patient.lastName,
-                  fullName: ctx.patient.fullName,
-                  dobFormatted: ctx.patient.dobFormatted,
-                  ssn: ctx.patient.ssn,
-                };
-              }
-            }
+            await ensurePayeeCallContext();
             const dob = state.callContext?.patient?.dob ?? null;
             const dtmf = buildDobDtmf(dob);
             if (dtmf) {
@@ -1385,7 +1585,6 @@ export class MediaStreamHandlerService {
                 }
                 const url = `${base}/twilio/tpa-ivr-dtmf?${q.toString()}`;
                 ivr.dobDtmfSent = true;
-                ivr.phase = 'wait-live-agent';
                 redirected = true;
                 this.twilioService
                   .redirectCall(state.callSid, url)
@@ -1401,46 +1600,6 @@ export class MediaStreamHandlerService {
                 '[MediaStream] TPA IVR: patient DOB missing — cannot send DOB DTMF.',
               );
             }
-          } else if (
-            ivr.phase === 'wait-live-agent' &&
-            ivr.dobDtmfSent &&
-            tpaIvrSoundsLikeHoldOrRouting(t)
-          ) {
-            this.logCallTurn(state.callSid, {
-              prepMs,
-              sttMs,
-              llmMs: null,
-              ttsMs: 0,
-              totalMs: Date.now() - turnStart,
-              tpa: t,
-              eva: '—',
-              note: '(TPA IVR hold/routing — silent)',
-            });
-            state.processing = false;
-            return;
-          } else if (
-            ivr.phase === 'wait-live-agent' &&
-            ivr.dobDtmfSent &&
-            tpaIvrSoundsLikeLiveAgent(t)
-          ) {
-            const ttsHandoff = await this.handoffToEvaSession(
-              state,
-              speak,
-              pushLiveTracker,
-              'tpa-ivr',
-            );
-            this.logCallTurn(state.callSid, {
-              prepMs,
-              sttMs,
-              llmMs: null,
-              ttsMs: ttsHandoff,
-              totalMs: Date.now() - turnStart,
-              tpa: t,
-              eva: CONVERSATION_GREETING,
-              note: '(TPA IVR → EVA live agent)',
-            });
-            state.processing = false;
-            return;
           }
 
           if (redirected) {
@@ -1468,7 +1627,7 @@ export class MediaStreamHandlerService {
               totalMs: Date.now() - turnStart,
               tpa: t,
               eva: spoke,
-              note: '(TPA IVR)',
+              note: '(TPA IVR Part 1)',
             });
             void pushLiveTracker(`EVA: ${spoke}`);
             state.processing = false;
@@ -1483,7 +1642,7 @@ export class MediaStreamHandlerService {
             totalMs: Date.now() - turnStart,
             tpa: t || '—',
             eva: '—',
-            note: `(TPA IVR no match; phase=${ivr.phase})`,
+            note: `(TPA IVR no scripted action) ${ivrDebugNote()}`,
           });
           state.processing = false;
           return;
@@ -2821,27 +2980,29 @@ export class MediaStreamHandlerService {
   }
 
   private ensureTpaIvrState(callSid: string | null): TpaIvrRuntimeState {
+    const fresh = (): TpaIvrRuntimeState => ({
+      callStartedAt: Date.now(),
+      ivrStarted: false,
+      disclaimerEnDone: false,
+      disclaimerEsDone: false,
+      disclaimerEnAt: null,
+      saidProviderYes: false,
+      saidEligibilityBenefits: false,
+      saidRepresentativeSummary: false,
+      memberDtmfSent: false,
+      dobDtmfSent: false,
+      taxIdDtmfSent: false,
+      routingPullDone: false,
+      routingAgentOnlineDone: false,
+      surveyDone: false,
+    });
     const sid = callSid?.trim();
     if (!sid) {
-      return {
-        callStartedAt: Date.now(),
-        phase: 'initial-silence',
-        saidProviderYes: false,
-        saidRepresentative: false,
-        memberDtmfSent: false,
-        dobDtmfSent: false,
-      };
+      return fresh();
     }
     let s = this.tpaIvrByCallSid.get(sid);
     if (!s) {
-      s = {
-        callStartedAt: Date.now(),
-        phase: 'initial-silence',
-        saidProviderYes: false,
-        saidRepresentative: false,
-        memberDtmfSent: false,
-        dobDtmfSent: false,
-      };
+      s = fresh();
       this.tpaIvrByCallSid.set(sid, s);
     }
     return s;
