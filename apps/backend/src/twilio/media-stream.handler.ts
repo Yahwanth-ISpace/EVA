@@ -239,6 +239,7 @@ function tpaIvrSoundsLikeDobPrompt(t: string): boolean {
   );
 }
 
+function tpaIvrSoundsLikeLiveAgent(t: string): boolean {
   const s = t.trim();
   if (s.length < 10 || s.length > 500) return false;
   if (tpaIvrSoundsLikeDentalTpaLiveIntro(s)) return true;
