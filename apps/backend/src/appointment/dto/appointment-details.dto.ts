@@ -1,0 +1,87 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString } from 'class-validator';
+export interface VerificationField {
+  question: string;
+  field: string;
+  order: number;
+  value?: string;
+}
+
+export class AppointmentDetailsDto {
+  ClientID: number;
+  UserID: number;
+  AppointmentID: number;
+  AppointmentDate: string;
+  AppointmentNote: string;
+  Insurance_GroupName: string;
+  Insurance_GroupNumber: string;
+  InsurancePlan_GroupName: string;
+  InsuranceBusinessKey: string;
+  PristinePlanMasterID: number;
+  PMSType: string;
+  Pgid: string;
+  FeeSchedule: string;
+  PlanType: string;
+  Patient_OfficeID: string;
+  Patient_OfficeName: string;
+  Patient_OfficeStreet1: string;
+  Patient_OfficeStreet2: string;
+  Patient_OfficeCity: string;
+  Patient_OfficeState: string;
+  Patient_OfficeZip: string;
+  json_id: string;
+  PatientID: string;
+  PatientBusinessKey: string;
+  Patient_FirstName: string;
+  Patient_LastName: string;
+  Patient_Mi: string;
+  Patient_DOB: string;
+  SSN: string;
+  Patient_Zip: string;
+  Insured_FirstName: string;
+  Insured_LastName: string;
+  Insured_DOB: string;
+  SubscriberID: string;
+  InsuranceCompany_Name: string;
+  InsuranceCompany_Phone: string;
+  InsuranceCompany_Phone_Ext: string;
+  PriSecTerQua: string;
+  Provider_FirstName: string;
+  Provider_LastName: string;
+  Provider_Mi: string;
+  Provider_IsNonPerson: boolean;
+  Provider_NPI: string;
+  Provider_Network: string;
+  Provider_Specialty: string;
+  OfficeName: string;
+  OfficeBusinessKey: string;
+  OfficeID: string;
+  OfficeCode: string;
+  OfficeStreet1: string;
+  OfficeStreet2: string;
+  OfficeCity: string;
+  OfficeState: string;
+  OfficeZip: string;
+  verificationFields: VerificationField[];
+
+  @ApiProperty({ example: 'payee-uuid-here' })
+  @IsString()
+  payeeId: string;
+
+  @ApiProperty({ example: 'provider-uuid-here' })
+  @IsString()
+  providerId: string;
+
+  @ApiProperty({ example: 'office-uuid-here' })
+  @IsString()
+  officeId: string;
+
+  @ApiProperty({ example: '2025-04-15T14:00:00.000Z' })
+  @IsString()
+  date: string;
+
+  @ApiPropertyOptional({ example: 'First cleaning visit' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}

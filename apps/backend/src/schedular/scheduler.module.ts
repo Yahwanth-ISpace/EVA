@@ -3,10 +3,19 @@
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SchedulerService } from './scheduler.service';
+import { SchedulerController } from './scheduler.controller';
 import { PrismaModule } from 'src/prisma/prisma.module';
+import { AppointmentModule } from 'src/appointment/appointment.module';
+import { MongoModule } from 'src/mongo/mongo.module';
 
 @Module({
-  imports: [PrismaModule, ScheduleModule.forRoot()],
+  imports: [
+    PrismaModule,
+    ScheduleModule.forRoot(),
+    AppointmentModule,
+    MongoModule,
+  ],
+  controllers: [SchedulerController],
   providers: [SchedulerService],
 })
 export class SchedulerModule {

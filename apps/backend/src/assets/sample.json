@@ -1,0 +1,105 @@
+{
+  "Preventive": {
+    "question": "What is the Preventive percentage?",
+    "answer": null
+  },
+  "Basic": {
+    "question": "What is the Basic percentage?",
+    "answer": null
+  },
+  "Major": {
+    "question": "What is the Major percentage?",
+    "answer": null
+  },
+  "YearlyMaxAmount": {
+    "question": "What is the yearly maximum amount?",
+    "answer": null
+  },
+  "FamilyDeductible": {
+    "question": "What is the family deductible?",
+    "answer": null
+  },
+  "IndividualDeductible": {
+    "question": "What is the individual deductible?",
+    "answer": null
+  },
+  "OrthoMaximum": {
+    "question": "What is the orthodontics maximum?",
+    "answer": null
+  },
+  "IndividualMetAmount": {
+    "question": "How much has been used for individual deductible?",
+    "answer": null
+  },
+  "FamilyMetAmount": {
+    "question": "How much has been used for family deductible?",
+    "answer": null
+  },
+  "YearlyMaxUsed": {
+    "question": "What is the yearly maximum amount used for the patient?",
+    "answer": null
+  },
+
+  "history": [
+    {
+      "question": "History for Full-Mouth Xray D0210",
+      "procedurecode": "D0210",
+      "description": "Full-Mouth Xray"
+    },
+    {
+      "question": "What is D0330 code history?",
+      "procedurecode": "D0330",
+      "description": "Panoramic Xray"
+    },
+    {
+      "question": "What is D0274 code history?",
+      "procedurecode": "D0274",
+      "description": "Xray Bitewings"
+    },
+    {
+      "question": "What is D4341 code history?",
+      "procedurecode": "D4341",
+      "description": "Scaling Root Planing"
+    },
+    {
+      "question": "What is D9310 code history?",
+      "procedurecode": "D9310",
+      "description": "Consultation"
+    },
+    {
+      "question": "What is D1110 code history?",
+      "procedurecode": "D1110",
+      "description": "Prophylaxis"
+    },
+    {
+      "question": "Is Orthodontics a Covered Benefit?",
+      "procedurecode": "BOT-CDQ-023",
+      "description": "Orthodontics Coverage"
+    },
+    {
+      "question": "What is D0140 code history?",
+      "procedurecode": "D0140",
+      "description": "Limited Exam"
+    },
+    {
+      "question": "What is D2950 code history?",
+      "procedurecode": "D2950",
+      "description": "Core Buildup"
+    },
+    {
+      "question": "What is D0120 code history?",
+      "procedurecode": "D0120",
+      "description": "Periodic Exam"
+    },
+    {
+      "question": "What is D1351 code history?",
+      "procedurecode": "D1351",
+      "description": "Sealant"
+    },
+    {
+      "question": "What is D1206/D1208 code history?",
+      "procedurecode": "D1206/D1208",
+      "description": "Fluoride Treatment"
+    }
+  ]
+}
