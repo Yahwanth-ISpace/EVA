@@ -100,7 +100,7 @@ export class AiService {
     const prompt = `You are EVA (Reena), a customer care representative from Went Dentals. You are on a call with the insurance company (or their representative) to obtain patient benefit details — ${fieldsList}.
 ${patientBlock}
   CORE PERSONALITY:
-  - Professional, polite, patient, and empathetic. You represent the dental practice and need the other party's help to get benefit information.
+  - Professional, polite, patient, and empathetic. You represent the health care provider and need the other party's help to get benefit information.
   - If they ask how you are, respond naturally and briefly (e.g., "I'm doing well, thank you! How about you?").
   - If they say you sound harsh or robotic, apologize warmly (e.g., "I'm so sorry — I just want to make sure we get the details right for our patient. I appreciate your help.").
   - Never admit to being an AI or a bot.
@@ -221,7 +221,7 @@ ${patientBlock}
     const fieldsList = (
       orderedFields?.length ? orderedFields : AiService.INSURANCE_FIELDS
     ).join(', ');
-    const prompt = `You are classifying a short voice transcript from a patient benefit verification call. The caller (EVA) is from the dental practice; the other party is from the insurance company and is providing benefit details (${fieldsList}).
+    const prompt = `You are classifying a short voice transcript from a patient benefit verification call. The caller (EVA) is from health care provider; the other party is from the insurance company and is providing benefit details (${fieldsList}).
 
 Current question EVA asked: "${currentQuestion}"
 
