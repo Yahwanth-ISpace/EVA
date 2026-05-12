@@ -24,10 +24,7 @@ import {
   isCallActiveFromTrackers,
 } from "../utils/botTracker";
 import type { BotTrackerRecord } from "../utils/botTracker";
-import {
-  CallActivitySection,
-  type CallFooterPhase,
-} from "../components/CallActivitySection";
+import { CallActivitySection } from "../components/CallActivitySection";
 import {
   getVerificationFieldRows,
   getVerificationForAppointment,
@@ -336,9 +333,8 @@ export default function AppointmentDetail() {
     : undefined;
   const [liveLogs, setLiveLogs] = useState<BotTrackerRecord[]>([]);
   const [callLogTab, setCallLogTab] = useState<"live" | "transcript">("live");
-  const [callFooterPhase, setCallFooterPhase] =
-    useState<CallFooterPhase>("barge");
   const [endCallLoading, setEndCallLoading] = useState(false);
+  const [holdLoading, setHoldLoading] = useState(false);
   const liveScrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const liveTailRef = useRef<{ len: number; tailId: string }>({
@@ -445,14 +441,19 @@ export default function AppointmentDetail() {
     [liveLogs],
   );
 
-  useEffect(() => {
-    if (!isCallInProgress) setCallFooterPhase("barge");
-  }, [isCallInProgress]);
-
-  const handleBargeInFooterClick = useCallback(() => {
-    if (!isCallInProgress) return;
-    setCallFooterPhase("end");
-  }, [isCallInProgress]);
+  const handleHoldClick = useCallback(async () => {
+    if (!activeCallSid) return;
+    setHoldLoading(true);
+    try {
+      await api.post<{ ok: boolean }>("/twilio/put-on-hold", {
+        callSid: activeCallSid,
+      });
+    } catch {
+      // UI may still reflect hold via Twilio; poll will catch status changes.
+    } finally {
+      setHoldLoading(false);
+    }
+  }, [activeCallSid]);
 
   const handleEndCallClick = useCallback(async () => {
     if (!activeCallSid) return;
@@ -461,7 +462,6 @@ export default function AppointmentDetail() {
       await api.post<{ ok: boolean }>("/twilio/end-call", {
         callSid: activeCallSid,
       });
-      setCallFooterPhase("barge");
     } catch {
       // Non-blocking; UI will update when stream ends or poll refreshes.
     } finally {
@@ -814,11 +814,11 @@ export default function AppointmentDetail() {
                   hasTranscript={hasTranscript}
                   transcriptText={transcriptText}
                   onLiveScroll={onLiveScroll}
-                  callFooterPhase={callFooterPhase}
-                  onBargeInClick={handleBargeInFooterClick}
+                  onHoldClick={handleHoldClick}
+                  holdLoading={holdLoading}
                   onEndCallClick={handleEndCallClick}
                   endCallLoading={endCallLoading}
-                  canEndCall={Boolean(activeCallSid)}
+                  canControlCall={Boolean(activeCallSid)}
                 />
               </aside>
             </div>

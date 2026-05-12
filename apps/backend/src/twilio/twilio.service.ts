@@ -73,6 +73,20 @@ export class TwilioService {
   }
 
   /**
+   * Put an in-progress call on hold via Twilio REST: redirect to TwiML that plays hold music in a loop.
+   * Note: this replaces the current TwiML (e.g. `<Connect><Stream>` ends; resume by redirecting back to your stream URL).
+   */
+  async putCallOnHold(callSid: string): Promise<void> {
+    if (!callSid?.trim()) return;
+    if (!backendBaseUrl?.trim()) {
+      throw new Error('BACKEND_URL environment variable is not set.');
+    }
+    const base = backendBaseUrl.replace(/\/+$/, '');
+    const holdUrl = `${base}/twilio/hold-music`;
+    await client.calls(callSid).update({ url: holdUrl, method: 'POST' });
+  }
+
+  /**
    * Start an outbound call from EVA's number to the IVR number and connect to the media stream
    * in ivr-bypass mode (listen for "customer agent", then send DTMF 4).
    * Uses TWILIO_IVR_PHONE_NUMBER or optional `to` override.

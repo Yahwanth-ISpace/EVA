@@ -43,13 +43,19 @@ export class TwilioCallIvrDto {
   to?: string;
 }
 
-/** Body for `POST /twilio/end-call` — complete an in-progress call from the dashboard. */
-export class TwilioEndCallDto {
+/** Shared: Twilio Call SID for REST call control (hold, hang up, etc.). */
+export class TwilioCallSidDto {
   @ApiProperty({
     example: 'CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-    description: 'Twilio Call SID (e.g. from live call events).',
+    description: 'Twilio Call SID (e.g. from live call events or `CallSid` on status callbacks).',
   })
   @IsString()
   @IsNotEmpty()
   callSid: string;
 }
+
+/** Body for `POST /twilio/end-call` — complete an in-progress call from the dashboard. */
+export class TwilioEndCallDto extends TwilioCallSidDto {}
+
+/** Body for `POST /twilio/put-on-hold` — redirect the call to hold TwiML (disconnects media stream until resumed). */
+export class TwilioPutOnHoldDto extends TwilioCallSidDto {}
