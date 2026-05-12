@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { TwilioService } from 'src/twilio/twilio.service';
+import { AppointmentDetailsDto } from './dto/appointment-details.dto';
 
 @Injectable()
 export class AppointmentService {
@@ -17,7 +18,8 @@ export class AppointmentService {
     private twilioService: TwilioService,
   ) {}
 
-  async create(dto: CreateAppointmentDto) {
+  async create(dto: CreateAppointmentDto | AppointmentDetailsDto) {
+    this.logger.debug(`Creating appointment with data: ${JSON.stringify(dto)}`);
     const payee = await this.prisma.payee.findUnique({
       where: { id: dto.payeeId },
     });

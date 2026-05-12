@@ -137,6 +137,13 @@ ${patientBlock}
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
   ) {
+    this.verificationService.parseTranscriptForVerification(
+      payeeId,
+      extracted,
+      transcriptToAppend,
+      verificationRequirementId,
+      appointmentId,
+    );
     return this.verificationService.verifyFromExtractedCall(
       payeeId,
       extracted,
@@ -796,11 +803,36 @@ Respond with ONLY a JSON object. No markdown. Format:
    *  Returns null if unrecognised. Supports 0–9999. */
   private wordsToNumber(phrase: string): number | null {
     const words: Record<string, number> = {
-      zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
-      eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13,
-      fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18,
-      nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60,
-      seventy: 70, eighty: 80, ninety: 90, hundred: 100, thousand: 1000,
+      zero: 0,
+      one: 1,
+      two: 2,
+      three: 3,
+      four: 4,
+      five: 5,
+      six: 6,
+      seven: 7,
+      eight: 8,
+      nine: 9,
+      ten: 10,
+      eleven: 11,
+      twelve: 12,
+      thirteen: 13,
+      fourteen: 14,
+      fifteen: 15,
+      sixteen: 16,
+      seventeen: 17,
+      eighteen: 18,
+      nineteen: 19,
+      twenty: 20,
+      thirty: 30,
+      forty: 40,
+      fifty: 50,
+      sixty: 60,
+      seventy: 70,
+      eighty: 80,
+      ninety: 90,
+      hundred: 100,
+      thousand: 1000,
     };
     const tokens = phrase
       .toLowerCase()
@@ -1142,6 +1174,137 @@ Respond with ONLY a JSON object. No markdown. Format:
         out[f] = null;
       }
       return out;
+    }
+  }
+
+  /**
+   * Extract verification fields from a transcript by matching fields mentioned in EVA questions to user responses.
+   * Uses Gemini to parse the transcript and extract values based on verification field definitions.
+   *
+   * @param transcript The full transcript with EVA and User dialog
+   * @param verificationFields Array of field definitions with questions
+   * @returns Structured JSON with extracted values
+   */
+  public async extractVerificationFieldsFromTranscript(
+    transcript: string,
+    verificationFields: Array<{
+      question: string;
+      field: string;
+      required: boolean;
+      order: number;
+    }>,
+  ): Promise<
+    Array<{
+      question: string;
+      field: string;
+      required: boolean;
+      order: number;
+      value: string | null;
+    }>
+  > {
+    if (!verificationFields || verificationFields.length === 0) {
+      return [];
+    }
+
+    try {
+      const fieldDefinitions = verificationFields
+        .map((f, i) => `${i + 1}. Field: "${f.field}"`)
+        .join('\n');
+
+      const prompt = `You are analyzing a call transcript between EVA (from a dental practice) and a USER (from an insurance company).
+
+TASK: For each field, find if EVA asked a question that contains/mentions that field, then extract the corresponding answer from the USER. Also extract the actual EVA question text.
+
+FIELDS TO EXTRACT:
+${fieldDefinitions}
+
+TRANSCRIPT:
+${transcript}
+
+INSTRUCTIONS:
+1. For each field name, search the transcript to find when EVA mentions or asks about that field
+2. Extract the EXACT question text that EVA asked (from the transcript) for that field
+3. Once you find EVA's question about that field, locate the USER's response immediately after
+4. Extract ONLY the value from USER's answer - CRITICAL: Convert all text numbers to numeric format:
+   - "Twenty dollars" → "$20" or "20"
+   - "Two thousand four hundred" → "2400"
+   - "Eighty percent" → "80%"
+   - Remove all English word representations and convert to numbers/symbols
+5. Format values appropriately:
+   - Money/amounts: Use $ prefix or number only (e.g., "$50", "50")
+   - Percentages: Use % suffix (e.g., "80%", "50%")
+   - Numbers: Plain digits (e.g., "2400", "123")
+   - Dates: Keep date format (e.g., "February 20, 2027", "2/20/2027")
+6. If a field is mentioned multiple times, use the FIRST occurrence
+7. If the field is not mentioned or the answer is not found, set value to null and question to null
+8. Return ONLY valid JSON (no markdown, no code blocks)
+
+Return JSON in this exact format:
+[
+  { "question": "Can I get the patent ID?", "field": "patentId", "required": true, "order": 1, "value": "2400" },
+  { "question": "Can I get the deductible?", "field": "deductible", "required": true, "order": 2, "value": "$20" },
+  { "question": "May I have the copay?", "field": "copay", "required": true, "order": 3, "value": "$30" },
+  { "question": "Can you provide the validity?", "field": "validity", "required": true, "order": 4, "value": "February 20, 2027" },
+  { "question": "May I have the maxBenefit?", "field": "maxBenefit", "required": true, "order": 5, "value": "80%" }
+]`;
+
+      const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
+      const start = Date.now();
+      const result = await model.generateContent(prompt);
+      this.logger.log(
+        `[Gemini] extractVerificationFieldsFromTranscript completed in ${Date.now() - start}ms`,
+      );
+
+      let jsonString = result.response.text().trim() || '[]';
+
+      if (jsonString.startsWith('```')) {
+        jsonString = jsonString.replace(/```json|```/gi, '').trim();
+      }
+
+      let parsed: any[] = [];
+      try {
+        parsed = JSON.parse(jsonString);
+      } catch (parseErr) {
+        this.logger.error(
+          '❌ Failed to parse Gemini JSON response:',
+          jsonString,
+        );
+        parsed = [];
+      }
+
+      // Ensure all fields are present and properly formatted
+      const result_array: Array<{
+        question: string;
+        field: string;
+        required: boolean;
+        order: number;
+        value: string | null;
+      }> = [];
+      for (const field of verificationFields) {
+        const found = parsed.find((p) => p.field === field.field);
+        result_array.push({
+          question: found?.question || field.question,
+          field: field.field,
+          required: field.required,
+          order: field.order,
+          value: found?.value ?? null,
+        });
+      }
+      this.logger.log('The final response is: {}', result_array);
+      return result_array;
+    } catch (err) {
+      this.logger.error(
+        '❌ Error extracting verification fields from transcript:',
+        err,
+      );
+      // Return array with null values
+      return verificationFields.map((f) => ({
+        question: f.question,
+        field: f.field,
+        required: f.required,
+        order: f.order,
+        value: null,
+      }));
     }
   }
 }

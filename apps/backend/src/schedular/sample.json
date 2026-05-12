@@ -1,0 +1,186 @@
+{
+  "ClientID": 4,
+  "UserID": 60,
+  "AppointmentID": 280528,
+  "AppointmentDate": "2026-05-11",
+  "AppointmentNote": "",
+  "Insurance_GroupName": "MONARCH PROPERTIES",
+  "Insurance_GroupNumber": "1652839",
+  "InsurancePlan_GroupName": "1652839",
+  "InsuranceBusinessKey": "32562",
+  "PristinePlanMasterID": 0,
+  "PMSType": "Denticon",
+  "Pgid": "Denticon",
+  "FeeSchedule": "",
+  "PlanType": "",
+  "Patient_OfficeID": "0",
+  "Patient_OfficeName": "",
+  "Patient_OfficeStreet1": "",
+  "Patient_OfficeStreet2": "",
+  "Patient_OfficeCity": "",
+  "Patient_OfficeState": "",
+  "Patient_OfficeZip": "",
+  "json_id": "json_id_json_id",
+
+  "PatientID": "90560891",
+  "PatientBusinessKey": "90560891",
+  "Patient_FirstName": "Paul",
+  "Patient_LastName": "Jasso",
+  "Patient_Mi": "",
+  "Patient_DOB": "1984-03-26",
+  "SSN": "",
+  "Patient_Zip": "88030",
+
+  "Insured_FirstName": "TANYA",
+  "Insured_LastName": "JASSO",
+  "Insured_DOB": "1986-04-19",
+  "SubscriberID": "985048808",
+
+  "InsuranceCompany_Name": "UNITED HEALTHCARE PPO_NM_101_108_134_135_137",
+  "InsuranceCompany_Phone": "",
+  "InsuranceCompany_Phone_Ext": "",
+  "PriSecTerQua": "S",
+
+  "Provider_FirstName": "Benjamen",
+  "Provider_LastName": "Ghebrial",
+  "Provider_Mi": "",
+  "Provider_IsNonPerson": false,
+  "Provider_NPI": "1316537541",
+  "Provider_Network": "IN",
+  "Provider_Specialty": "General Practice",
+
+  "OfficeName": "Roswell - Familia Dental",
+  "OfficeBusinessKey": "",
+  "OfficeID": "37",
+  "OfficeCode": "Roswell - Familia Dental",
+  "OfficeStreet1": "2600 N Main St",
+  "OfficeStreet2": "",
+  "OfficeCity": "Roswell",
+  "OfficeState": "NM",
+  "OfficeZip": "88201",
+
+  "GroupName": {
+    "question": "What is the insurance group name?",
+    "answer": ""
+  },
+  "GroupNumber": {
+    "question": "What is the insurance group number?",
+    "answer": ""
+  },
+
+  "ORIGINAL EFFECTIVE DATE": {
+    "question": "What is the patient's plan effective date?",
+    "answer": ""
+  },
+
+  "Relationship Status": {
+    "question": "What is the patient's relation with subscriber",
+    "answer": ""
+  },
+
+  "Preventive(D0120)": {
+    "question": "What is the Preventive percentage?",
+    "answer": null
+  },
+  "Basic(D2160)": {
+    "question": "What is the Basic percentage?",
+    "answer": null
+  },
+  "Major(D2740)": {
+    "question": "What is the Major percentage?",
+    "answer": null
+  },
+
+  "YearlyMaxAmount": {
+    "question": "What is the yearly maximum amount?",
+    "answer": null
+  },
+  "FamilyDeductible": {
+    "question": "What is the family deductible?",
+    "answer": null
+  },
+  "IndividualDeductible": {
+    "question": "What is the individual deductible?",
+    "answer": null
+  },
+  "OrthoMaximum": {
+    "question": "What is the orthodontics maximum?",
+    "answer": null
+  },
+
+  "IndividualMetAmount": {
+    "question": "How much has been used for individual deductible?",
+    "answer": null
+  },
+  "FamilyMetAmount": {
+    "question": "How much has been used for family deductible?",
+    "answer": null
+  },
+  "YearlyMaxUsed": {
+    "question": "What is the yearly maximum amount used for the patient?",
+    "answer": null
+  },
+
+  "history": [
+    {
+      "question": "History for Full-Mouth Xray D0210",
+      "procedurecode": "D0210",
+      "description": "Full-Mouth Xray"
+    },
+    {
+      "question": "What is D0330 code history?",
+      "procedurecode": "D0330",
+      "description": "Panoramic Xray"
+    },
+    {
+      "question": "What is D0274 code history?",
+      "procedurecode": "D0274",
+      "description": "Xray Bitewings"
+    },
+    {
+      "question": "What is D4341 code history?",
+      "procedurecode": "D4341",
+      "description": "Scaling Root Planing"
+    },
+    {
+      "question": "What is D9310 code history?",
+      "procedurecode": "D9310",
+      "description": "Consultation"
+    },
+    {
+      "question": "What is D1110 code history?",
+      "procedurecode": "D1110",
+      "description": "Prophylaxis"
+    },
+    {
+      "question": "Is Orthodontics a Covered Benefit?",
+      "procedurecode": "BOT-CDQ-023",
+      "description": "Orthodontics Coverage"
+    },
+    {
+      "question": "What is D0140 code history?",
+      "procedurecode": "D0140",
+      "description": "Limited Exam"
+    },
+    {
+      "question": "What is D2950 code history?",
+      "procedurecode": "D2950",
+      "description": "Core Buildup"
+    },
+    {
+      "question": "What is D0120 code history?",
+      "procedurecode": "D0120",
+      "description": "Periodic Exam"
+    },
+    {
+      "question": "What is D1351 code history?",
+      "procedurecode": "D1351",
+      "description": "Sealant"
+    },
+    {
+      "question": "What is D1206/D1208 code history?",
+      "procedurecode": "D1206/D1208",
+      "description": "Fluoride Treatment"
+    }
+  ]
+}

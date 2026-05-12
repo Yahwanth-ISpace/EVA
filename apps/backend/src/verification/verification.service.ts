@@ -130,20 +130,35 @@ export class VerificationService {
         return value !== null && value !== undefined && value.trim().length > 0;
       };
 
-      const existingData = (existingVerification?.extractedData as Record<string, string | null> | null) ?? {};
+      const existingData =
+        (existingVerification?.extractedData as Record<
+          string,
+          string | null
+        > | null) ?? {};
 
       // Merge extracted fields: use new value if provided and meaningful, otherwise keep existing
-      const mergedExtracted: Record<string, string | null> = { ...existingData };
-      if (hasValue(extracted.coverage)) mergedExtracted.coverage = extracted.coverage;
-      else if (existingData.coverage) mergedExtracted.coverage = existingData.coverage;
-      if (hasValue(extracted.deductible)) mergedExtracted.deductible = extracted.deductible;
-      else if (existingData.deductible) mergedExtracted.deductible = existingData.deductible;
+      const mergedExtracted: Record<string, string | null> = {
+        ...existingData,
+      };
+      if (hasValue(extracted.coverage))
+        mergedExtracted.coverage = extracted.coverage;
+      else if (existingData.coverage)
+        mergedExtracted.coverage = existingData.coverage;
+      if (hasValue(extracted.deductible))
+        mergedExtracted.deductible = extracted.deductible;
+      else if (existingData.deductible)
+        mergedExtracted.deductible = existingData.deductible;
       if (hasValue(extracted.copay)) mergedExtracted.copay = extracted.copay;
       else if (existingData.copay) mergedExtracted.copay = existingData.copay;
-      if (hasValue(extracted.validity)) mergedExtracted.validity = extracted.validity;
-      else if (existingData.validity) mergedExtracted.validity = existingData.validity;
+      if (hasValue(extracted.validity))
+        mergedExtracted.validity = extracted.validity;
+      else if (existingData.validity)
+        mergedExtracted.validity = existingData.validity;
 
-      const updateData: { transcript: string; extractedData: Record<string, string | null> } = {
+      const updateData: {
+        transcript: string;
+        extractedData: Record<string, string | null>;
+      } = {
         transcript: existingVerification
           ? `${existingVerification.transcript}\n\n---\n\n${transcript}`
           : transcript,
@@ -194,12 +209,14 @@ export class VerificationService {
    */
   async verifyFromExtractedCall(
     payeeId: string,
-    extracted: Record<string, string | null | undefined> | {
-      coverage?: string | null;
-      deductible?: string | null;
-      copay?: string | null;
-      validity?: string | null;
-    },
+    extracted:
+      | Record<string, string | null | undefined>
+      | {
+          coverage?: string | null;
+          deductible?: string | null;
+          copay?: string | null;
+          validity?: string | null;
+        },
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
@@ -246,7 +263,12 @@ export class VerificationService {
   }
 
   /** Type for extracted verification fields (legacy 4 or dynamic from VerificationRequirement). */
-  static readonly LEGACY_KEYS = ['coverage', 'deductible', 'copay', 'validity'] as const;
+  static readonly LEGACY_KEYS = [
+    'coverage',
+    'deductible',
+    'copay',
+    'validity',
+  ] as const;
 
   /**
    * Merge extracted insurance data into the current verification for a payee (used by media-stream flow).
@@ -255,12 +277,14 @@ export class VerificationService {
    */
   async mergeExtractedData(
     payeeId: string,
-    extracted: Partial<{
-      coverage: string | null;
-      deductible: string | null;
-      copay: string | null;
-      validity: string | null;
-    }> | Record<string, string | null | undefined>,
+    extracted:
+      | Partial<{
+          coverage: string | null;
+          deductible: string | null;
+          copay: string | null;
+          validity: string | null;
+        }>
+      | Record<string, string | null | undefined>,
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
@@ -302,17 +326,27 @@ export class VerificationService {
     const hasValue = (v: string | null | undefined) =>
       v !== null && v !== undefined && String(v).trim().length > 0;
 
-    const existingData = (existing?.extractedData as Record<string, string | null> | null) ?? {};
+    const existingData =
+      (existing?.extractedData as Record<string, string | null> | null) ?? {};
     const merged: Record<string, string | null> = { ...existingData };
-    for (const [k, v] of Object.entries(extracted as Record<string, string | null | undefined>)) {
+    for (const [k, v] of Object.entries(
+      extracted as Record<string, string | null | undefined>,
+    )) {
       if (hasValue(v)) {
         merged[k] = String(v).trim();
-      } else if (existingData[k] != null && String(existingData[k]).trim().length > 0) {
+      } else if (
+        existingData[k] != null &&
+        String(existingData[k]).trim().length > 0
+      ) {
         merged[k] = existingData[k];
       }
     }
 
-    const updatePayload: { transcript?: string; extractedData: Record<string, string | null>; verificationRequirementId?: string | null } = {
+    const updatePayload: {
+      transcript?: string;
+      extractedData: Record<string, string | null>;
+      verificationRequirementId?: string | null;
+    } = {
       extractedData: merged,
     };
     if (transcriptToAppend?.trim()) {
@@ -359,13 +393,16 @@ export class VerificationService {
    * Get extracted data for API response. Uses verification's extractedData keyed by
    * the verification requirement's field names when present; otherwise returns extractedData as-is.
    */
-  async getExtractedForResponse(verificationId: string): Promise<Record<string, string | null>> {
+  async getExtractedForResponse(
+    verificationId: string,
+  ): Promise<Record<string, string | null>> {
     const verification = await this.prisma.verification.findUnique({
       where: { id: verificationId },
       include: { verificationRequirement: true },
     });
     if (!verification) throw new NotFoundException('Verification not found');
-    const data = (verification.extractedData as Record<string, string | null>) ?? {};
+    const data =
+      (verification.extractedData as Record<string, string | null>) ?? {};
     const req = verification.verificationRequirement;
     if (req && Array.isArray(req.verificationFields)) {
       const entries = req.verificationFields as { field: string }[];
@@ -409,7 +446,20 @@ export class VerificationService {
 
   private formatDobForSpeech(d: Date): string {
     const date = new Date(d);
-    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
     return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
   }
 
@@ -569,12 +619,14 @@ export class VerificationService {
    */
   async pushExtractedData(
     payeeId: string,
-    extracted: Record<string, string | null | undefined> | {
-      coverage?: string | null;
-      deductible?: string | null;
-      copay?: string | null;
-      validity?: string | null;
-    },
+    extracted:
+      | Record<string, string | null | undefined>
+      | {
+          coverage?: string | null;
+          deductible?: string | null;
+          copay?: string | null;
+          validity?: string | null;
+        },
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
@@ -586,5 +638,126 @@ export class VerificationService {
       verificationRequirementId,
       appointmentId,
     );
+  }
+
+  /**
+   * Parse a transcript and extract verification fields based on EVA's questions.
+   * Uses Gemini AI to match fields mentioned in questions to the transcript,
+   * then returns a structured JSON with extracted values.
+   *
+   * @param payeeId The payee/patient ID
+   * @param transcriptToAppend The full call transcript (EVA and User dialog)
+   * @param verificationRequirementId Optional verification requirement ID to define the fields
+   * @returns JSON with payeeId and verificationFields array containing extracted values
+   */
+  async parseTranscriptForVerification(
+    payeeId: string,
+    extracted?:
+      | Record<string, string | null | undefined>
+      | {
+          coverage?: string | null;
+          deductible?: string | null;
+          copay?: string | null;
+          validity?: string | null;
+        },
+    transcriptToAppend?: string | null,
+    verificationRequirementId?: string | null,
+    appointmentId?: string | null,
+  ): Promise<{
+    payeeId: string;
+    verificationFields: Array<{
+      question: string;
+      field: string;
+      required: boolean;
+      order: number;
+      value: string | null;
+    }>;
+  }> {
+    if (!payeeId) {
+      throw new BadRequestException('payeeId is required');
+    }
+
+    if (!transcriptToAppend || transcriptToAppend.trim().length === 0) {
+      throw new BadRequestException('transcriptToAppend is required');
+    }
+
+    let fieldsToExtract: Array<{
+      question: string;
+      field: string;
+      required: boolean;
+      order: number;
+    }> = [];
+    this.logger.log(
+      'Parsing transcript for verification with payeeId: {}',
+      payeeId,
+    );
+    this.logger.log('Transcript to append: {}', transcriptToAppend);
+    this.logger.log(
+      'Verification requirement ID: {}',
+      verificationRequirementId,
+    );
+    this.logger.log('Appointment ID: {}', appointmentId);
+    this.logger.log('Extracted data: {}', extracted);
+    // If verification requirement is provided, get the fields from it
+    if (extracted) {
+      // const verReq = await this.prisma.verificationRequirement.findUnique({
+      //   where: { id: verificationRequirementId },
+      // });
+
+      // if (!verReq) {
+      //   throw new NotFoundException('VerificationRequirement not found');
+      // }
+      const verReq = Object.keys(extracted);
+      // If verificationFields is stored as JSON array, parse it
+      if (verReq && Array.isArray(verReq)) {
+        fieldsToExtract = (verReq as any[]).map((f, i) => ({
+          question: '',
+          field: f || '',
+          required: true,
+          order: i + 1,
+        }));
+      }
+    } else {
+      // Use default legacy insurance fields
+      fieldsToExtract = [
+        {
+          question: 'What is the basic coverage?',
+          field: 'coverage.basic',
+          required: true,
+          order: 1,
+        },
+        {
+          question: 'What is the yearly maximum amount deductible?',
+          field: 'deductible.YearlyMaxAmount',
+          required: true,
+          order: 2,
+        },
+        {
+          question: 'What is the Copay?',
+          field: 'copay',
+          required: true,
+          order: 3,
+        },
+        {
+          question: 'What is the Validity?',
+          field: 'validity',
+          required: true,
+          order: 4,
+        },
+      ];
+    }
+
+    // Use Gemini to extract the values from the transcript
+    const verificationFields =
+      await this.aiService.extractVerificationFieldsFromTranscript(
+        transcriptToAppend,
+        fieldsToExtract,
+      );
+    this.logger.log('Extracted verification appointmentId:', appointmentId);
+    this.logger.log('Extracted verificationfields:::: {}', verificationFields);
+    return {
+      payeeId,
+      verificationFields,
+    };
   }
 }

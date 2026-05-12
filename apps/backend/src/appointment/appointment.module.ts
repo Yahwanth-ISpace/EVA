@@ -8,5 +8,6 @@ import { AppointmentService } from './appointment.service';
   imports: [PrismaModule],
   controllers: [AppointmentController],
   providers: [AppointmentService, TwilioService],
+  exports: [AppointmentService],
 })
 export class AppointmentModule {}

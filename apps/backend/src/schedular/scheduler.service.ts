@@ -4,40 +4,34 @@ import axios from 'axios';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AgentStatus } from '@prisma/client';
 import { AgentDto } from './dto/agent.dto';
+import {
+  AppointmentDetailsDto,
+  VerificationField,
+} from 'src/appointment/dto/appointment-details.dto';
+import { AppointmentService } from 'src/appointment/appointment.service';
+import { MongoService } from 'src/mongo/mongo.service';
 
 // Ensure @nestjs/schedule is installed: npm install @nestjs/schedule
-
-export interface ProviderDetails {
-  payeeId: string;
-  providerId: string;
-  officeId: string;
-  date: string;
-  notes: string;
-}
-
-export interface Appointment {
-  patiantName: string;
-  PatiantDOB: string;
-  providerDetails: ProviderDetails;
-}
 
 const noOfAgents = process.env.NO_OF_AGENTS
   ? parseInt(process.env.NO_OF_AGENTS)
   : 1;
-const appointmentListApiUrl =
-  process.env.APPOINTMENT_LIST_API_URL ||
-  'https://beea-35-153-127-242.ngrok-free.app/appointments';
-const appointmentApiToken =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzYjgyODIwNC0zMDg2LTQ5ZjgtOGJiZC01YTlkODdkZjcxNTYiLCJlbWFpbCI6InRlZW5hQGRlbnRhbHMuY29tIiwicm9sZSI6IlBBWUVFIiwiZmlyc3ROYW1lIjoiVGVlbmEiLCJsYXN0TmFtZSI6IlN0b25lIiwiZG9iIjoiMjAwMi0wMS0zMVQwMDowMTowMC4wMDBaIiwiaWF0IjoxNzc0NTEwMTk5LCJleHAiOjE3NzQ1OTY1OTl9.FI5fRiUfD3IUCHqHlfiNL7OkzODYJh_fnZPR1TK3lDQ';
+
+const sampleDataApiUrl =
+  process.env.SAMPLE_DATA_API_URL ||
+  'http://localhost:3000/scheduler/sample-data';
 
 @Injectable()
 export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
   private isProcessing = false;
 
-  constructor(private prisma: PrismaService) {}
-
-  @Cron(CronExpression.EVERY_MINUTE)
+  constructor(
+    private prisma: PrismaService,
+    private readonly appointmentService: AppointmentService,
+    private readonly mongoService: MongoService,
+  ) {}
+  // @Cron(CronExpression.EVERY_MINUTE)
   async handleCron() {
     if (this.isProcessing) {
       this.logger.debug('Previous job processing, skipping...');
@@ -45,16 +39,23 @@ export class SchedulerService {
     }
     this.isProcessing = true;
     try {
-      const response = await axios.get<Appointment[]>(appointmentListApiUrl, {
-        headers: { Authorization: `Bearer ${appointmentApiToken}` },
-      });
-      this.logger.debug('Successfully called appointment list API');
-      this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
-      const appointments = response.data;
-      this.logger.debug(`respnose:::: ${response}, 
-            Fetched ${appointments.length} appointments from API`);
+      let appointmentData = await this.getAppointments();
+      this.logger.debug(
+        `Appointment data fetched::: ${JSON.stringify(appointmentData)}`,
+      );
+      await this.saveRawAppointmentDataToMongo(appointmentData);
 
-      const pendingAppointments = [...appointments];
+      let finalAppointments =
+        this.transformAppointmentDataToVerificationFields(appointmentData);
+
+      this.logger.debug(
+        `Final appointments::: ${JSON.stringify(finalAppointments)}`,
+      );
+      // comment below 2 lines after actually calling
+      const response = await this.appointmentService.create(finalAppointments);
+      this.logger.log(`API Response:::::::: ${JSON.stringify(response)}`);
+
+      const pendingAppointments = [finalAppointments];
 
       while (pendingAppointments.length > 0) {
         const agents: AgentDto[] = await this.prisma.agent.findMany({
@@ -70,9 +71,12 @@ export class SchedulerService {
             const appointment = pendingAppointments.shift();
             if (appointment) {
               this.logger.log(
-                `Processing appointment for ${appointment.patiantName} with agent ${agent.name}`,
+                `Processing appointment for ${appointment.Patient_FirstName} ${appointment.Patient_LastName} with agent ${agent.name}`,
               );
-              //   call appointment api for each agent and appointment and update agent status to IN_PROGRESS
+              // un comment below lines  call appointment api for each agent and appointment and update agent status to IN_PROGRESS
+              // const response = this.appointmentService.create(appointment);
+              // this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
+
               await this.callAppointmentApi(agent, appointment);
             }
           }
@@ -94,14 +98,110 @@ export class SchedulerService {
     }
   }
 
-  async callAppointmentApi(agent: any, appointment: Appointment) {
+  async callAppointmentApi(
+    agent: AgentDto,
+    appointment: AppointmentDetailsDto,
+  ) {
     this.logger.log(
-      `Calling appointment API for ${appointment.patiantName} with agent ${agent.name}`,
+      `Calling appointment API for ${appointment.Patient_FirstName} ${appointment.Patient_LastName} with agent ${agent.name}`,
     );
     await this.prisma.agent.update({
       where: { id: agent.id },
       data: { status: AgentStatus.IN_PROGRESS, startTime: new Date() },
     });
+  }
+
+  async getAppointments() {
+    try {
+      this.logger.log(
+        'Fetching appointment data from API...',
+        sampleDataApiUrl,
+      );
+      const response = await axios.get<any>(sampleDataApiUrl);
+      this.logger.debug(`Appointment data: ${JSON.stringify(response.data)}`);
+      return response.data;
+    } catch (error) {
+      this.logger.error(
+        'Failed to fetch appointment data from API',
+        error instanceof Error ? error.message : error,
+      );
+      throw error;
+    }
+  }
+
+  private async saveRawAppointmentDataToMongo(
+    appointmentData: Record<string, any>,
+  ) {
+    const db = await this.mongoService.getDb();
+    const collection = db.collection('appointments');
+
+    const appointmentId = appointmentData?.AppointmentID;
+    const patientId = appointmentData?.PatientID;
+    if (appointmentId != null && patientId != null) {
+      const existing = await collection.findOne({
+        AppointmentID: appointmentId,
+        PatientID: patientId,
+      });
+
+      if (existing) {
+        this.logger.log(
+          `Appointment data already exists in MongoDB for AppointmentID=${appointmentId}, PatientID=${patientId}`,
+        );
+        return existing;
+      }
+    }
+
+    const document = {
+      ...appointmentData,
+      savedAt: new Date(),
+      source: 'scheduler',
+    };
+    const result = await collection.insertOne(document);
+    this.logger.log(
+      `Saved raw appointment data to MongoDB: ${result.insertedId}`,
+    );
+    return result;
+  }
+
+  transformAppointmentDataToVerificationFields(
+    appointmentData: Record<string, any>,
+  ): AppointmentDetailsDto {
+    const transformedData: any = {};
+    const verificationFields: VerificationField[] = [];
+    let order = 1;
+
+    for (const [key, value] of Object.entries(appointmentData)) {
+      // Skip the 'history' array and known object keys
+      if (key === 'history') continue;
+
+      if (typeof value === 'object' && value !== null && 'question' in value) {
+        verificationFields.push({
+          question: value?.question,
+          field: key,
+          order: order,
+        });
+        order++;
+      } else if (typeof value === 'string' || typeof value === 'number') {
+        transformedData[key] = value;
+      }
+    }
+
+    // Process history array and add to verificationFields
+    if (appointmentData.history && Array.isArray(appointmentData.history)) {
+      for (const historyItem of appointmentData.history) {
+        if (historyItem.question && historyItem.procedurecode) {
+          verificationFields.push({
+            question: historyItem.question,
+            field: `history.${historyItem.procedurecode}`,
+            order: order,
+          });
+          order++;
+        }
+      }
+    }
+
+    transformedData['verificationFields'] = verificationFields;
+    return transformedData;
   }
 
   private delay(ms: number) {
