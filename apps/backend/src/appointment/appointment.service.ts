@@ -34,6 +34,7 @@ export class AppointmentService {
       );
     }
 
+    //change
     const office = await this.prisma.office.findUnique({
       where: { id: dto.officeId },
     });
