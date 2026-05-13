@@ -51,6 +51,8 @@ export class SchedulerService {
       this.logger.debug(
         `Final appointments::: ${JSON.stringify(finalAppointments)}`,
       );
+      //save finalAppointments to mongo collection named processed_appointments for reference and debugging
+      await this.saveTransformedAppointmentDataToMongo(finalAppointments);
       // comment below 2 lines after actually calling
       const response = await this.appointmentService.create(finalAppointments);
       this.logger.log(`API Response:::::::: ${JSON.stringify(response)}`);
@@ -133,7 +135,41 @@ export class SchedulerService {
     appointmentData: Record<string, any>,
   ) {
     const db = await this.mongoService.getDb();
-    const collection = db.collection('appointments');
+    const collection = db.collection('subrina_appointments');
+
+    const appointmentId = appointmentData?.AppointmentID;
+    const patientId = appointmentData?.PatientID;
+    if (appointmentId != null && patientId != null) {
+      const existing = await collection.findOne({
+        AppointmentID: appointmentId,
+        PatientID: patientId,
+      });
+
+      if (existing) {
+        this.logger.log(
+          `Appointment data already exists in MongoDB for AppointmentID=${appointmentId}, PatientID=${patientId}`,
+        );
+        return existing;
+      }
+    }
+
+    const document = {
+      ...appointmentData,
+      savedAt: new Date(),
+      source: 'scheduler',
+    };
+    const result = await collection.insertOne(document);
+    this.logger.log(
+      `Saved raw appointment data to MongoDB: ${result.insertedId}`,
+    );
+    return result;
+  }
+
+  private async saveTransformedAppointmentDataToMongo(
+    appointmentData: Record<string, any>,
+  ) {
+    const db = await this.mongoService.getDb();
+    const collection = db.collection('Appointment');
 
     const appointmentId = appointmentData?.AppointmentID;
     const patientId = appointmentData?.PatientID;
