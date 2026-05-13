@@ -10,24 +10,24 @@ export class BotTrackerService {
 
   /**
    * Create a new tracker record asynchronously
-   * @param createBotTrackerDto - payeeId and callLog (stored as Prisma Json)
+   * @param createBotTrackerDto - PatientID and callLog (stored as Prisma Json)
    */
   async create(createBotTrackerDto: CreateBotTrackerDto): Promise<BotTrackerDto> {
-    const { payeeId, callLog } = createBotTrackerDto;
+    const { PatientID, callLog } = createBotTrackerDto;
 
     // // Validate that the payee exists
     // const payeeExists = await this.prisma.payee.findUnique({
-    //   where: { id: payeeId },
+    //   where: { id: PatientID },
     // });
 
     // if (!payeeExists) {
-    //   throw new BadRequestException(`Payee with ID ${payeeId} does not exist`);
+    //   throw new BadRequestException(`Payee with ID ${PatientID} does not exist`);
     // }
 
     // Create tracker record in MongoDB
     const tracker = await this.prisma.botTracker.create({
       data: {
-        payeeId,
+        PatientID,
         callLog: callLog as Prisma.InputJsonValue,
       },
     });
@@ -37,12 +37,12 @@ export class BotTrackerService {
 
   /**
    * Retrieve all tracker records for a specific payee
-   * @param payeeId - ID of the payee
+   * @param PatientID - ID of the payee
    * @returns - Array of tracker records
    */
-  async findByPayeeId(payeeId: string): Promise<BotTrackerDto[]> {
+  async findByPatientID(PatientID: string): Promise<BotTrackerDto[]> {
     const trackers = await this.prisma.botTracker.findMany({
-      where: { payeeId },
+      where: { PatientID },
       orderBy: { createdAt: 'desc' },
     });
 
