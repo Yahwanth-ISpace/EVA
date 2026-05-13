@@ -59,10 +59,13 @@ async function bootstrap() {
   const mediaHandler = app.get(MediaStreamHandlerService);
   wss.on('connection', (ws: WebSocket, req: { url?: string }) => {
     const url = new URL(req.url || '', 'http://localhost');
-    const payeeId = url.searchParams.get('payeeId');
+    const patientId =
+      url.searchParams.get('patientId')?.trim() ||
+      url.searchParams.get('payeeId')?.trim() ||
+      null;
     const mode = url.searchParams.get('mode');
     const appointmentId = url.searchParams.get('appointmentId');
-    mediaHandler.handleConnection(ws, payeeId, mode, appointmentId);
+    mediaHandler.handleConnection(ws, patientId, mode, appointmentId);
   });
 }
 bootstrap();

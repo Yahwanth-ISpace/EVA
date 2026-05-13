@@ -169,7 +169,12 @@ export class TwilioController {
   @ApiOperation({
     summary: 'Connect call to EVA media stream (TwiML)',
     description:
-      'Returns `<Connect><Stream url="ws(s)://.../twilio/media-stream?payeeId=...">`. Query `payeeId` or `INBOUND_PAYEE_ID` env.',
+      'Returns `<Connect><Stream url="ws(s)://.../twilio/media-stream?patientId=...">`. Query `patientId` (preferred) or legacy `payeeId`, or `INBOUND_PAYEE_ID` env.',
+  })
+  @ApiQuery({
+    name: 'patientId',
+    required: false,
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
   })
   @ApiQuery({ name: 'payeeId', required: false, example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
   @ApiQuery({ name: 'appointmentId', required: false })
@@ -181,24 +186,28 @@ export class TwilioController {
   @ApiProduces('text/xml')
   async handleInboundStreamPost(
     @Body() body: Record<string, string>,
+    @Query('patientId') patientIdQuery: string,
     @Query('payeeId') payeeIdQuery: string,
     @Query('appointmentId') appointmentIdQuery: string,
     @Query('mode') modeQuery: string,
     @Res() res: Response,
   ) {
-    const payeeId =
-      payeeIdQuery ||
+    const externalPatientId =
+      patientIdQuery?.trim() ||
+      payeeIdQuery?.trim() ||
       process.env.INBOUND_PAYEE_ID?.trim() ||
-      body?.payeeId ||
+      body?.patientId?.trim() ||
+      body?.payeeId?.trim() ||
       'inbound';
     const appointmentId =
       appointmentIdQuery?.trim() || body?.appointmentId?.trim() || undefined;
     const streamMode = modeQuery?.trim() || undefined;
-    this.sendStreamTwiML(payeeId, res, appointmentId, streamMode);
+    this.sendStreamTwiML(externalPatientId, res, appointmentId, streamMode);
   }
 
   @Get('inbound-stream')
   @ApiOperation({ summary: 'Same as POST inbound-stream (GET for some Twilio configs)' })
+  @ApiQuery({ name: 'patientId', required: false })
   @ApiQuery({ name: 'payeeId', required: false })
   @ApiQuery({ name: 'appointmentId', required: false })
   @ApiQuery({
@@ -208,19 +217,24 @@ export class TwilioController {
   })
   @ApiProduces('text/xml')
   async handleInboundStreamGet(
+    @Query('patientId') patientId: string,
     @Query('payeeId') payeeId: string,
     @Query('appointmentId') appointmentId: string,
     @Query('mode') mode: string,
     @Res() res: Response,
   ) {
-    const id = payeeId || process.env.INBOUND_PAYEE_ID?.trim() || 'inbound';
+    const id =
+      patientId?.trim() ||
+      payeeId?.trim() ||
+      process.env.INBOUND_PAYEE_ID?.trim() ||
+      'inbound';
     const appt = appointmentId?.trim() || undefined;
     const streamMode = mode?.trim() || undefined;
     this.sendStreamTwiML(id, res, appt, streamMode);
   }
 
   private sendStreamTwiML(
-    payeeId: string,
+    externalPatientId: string,
     res: Response,
     appointmentId?: string,
     streamMode?: string,
@@ -234,8 +248,8 @@ export class TwilioController {
         : '';
     const streamUrl =
       getStreamBaseUrl() +
-      '/twilio/media-stream?payeeId=' +
-      encodeURIComponent(payeeId) +
+      '/twilio/media-stream?patientId=' +
+      encodeURIComponent(externalPatientId) +
       apptQ +
       modeQ;
 
@@ -287,7 +301,7 @@ export class TwilioController {
   /**
    * Play DTMF digits into an in-progress IVR-bypass call, then reconnect the media stream
    * in ivr-bypass mode so phase 1 can continue until a live agent is reached.
-   * Query: `digits` (Twilio: 0-9, w/W pauses, # *), optional `payeeId`, optional `appointmentId`.
+   * Query: `digits` (Twilio: 0-9, w/W pauses, # *), optional `patientId` or legacy `payeeId`, optional `appointmentId`.
    */
   @Get('ivr-bypass-dtmf')
   @Post('ivr-bypass-dtmf')
@@ -299,6 +313,7 @@ export class TwilioController {
   @ApiProduces('text/xml')
   ivrBypassDtmf(
     @Query('digits') digits: string,
+    @Query('patientId') patientId: string,
     @Query('payeeId') payeeId: string,
     @Query('appointmentId') appointmentId: string,
     @Res() res: Response,
@@ -309,9 +324,12 @@ export class TwilioController {
         'Query `digits` is required and must contain only 0-9, #, *, w, W.',
       );
     }
-    const pid = (payeeId || '').trim();
+    const pid = (patientId || payeeId || '').trim();
     const q = new URLSearchParams({ mode: 'ivr-bypass' });
-    if (pid) q.set('payeeId', pid);
+    if (pid) {
+      q.set('patientId', pid);
+      q.set('payeeId', pid);
+    }
     if (appointmentId?.trim()) q.set('appointmentId', appointmentId.trim());
     const streamUrl = `${getStreamBaseUrl()}/twilio/media-stream?${q.toString()}`;
 
@@ -327,7 +345,7 @@ export class TwilioController {
 
   /**
    * Play DTMF digits into an in-progress call, then reconnect the media stream for TPA IVR navigation.
-   * Query: `digits` (Twilio: 0-9, w/W pauses, # *), `payeeId`, optional `appointmentId`.
+   * Query: `digits` (Twilio: 0-9, w/W pauses, # *), `patientId` or legacy `payeeId`, optional `appointmentId`.
    */
   @Get('tpa-ivr-dtmf')
   @Post('tpa-ivr-dtmf')
@@ -339,6 +357,7 @@ export class TwilioController {
   @ApiProduces('text/xml')
   tpaIvrDtmf(
     @Query('digits') digits: string,
+    @Query('patientId') patientId: string,
     @Query('payeeId') payeeId: string,
     @Query('appointmentId') appointmentId: string,
     @Res() res: Response,
@@ -349,16 +368,18 @@ export class TwilioController {
         'Query `digits` is required and must contain only 0-9, #, *, w, W.',
       );
     }
-    const pid = (payeeId || '').trim();
+    const pid = (patientId || payeeId || '').trim();
     if (!pid) {
-      throw new BadRequestException('Query `payeeId` is required.');
+      throw new BadRequestException(
+        'Query `patientId` or `payeeId` is required.',
+      );
     }
     const apptQ = appointmentId?.trim()
       ? '&appointmentId=' + encodeURIComponent(appointmentId.trim())
       : '';
     const streamUrl =
       getStreamBaseUrl() +
-      '/twilio/media-stream?payeeId=' +
+      '/twilio/media-stream?patientId=' +
       encodeURIComponent(pid) +
       apptQ +
       '&mode=tpa-ivr';

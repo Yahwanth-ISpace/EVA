@@ -8,88 +8,96 @@ import { CreateBotTrackerDto } from './dto/create-bot-tracker.dto';
 export class BotTrackerService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private mapTracker(tracker: {
+    id: string;
+    payeeId: string;
+    callLog: Prisma.JsonValue | null;
+    createdAt: Date;
+  }): BotTrackerDto {
+    return {
+      id: tracker.id,
+      PatientID: tracker.payeeId,
+      callLog: tracker.callLog,
+      createdAt: tracker.createdAt,
+    };
+  }
+
   /**
    * Create a new tracker record asynchronously
-   * @param createBotTrackerDto - PatientID and callLog (stored as Prisma Json)
+   * @param createBotTrackerDto - PatientID (external id) and callLog (stored as Prisma Json)
    */
   async create(createBotTrackerDto: CreateBotTrackerDto): Promise<BotTrackerDto> {
     const { PatientID, callLog } = createBotTrackerDto;
 
-    // // Validate that the payee exists
-    // const payeeExists = await this.prisma.payee.findUnique({
-    //   where: { id: PatientID },
-    // });
-
-    // if (!payeeExists) {
-    //   throw new BadRequestException(`Payee with ID ${PatientID} does not exist`);
-    // }
-
-    // Create tracker record in MongoDB
     const tracker = await this.prisma.botTracker.create({
       data: {
-        PatientID,
+        payeeId: PatientID,
         callLog: callLog as Prisma.InputJsonValue,
       },
     });
 
-    return tracker;
+    return this.mapTracker(tracker);
   }
 
   /**
-   * Retrieve all tracker records for a specific payee
-   * @param PatientID - ID of the payee
-   * @returns - Array of tracker records
+   * Retrieve all tracker records for a specific patient / legacy payee key
    */
   async findByPatientID(PatientID: string): Promise<BotTrackerDto[]> {
     const trackers = await this.prisma.botTracker.findMany({
-      where: { PatientID },
+      where: { payeeId: PatientID },
       orderBy: { createdAt: 'desc' },
     });
 
-    return trackers;
+    return trackers.map((t) => this.mapTracker(t));
+  }
+
+  /** @alias findByPatientID — path param is the same external id used as `payeeId` on the media stream. */
+  async findByPayeeId(payeeId: string): Promise<BotTrackerDto[]> {
+    return this.findByPatientID(payeeId);
   }
 
   /**
    * Retrieve a specific tracker record by ID
-   * @param id - ID of the tracker record
-   * @returns - Tracker record or null if not found
    */
   async findById(id: string): Promise<BotTrackerDto | null> {
     const tracker = await this.prisma.botTracker.findUnique({
       where: { id },
     });
 
-    return tracker;
+    return tracker ? this.mapTracker(tracker) : null;
   }
 
   /**
    * Update a tracker record
-   * @param id - ID of the tracker record
-   * @param updateData - Data to update
-   * @returns - Updated tracker record
    */
   async update(
     id: string,
     updateData: Partial<BotTrackerDto>,
   ): Promise<BotTrackerDto> {
+    const data: Record<string, unknown> = { ...updateData };
+    if (data.PatientID != null) {
+      data.payeeId = data.PatientID;
+      delete data.PatientID;
+    }
+    delete data.id;
+    delete data.createdAt;
+
     const tracker = await this.prisma.botTracker.update({
       where: { id },
-      data: updateData,
+      data: data as Prisma.BotTrackerUpdateInput,
     });
 
-    return tracker;
+    return this.mapTracker(tracker);
   }
 
   /**
    * Delete a tracker record
-   * @param id - ID of the tracker record
-   * @returns - Deleted tracker record
    */
   async delete(id: string): Promise<BotTrackerDto> {
     const tracker = await this.prisma.botTracker.delete({
       where: { id },
     });
 
-    return tracker;
+    return this.mapTracker(tracker);
   }
 }

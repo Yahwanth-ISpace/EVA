@@ -168,8 +168,7 @@ export class SchedulerService {
   private async saveTransformedAppointmentDataToMongo(
     appointmentData: Record<string, any>,
   ) {
-    const db = await this.mongoService.getDb();
-    const collection = db.collection('Appointment');
+    const collection = await this.mongoService.appointmentsCollection();
 
     const appointmentId = appointmentData?.AppointmentID;
     const patientId = appointmentData?.PatientID;

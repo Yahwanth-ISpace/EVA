@@ -22,7 +22,7 @@ import { TranscriptionService } from '../transcription/transcription.service';
 import { ElevenLabsAudioStackService } from '../voice/elevenlabs-audio-stack.service';
 import {
   VerificationService,
-  type PayeeCallContext,
+  type PatientCallContext,
 } from '../verification/verification.service';
 import { VerificationRequirementService } from '../verification-requirement/verification-requirement.service';
 import { BotTrackerService } from '../bot-tracker/bot-tracker.service';
@@ -71,9 +71,7 @@ const TPA_IVR_SPANISH_WAIT_MS = Number(
   process.env.TPA_IVR_SPANISH_WAIT_MS || 16000,
 );
 
-function streamModeUsesIvrTiming(
-  m: 'eva' | 'ivr-bypass' | 'tpa-ivr',
-): boolean {
+function streamModeUsesIvrTiming(m: 'eva' | 'ivr-bypass' | 'tpa-ivr'): boolean {
   return m === 'ivr-bypass' || m === 'tpa-ivr';
 }
 
@@ -108,9 +106,7 @@ function tpaIvrSoundsLikeIvrStart(t: string): boolean {
   if (s.length < 12) return false;
   return (
     /this call (may be|will be|is being) (recorded|monitored)/.test(s) ||
-    /recorded (or|and) monitored|quality assurance|training purposes/.test(
-      s,
-    ) ||
+    /recorded (or|and) monitored|quality assurance|training purposes/.test(s) ||
     /for english|for spanish|para español|presione|press\s*[12]/.test(s) ||
     /welcome to|thank you for calling/.test(s)
   );
@@ -258,8 +254,7 @@ function tpaIvrSoundsLikeLiveAgent(t: string): boolean {
   const holdReturnWithAssist =
     /\b(thank you for holding|thanks for holding|appreciate your patience)\b/i.test(
       s,
-    ) &&
-    /\b(how can i help|how may i help|how can i assist)\b/i.test(s);
+    ) && /\b(how can i help|how may i help|how can i assist)\b/i.test(s);
   return selfIntro || holdReturnWithAssist;
 }
 
@@ -284,7 +279,8 @@ function normalizeIvrDigitToken(token: string): string | null {
 function extractAgentRouteDigitFromIvrPrompt(t: string): string | null {
   const s = t.trim();
   if (!s) return null;
-  const digitToken = '(?:\\d|zero|one|two|three|four|five|six|seven|eight|nine|star|pound|hash)';
+  const digitToken =
+    '(?:\\d|zero|one|two|three|four|five|six|seven|eight|nine|star|pound|hash)';
   const agentTarget =
     '(?:live\\s+agent|representative|customer\\s+agent|customer\\s+service|customer\\s+support|agent\\s+support|support|operator)';
 
@@ -365,7 +361,9 @@ function userAsksPurposeOfCallOrOpening(userSaid: string): boolean {
     /why are you calling|purpose of (this|your|the)?\s*call|reason for (this|your)?\s*call/i.test(
       t,
     ) ||
-    /what (is this|do you need) (call )?regarding|what'?s this (call )?about/i.test(t) ||
+    /what (is this|do you need) (call )?regarding|what'?s this (call )?about/i.test(
+      t,
+    ) ||
     /what (kind of )?information do you need|what details (are you|do you) (looking|calling) for/i.test(
       t,
     )
@@ -426,18 +424,20 @@ function getRepeatOnlyPrompt(): string {
   return options[Math.floor(Math.random() * options.length)];
 }
 
-/** Varied phrase for asking a benefit field (used when AI returns empty/generic). Use different phrasing each time. */
-function askForFieldPhrase(field: string): string {
-  const templates = [
-    `What is the ${field}?`,
-    `Can I get the ${field}?`,
-    `May I have the ${field}?`,
-    `Can you provide the ${field}?`,
-    `Can I have the ${field}?`,
-    `Could you share the ${field}?`,
-    `What's the ${field}?`,
-  ];
-  return templates[Math.floor(Math.random() * templates.length)];
+/** Exact benefit question for `field` from appointment payload (`fieldQuestionByKey`) or legacy default. */
+function verbatimBenefitQuestion(
+  field: string,
+  fieldQuestionByKey: Record<string, string>,
+): string {
+  const q = fieldQuestionByKey[field]?.trim();
+  if (q) return q;
+  const legacy: Record<string, string> = {
+    coverage: 'What is the basic coverage?',
+    deductible: 'Can you provide the deductible?',
+    copay: 'What is the copay?',
+    validity: 'What is the validity of the insurance?',
+  };
+  return legacy[field] ?? field;
 }
 
 /** Extract a single value for a benefit field from transcript (e.g. "28 dollars" -> "28 dollars"). Used to correct after-hold when AI puts value in wrong field. */
@@ -534,15 +534,28 @@ function isIntroPurposePhrase(text: string): boolean {
   ) {
     return true;
   }
-  if (/\bi\s+need\s+(a\s+few|some|to\s+get|to\s+collect|to\s+verify)\s+(benefit|patient|coverage|insurance)\s+(detail|info|information)/i.test(t)) {
+  if (
+    /\bi\s+need\s+(a\s+few|some|to\s+get|to\s+collect|to\s+verify)\s+(benefit|patient|coverage|insurance)\s+(detail|info|information)/i.test(
+      t,
+    )
+  ) {
     return true;
   }
-  if (/\b(verify|confirm|collect|gather|get)\s+(a\s+few\s+|some\s+|the\s+)?(benefit|patient|coverage|insurance)\s+(detail|info|information)/i.test(t)) {
+  if (
+    /\b(verify|confirm|collect|gather|get)\s+(a\s+few\s+|some\s+|the\s+)?(benefit|patient|coverage|insurance)\s+(detail|info|information)/i.test(
+      t,
+    )
+  ) {
     return true;
   }
   if (/\b(i'?m|i am)\s+here\s+to\s+verify\b/i.test(t)) return true;
   if (/\bi\s+want\s+to\s+verify\s+(the\s+)?patient\b/i.test(t)) return true;
-  if (/\bto\s+(verify|confirm|check)\s+(the\s+)?patient'?s?\s+(benefit|coverage|insurance|eligibility)/i.test(t)) return true;
+  if (
+    /\bto\s+(verify|confirm|check)\s+(the\s+)?patient'?s?\s+(benefit|coverage|insurance|eligibility)/i.test(
+      t,
+    )
+  )
+    return true;
   if (/\bget\s+benefit\s+(detail|info|information)/i.test(t)) return true;
   if (/\bpurpose\s+of\s+(this|the|my)\s+call\s+is\b/i.test(t)) return true;
   return false;
@@ -573,27 +586,52 @@ function detectIdentityAsk(userSaid: string): IdentityAsk {
   // Tax ID / EIN
   if (/\b(tax\s*id|tin|ein|tax\s+identification)\b/.test(t)) return 'tax_id';
   // Billing vs rendering NPI
-  if (/\b(billing\s+(provider\s+)?npi|billing\s+npi)\b/.test(t)) return 'billing_npi';
-  if (/\b(provider\s+npi|rendering\s+npi|npi\s+(number|of|for))\b/.test(t) || /\bwhat(?:'s|\s+is)\s+(the\s+)?npi\b/.test(t) || /\bnpi\s*\??$/.test(t)) {
+  if (/\b(billing\s+(provider\s+)?npi|billing\s+npi)\b/.test(t))
+    return 'billing_npi';
+  if (
+    /\b(provider\s+npi|rendering\s+npi|npi\s+(number|of|for))\b/.test(t) ||
+    /\bwhat(?:'s|\s+is)\s+(the\s+)?npi\b/.test(t) ||
+    /\bnpi\s*\??$/.test(t)
+  ) {
     return 'provider_npi';
   }
   // Member ID
-  if (/\b(member\s*id|member\s+number|subscriber\s*id|policy\s*(number|id)|id\s+number)\b/.test(t)) return 'member_id';
+  if (
+    /\b(member\s*id|member\s+number|subscriber\s*id|policy\s*(number|id)|id\s+number)\b/.test(
+      t,
+    )
+  )
+    return 'member_id';
   // Subscriber questions (check before patient so "subscriber first name" matches here)
-  if (/\bsubscriber'?s?\s+(date\s+of\s+birth|dob|birthday)\b/.test(t) || /\bdob\s+(of\s+)?(the\s+)?subscriber\b/.test(t)) {
+  if (
+    /\bsubscriber'?s?\s+(date\s+of\s+birth|dob|birthday)\b/.test(t) ||
+    /\bdob\s+(of\s+)?(the\s+)?subscriber\b/.test(t)
+  ) {
     return 'subscriber_dob';
   }
-  if (/\bsubscriber'?s?\s+first\s+name\b/.test(t)) return 'subscriber_first_name';
+  if (/\bsubscriber'?s?\s+first\s+name\b/.test(t))
+    return 'subscriber_first_name';
   if (/\bsubscriber'?s?\s+last\s+name\b/.test(t)) return 'subscriber_last_name';
-  if (/\b(subscriber'?s?\s+name|name\s+of\s+(the\s+)?subscriber)\b/.test(t)) return 'subscriber_full_name';
+  if (/\b(subscriber'?s?\s+name|name\s+of\s+(the\s+)?subscriber)\b/.test(t))
+    return 'subscriber_full_name';
   // Patient / provider
-  if (/\b(patient'?s?\s+(date\s+of\s+birth|dob|birthday)|patient\s+dob)\b/.test(t) || /\b(date\s+of\s+birth|dob|birthday)\b/.test(t)) {
+  if (
+    /\b(patient'?s?\s+(date\s+of\s+birth|dob|birthday)|patient\s+dob)\b/.test(
+      t,
+    ) ||
+    /\b(date\s+of\s+birth|dob|birthday)\b/.test(t)
+  ) {
     return 'patient_dob';
   }
   if (/\bpatient'?s?\s+first\s+name\b/.test(t)) return 'patient_first_name';
   if (/\bpatient'?s?\s+last\s+name\b/.test(t)) return 'patient_last_name';
-  if (/\b(patient'?s?\s+(full\s+)?name|name\s+of\s+(the\s+)?patient)\b/.test(t)) return 'patient_full_name';
-  if (/\b(provider'?s?\s+(full\s+)?name|name\s+of\s+(the\s+)?(provider|doctor|dentist)|treating\s+(provider|doctor|dentist)|rendering\s+(provider|doctor|dentist)|who\s+is\s+(the\s+)?(provider|doctor|dentist))\b/.test(t)) {
+  if (/\b(patient'?s?\s+(full\s+)?name|name\s+of\s+(the\s+)?patient)\b/.test(t))
+    return 'patient_full_name';
+  if (
+    /\b(provider'?s?\s+(full\s+)?name|name\s+of\s+(the\s+)?(provider|doctor|dentist)|treating\s+(provider|doctor|dentist)|rendering\s+(provider|doctor|dentist)|who\s+is\s+(the\s+)?(provider|doctor|dentist))\b/.test(
+      t,
+    )
+  ) {
     return 'provider_name';
   }
   return null;
@@ -605,10 +643,11 @@ function detectIdentityAsk(userSaid: string): IdentityAsk {
  *  EVA fast and on-script, and it is what stops the "I am calling to verify..." drift. */
 function answerIdentityFromContext(
   ask: NonNullable<IdentityAsk>,
-  ctx: PayeeCallContext | null,
+  ctx: PatientCallContext | null,
 ): string | null {
   if (!ctx) return null;
-  const notOnFile = 'I am sorry, I do not have that on my end. Is there anything else I can share so we can continue?';
+  const notOnFile =
+    'I am sorry, I do not have that on my end. Is there anything else I can share so we can continue?';
   switch (ask) {
     case 'provider_npi':
       return ctx.provider?.npi
@@ -669,10 +708,15 @@ function answerIdentityFromContext(
  *  Used after purpose has been said to avoid EVA immediately volunteering a benefit field.
  *  Returns false for "yes" / "thank you" since those are handled as explicit confirmations elsewhere. */
 function isBareAcknowledgement(text: string): boolean {
-  const t = text.trim().toLowerCase().replace(/[.!,]+$/, '');
+  const t = text
+    .trim()
+    .toLowerCase()
+    .replace(/[.!,]+$/, '');
   if (!t) return false;
   if (t.length > 28) return false;
-  return /^(ok|okay|alright|all\s*right|sure|got\s*it|understood|i\s*see|gotcha|mm[-\s]?hmm|mhm|mmk)$/i.test(t);
+  return /^(ok|okay|alright|all\s*right|sure|got\s*it|understood|i\s*see|gotcha|mm[-\s]?hmm|mhm|mmk)$/i.test(
+    t,
+  );
 }
 
 /** TPA is handing control to EVA ("go ahead" / "what do you need" / "what fields" / "what information" /
@@ -703,7 +747,11 @@ function isTpaHandoff(text: string): boolean {
 /** Is EVA's proposed reply asking for a benefit field from the orderedFields list?
  *  We check for common "Can I get / May I have / What is / Could you provide / share"
  *  followed by any field name in its camel-case or space-separated form. */
-function isBenefitFieldAsk(toSpeak: string, orderedFields: string[]): boolean {
+function isBenefitFieldAsk(
+  toSpeak: string,
+  orderedFields: string[],
+  fieldQuestionByKey?: Record<string, string>,
+): boolean {
   if (!toSpeak?.trim() || !orderedFields.length) return false;
   const t = toSpeak.toLowerCase();
   const hasQuestion =
@@ -711,11 +759,20 @@ function isBenefitFieldAsk(toSpeak: string, orderedFields: string[]): boolean {
       t,
     );
   if (!hasQuestion) return false;
+  if (fieldQuestionByKey) {
+    for (const f of orderedFields) {
+      const q = fieldQuestionByKey[f]?.trim().toLowerCase();
+      if (q && t.includes(q)) return true;
+    }
+  }
   return orderedFields.some((f) => {
     if (!f) return false;
     const direct = f.toLowerCase();
     // camelCase → space separated, e.g. "groupId" → "group id"
-    const spaced = f.replace(/([A-Z])/g, ' $1').toLowerCase().trim();
+    const spaced = f
+      .replace(/([A-Z])/g, ' $1')
+      .toLowerCase()
+      .trim();
     return t.includes(direct) || t.includes(spaced);
   });
 }
@@ -859,10 +916,10 @@ const STATIC_PATIENT_INFO: PatientInfo = {
   ssn: null,
 };
 
-/** Static call context used when no payee/appointment is available (testing / inbound smoke tests).
+/** Static call context used when no patient appointment is available (testing / inbound smoke tests).
  * Values here are only used as the final fallback so EVA still has something to say; real calls
- * get this data from `VerificationService.getPayeeCallContext` at stream start. */
-const STATIC_CALL_CONTEXT: PayeeCallContext = {
+ * get this data from `VerificationService.getPatientCallContext` at stream start. */
+const STATIC_CALL_CONTEXT: PatientCallContext = {
   patient: {
     firstName: STATIC_PATIENT_INFO.firstName,
     lastName: STATIC_PATIENT_INFO.lastName,
@@ -881,6 +938,24 @@ const STATIC_CALL_CONTEXT: PayeeCallContext = {
   provider: null,
   office: null,
   payer: null,
+  verificationSteps: [
+    {
+      field: 'coverage',
+      question: 'What is the basic coverage?',
+      order: 1,
+    },
+    {
+      field: 'deductible',
+      question: 'Can you provide the deductible?',
+      order: 2,
+    },
+    { field: 'copay', question: 'What is the copay?', order: 3 },
+    {
+      field: 'validity',
+      question: 'What is the validity of the insurance?',
+      order: 4,
+    },
+  ],
 };
 
 interface StreamState {
@@ -889,15 +964,17 @@ interface StreamState {
   callSid: string | null;
   processing: boolean;
   fallbackTimer: ReturnType<typeof setInterval> | null;
-  payeeId: string | null;
+  patientId: string | null;
   patientInfo: PatientInfo | null;
   /** Pre-loaded full identity context (provider NPI/Tax ID, member ID, payer, etc.)
    *  so EVA can answer TPA verification questions immediately without extra DB round-trips. */
-  callContext: PayeeCallContext | null;
+  callContext: PatientCallContext | null;
   /** Dynamic verification fields (key = field name from VerificationRequirement). */
   extractedData: Record<string, string | null>;
-  /** Ordered list of field names to collect (from VerificationRequirement or default). Loaded when payeeId is set. */
+  /** Ordered list of field keys to collect (matches appointment `verificationFields` or requirement). */
   orderedFields: string[];
+  /** Exact question text per field key from appointment / requirement payload (ask verbatim). */
+  fieldQuestionByKey: Record<string, string>;
   /** When set, verification is linked to this requirement and extractedData is stored in Verification.extractedData. */
   verificationRequirementId: string | null;
   /** When set, verification rows are scoped to this appointment (not merged across visits). */
@@ -1007,6 +1084,23 @@ export class MediaStreamHandlerService {
     private readonly audioEmotionService: AudioEmotionService,
   ) {}
 
+  /** Verbatim benefit questions from appointment context (available before lazy field load). */
+  private applyVerificationStepsToStreamState(
+    state: StreamState,
+    ctx: PatientCallContext,
+  ): void {
+    const steps = ctx.verificationSteps ?? [];
+    if (!steps.length) return;
+    state.fieldQuestionByKey = Object.fromEntries(
+      steps
+        .filter((s) => s.field)
+        .map((s) => [
+          s.field,
+          s.question?.trim() || verbatimBenefitQuestion(s.field, {}),
+        ]),
+    );
+  }
+
   handleConnection(
     ws: WebSocket,
     PatientID?: string | null,
@@ -1021,13 +1115,14 @@ export class MediaStreamHandlerService {
       callSid: null,
       processing: false,
       fallbackTimer: null,
-      payeeId: payeeId ?? null,
+      patientId: PatientID ?? null,
       patientInfo: null,
       callContext: null,
       extractedData: {},
       orderedFields: [],
+      fieldQuestionByKey: {},
       verificationRequirementId: null,
-      appointmentId: appointmentId?.trim() || null,
+      appointmentId: AppointmentID?.trim() || null,
       callEnded: false,
       lastSpeakTime: 0,
       onHold: false,
@@ -1038,11 +1133,7 @@ export class MediaStreamHandlerService {
       postGoodbyeUntil: null,
       postGoodbyeTimeoutId: null,
       conversationTranscript: [],
-      mode: isTpaIvr
-        ? 'tpa-ivr'
-        : isIvrBypass
-          ? 'ivr-bypass'
-          : 'eva',
+      mode: isTpaIvr ? 'tpa-ivr' : isIvrBypass ? 'ivr-bypass' : 'eva',
       ivrDigitSent: false,
       purposeSaid: false,
       patientIdentityReadyForBenefits: false,
@@ -1060,10 +1151,10 @@ export class MediaStreamHandlerService {
     };
 
     const pushLiveTracker = async (line: string) => {
-      if (!state.payeeId || !line?.trim()) return;
+      if (!state.patientId || !line?.trim()) return;
       try {
         await this.botTrackerService.create({
-          payeeId: state.payeeId,
+          PatientID: state.patientId,
           callLog: line.trim(),
         });
       } catch (e: any) {
@@ -1107,9 +1198,9 @@ export class MediaStreamHandlerService {
     };
 
     const pushToVerificationService = () => {
-      if (!state.payeeId) {
+      if (!state.patientId) {
         this.logger.warn(
-          '[MediaStream] Verification NOT saved: payeeId is missing. Pass payeeId in the media-stream URL (e.g. ?payeeId=...) so verification can be stored.',
+          '[MediaStream] Verification NOT saved: patientId is missing. Pass patientId (or payeeId) in the media-stream URL so verification can be stored.',
         );
         return;
       }
@@ -1129,7 +1220,7 @@ export class MediaStreamHandlerService {
         : undefined;
       this.aiService
         .saveCallVerification(
-          state.payeeId,
+          state.patientId,
           state.extractedData,
           fullTranscript,
           state.verificationRequirementId,
@@ -1160,7 +1251,7 @@ export class MediaStreamHandlerService {
         ? state.orderedFields
         : ['coverage', 'deductible', 'copay', 'validity'];
       const hasAny =
-        state.payeeId &&
+        state.patientId &&
         fields.some(
           (f) =>
             state.extractedData[f] != null &&
@@ -1220,6 +1311,27 @@ export class MediaStreamHandlerService {
       let prepMs = 0;
       let sttMs = 0;
       let llmMs: number | null = null;
+
+      const qField = (field: string) =>
+        verbatimBenefitQuestion(field, state.fieldQuestionByKey);
+
+      const ensurePatientCallContext = async () => {
+        if (state.callContext || !state.patientId?.trim()) return;
+        const ctx = await this.verificationService
+          .getPatientCallContext(state.patientId, state.appointmentId)
+          .catch(() => null);
+        if (ctx) {
+          state.callContext = ctx;
+          state.patientInfo = {
+            firstName: ctx.patient.firstName,
+            lastName: ctx.patient.lastName,
+            fullName: ctx.patient.fullName,
+            dobFormatted: ctx.patient.dobFormatted,
+            ssn: ctx.patient.ssn,
+          };
+          this.applyVerificationStepsToStreamState(state, ctx);
+        }
+      };
 
       const tmpDir = os.tmpdir();
       const rawPath = path.join(
@@ -1314,7 +1426,10 @@ export class MediaStreamHandlerService {
             const base = (process.env.BACKEND_URL || '').trim();
             if (base) {
               const q = new URLSearchParams({ digits: liveAgentDigit });
-              if (state.payeeId?.trim()) q.set('payeeId', state.payeeId.trim());
+              if (state.patientId?.trim()) {
+                q.set('patientId', state.patientId.trim());
+                q.set('payeeId', state.patientId.trim());
+              }
               if (state.appointmentId?.trim()) {
                 q.set('appointmentId', state.appointmentId.trim());
               }
@@ -1371,7 +1486,10 @@ export class MediaStreamHandlerService {
           }
 
           if (!ivr.ivrStarted) {
-            if (tpaIvrSoundsLikeIvrStart(t) || elapsed > TPA_IVR_FORCE_START_MS) {
+            if (
+              tpaIvrSoundsLikeIvrStart(t) ||
+              elapsed > TPA_IVR_FORCE_START_MS
+            ) {
               ivr.ivrStarted = true;
               this.logCallEvent(
                 state.callSid,
@@ -1400,23 +1518,6 @@ export class MediaStreamHandlerService {
           if (tpaIvrSoundsLikeSpanishRecordingDisclaimer(t)) {
             ivr.disclaimerEsDone = true;
           }
-
-          const ensurePayeeCallContext = async () => {
-            if (state.callContext || !state.payeeId) return;
-            const ctx = await this.verificationService
-              .getPayeeCallContext(state.payeeId, state.appointmentId)
-              .catch(() => null);
-            if (ctx) {
-              state.callContext = ctx;
-              state.patientInfo = {
-                firstName: ctx.patient.firstName,
-                lastName: ctx.patient.lastName,
-                fullName: ctx.patient.fullName,
-                dobFormatted: ctx.patient.dobFormatted,
-                ssn: ctx.patient.ssn,
-              };
-            }
-          };
 
           // --- Part 2 handoff: after DOB, routing + survey prompts are silent; then live TPA intro ---
           if (ivr.dobDtmfSent) {
@@ -1468,10 +1569,7 @@ export class MediaStreamHandlerService {
             return;
           }
 
-          if (
-            !ivr.saidProviderYes &&
-            tpaIvrSoundsLikeProviderQuestion(t)
-          ) {
+          if (!ivr.saidProviderYes && tpaIvrSoundsLikeProviderQuestion(t)) {
             spoke = 'Yes';
             ivr.saidProviderYes = true;
           } else if (
@@ -1492,9 +1590,9 @@ export class MediaStreamHandlerService {
             ivr.saidProviderYes &&
             !ivr.taxIdDtmfSent &&
             tpaIvrSoundsLikeTaxIdPrompt(t) &&
-            state.payeeId
+            state.patientId
           ) {
-            await ensurePayeeCallContext();
+            await ensurePatientCallContext();
             const taxRaw =
               state.callContext?.provider?.taxId != null
                 ? state.callContext.provider.taxId
@@ -1505,7 +1603,8 @@ export class MediaStreamHandlerService {
               if (base) {
                 const q = new URLSearchParams({
                   digits: taxDigits,
-                  payeeId: state.payeeId,
+                  patientId: state.patientId,
+                  payeeId: state.patientId,
                 });
                 if (state.appointmentId?.trim()) {
                   q.set('appointmentId', state.appointmentId.trim());
@@ -1531,9 +1630,9 @@ export class MediaStreamHandlerService {
             ivr.saidRepresentativeSummary &&
             !ivr.memberDtmfSent &&
             tpaIvrSoundsLikeMemberIdPrompt(t) &&
-            state.payeeId
+            state.patientId
           ) {
-            await ensurePayeeCallContext();
+            await ensurePatientCallContext();
             const mid =
               state.callContext?.memberId != null
                 ? buildMemberIdDtmf(state.callContext.memberId)
@@ -1543,7 +1642,8 @@ export class MediaStreamHandlerService {
               if (base) {
                 const q = new URLSearchParams({
                   digits: mid,
-                  payeeId: state.payeeId,
+                  patientId: state.patientId,
+                  payeeId: state.patientId,
                 });
                 if (state.appointmentId?.trim()) {
                   q.set('appointmentId', state.appointmentId.trim());
@@ -1569,9 +1669,9 @@ export class MediaStreamHandlerService {
             ivr.memberDtmfSent &&
             !ivr.dobDtmfSent &&
             tpaIvrSoundsLikeDobPrompt(t) &&
-            state.payeeId
+            state.patientId
           ) {
-            await ensurePayeeCallContext();
+            await ensurePatientCallContext();
             const dob = state.callContext?.patient?.dob ?? null;
             const dtmf = buildDobDtmf(dob);
             if (dtmf) {
@@ -1579,7 +1679,8 @@ export class MediaStreamHandlerService {
               if (base) {
                 const q = new URLSearchParams({
                   digits: dtmf,
-                  payeeId: state.payeeId,
+                  patientId: state.patientId,
+                  payeeId: state.patientId,
                 });
                 if (state.appointmentId?.trim()) {
                   q.set('appointmentId', state.appointmentId.trim());
@@ -1649,18 +1750,47 @@ export class MediaStreamHandlerService {
           return;
         }
 
-        // --- Lazy-load verification requirement fields for this payee (once per call) ---
-        if (state.payeeId && state.orderedFields.length === 0) {
+        // --- Lazy-load benefit fields / questions for this patient (once per call) ---
+        if (state.patientId && state.orderedFields.length === 0) {
           try {
-            const { orderedFields, requirementId } =
-              await this.verificationRequirementService.getOrderedFieldsAndRequirementId(
-                state.payeeId,
+            await ensurePatientCallContext();
+            const steps = state.callContext?.verificationSteps;
+            if (steps && steps.length > 0) {
+              state.orderedFields = steps
+                .slice()
+                .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+                .map((s) => s.field)
+                .filter(Boolean);
+              state.fieldQuestionByKey = Object.fromEntries(
+                steps.map((s) => [
+                  s.field,
+                  s.question?.trim() ||
+                    verbatimBenefitQuestion(s.field, {}),
+                ]),
               );
-            state.orderedFields = orderedFields;
-            state.verificationRequirementId = requirementId;
+              state.verificationRequirementId = null;
+            } else {
+              const entries =
+                await this.verificationRequirementService.getOrderedFieldsForPayee(
+                  state.patientId,
+                  null,
+                );
+              state.orderedFields = entries.map((e) => e.field);
+              state.fieldQuestionByKey = {};
+              for (const e of entries) {
+                state.fieldQuestionByKey[e.field] =
+                  e.question?.trim() ||
+                  verbatimBenefitQuestion(e.field, {});
+              }
+              const { requirementId } =
+                await this.verificationRequirementService.getOrderedFieldsAndRequirementId(
+                  state.patientId,
+                );
+              state.verificationRequirementId = requirementId;
+            }
           } catch (e: any) {
             this.logger.warn(
-              '[MediaStream] Failed to load verification requirement, using default fields',
+              '[MediaStream] Failed to load verification fields, using defaults',
               e?.message,
             );
             state.orderedFields = [
@@ -1669,6 +1799,10 @@ export class MediaStreamHandlerService {
               'copay',
               'validity',
             ];
+            state.fieldQuestionByKey = {};
+            for (const f of state.orderedFields) {
+              state.fieldQuestionByKey[f] = verbatimBenefitQuestion(f, {});
+            }
             state.verificationRequirementId = null;
           }
         }
@@ -1732,7 +1866,7 @@ export class MediaStreamHandlerService {
               state.fallbackTimer = null;
             }
             const hasAnyData =
-              state.payeeId &&
+              state.patientId &&
               (state.orderedFields.length
                 ? state.orderedFields
                 : ['coverage', 'deductible', 'copay', 'validity']
@@ -1792,7 +1926,7 @@ export class MediaStreamHandlerService {
                 state.fallbackTimer = null;
               }
               const hasAnyData =
-                state.payeeId &&
+                state.patientId &&
                 (state.orderedFields.length
                   ? state.orderedFields
                   : ['coverage', 'deductible', 'copay', 'validity']
@@ -1951,7 +2085,7 @@ export class MediaStreamHandlerService {
         if (wasInaudibleTurn) {
           const repeatPhrase = getRepeatOnlyPrompt();
           const reaskSame = state.lastAskedField
-            ? repeatPhrase + ' ' + askForFieldPhrase(state.lastAskedField)
+            ? repeatPhrase + ' ' + qField(state.lastAskedField)
             : repeatPhrase;
           if (
             userSaid?.trim() &&
@@ -2076,8 +2210,7 @@ export class MediaStreamHandlerService {
         const skipLlmDueToNoise =
           !recallReply &&
           !identityDirectReply &&
-          state.consecutiveNoiseOrEmptyTurns >=
-            MAX_NOISE_TURNS_BEFORE_SKIP_LLM;
+          state.consecutiveNoiseOrEmptyTurns >= MAX_NOISE_TURNS_BEFORE_SKIP_LLM;
 
         let noiseSkipMessage = '';
         if (skipLlmDueToNoise) {
@@ -2087,7 +2220,7 @@ export class MediaStreamHandlerService {
             orderedF[0];
           noiseSkipMessage =
             "I'm having trouble hearing you clearly. " +
-            askForFieldPhrase(miss ?? 'coverage');
+            qField(miss ?? 'coverage');
         }
 
         // Bare-acknowledgement short-circuit: purpose already stated and identity not yet
@@ -2107,7 +2240,9 @@ export class MediaStreamHandlerService {
           endCall = false;
           // Only count it as a real identity answer if we actually had the value in the
           // cache (not the "I do not have that on my end" fallback).
-          const isNotOnFile = /\bI\s+do\s+not\s+have\b/i.test(identityDirectReply);
+          const isNotOnFile = /\bI\s+do\s+not\s+have\b/i.test(
+            identityDirectReply,
+          );
           if (!isNotOnFile) {
             state.identityAnswersGiven += 1;
             state.evaAwaitingYesAfterIdentity = true;
@@ -2190,7 +2325,9 @@ export class MediaStreamHandlerService {
           extractedUpdates &&
           extractedUpdates[expectedField as keyof typeof extractedUpdates]
         ) {
-          const cleaned: Record<string, string | null> = { ...extractedUpdates };
+          const cleaned: Record<string, string | null> = {
+            ...extractedUpdates,
+          };
           delete cleaned[expectedField as keyof typeof cleaned];
           extractedUpdates = cleaned;
         }
@@ -2266,7 +2403,11 @@ export class MediaStreamHandlerService {
         // NEVER end on the turn we just finished collecting — we want the explicit
         // "That's all I have" line FIRST, then wait for the TPA's thank-you / confirmation,
         // and only then play the final goodbye.
-        if (shouldEndCall && state.justCompletedAllFields && !state.allDoneAnnounced) {
+        if (
+          shouldEndCall &&
+          state.justCompletedAllFields &&
+          !state.allDoneAnnounced
+        ) {
           shouldEndCall = false;
         }
         // Inverse: we already said "That's all I have" on a previous turn, and now the
@@ -2308,7 +2449,7 @@ export class MediaStreamHandlerService {
           !userSaidDate &&
           toSpeakLooksLikeConfirmingDate
         ) {
-          toSpeak = askForFieldPhrase('validity');
+          toSpeak = qField('validity');
         }
         // Safeguard: if user asked for DOB, never include a first-field request in the same turn — wait for "yes we're good" first
         const firstField = orderedF[0];
@@ -2338,9 +2479,9 @@ export class MediaStreamHandlerService {
         // Never leave toSpeak blank — ensures we always have a clear response after processing
         if (!toSpeak?.trim()) {
           toSpeak = state.lastAskedField
-            ? askForFieldPhrase(state.lastAskedField)
+            ? qField(state.lastAskedField)
             : orderedF[0]
-              ? askForFieldPhrase(orderedF[0])
+              ? qField(orderedF[0])
               : 'Can you repeat that?';
         }
         // Recall: answer from stored extractedData so we always give the correct value (e.g. "what is the deductible provided?")
@@ -2433,19 +2574,19 @@ export class MediaStreamHandlerService {
                     'Okay, thank you.',
                     'Noted.',
                   ][Math.floor(Math.random() * 4)];
-                  toSpeak = ack + ' ' + askForFieldPhrase(state.lastAskedField);
+                  toSpeak = ack + ' ' + qField(state.lastAskedField);
                 }
               }
             } else {
-              toSpeak = askForFieldPhrase(state.lastAskedField);
+              toSpeak = qField(state.lastAskedField);
             }
           } else {
             const firstField = state.orderedFields.length
               ? state.orderedFields[0]
               : 'coverage';
             toSpeak = state.lastAskedField
-              ? askForFieldPhrase(state.lastAskedField)
-              : askForFieldPhrase(firstField);
+              ? qField(state.lastAskedField)
+              : qField(firstField);
           }
         }
         // Never repeat opening greeting / "Hi I'm Reena... how are you" or purpose lines mid-call (LLM regression guard).
@@ -2466,9 +2607,7 @@ export class MediaStreamHandlerService {
             state.lastAskedField ??
             getFirstMissingField(state.extractedData, orderedF) ??
             orderedF[0];
-          toSpeak = miss
-            ? askForFieldPhrase(miss)
-            : getRepeatOnlyPrompt();
+          toSpeak = miss ? qField(miss) : getRepeatOnlyPrompt();
         } else if (
           toSpeak?.trim() &&
           !userAskedWhoIsCalling(userSaid) &&
@@ -2489,7 +2628,7 @@ export class MediaStreamHandlerService {
               state.lastAskedField ??
               getFirstMissingField(state.extractedData, orderedF) ??
               orderedF[0];
-            toSpeak = miss ? askForFieldPhrase(miss) : getRepeatOnlyPrompt();
+            toSpeak = miss ? qField(miss) : getRepeatOnlyPrompt();
           }
           // else: first time saying purpose — allowed to stand; purposeSaid will be set below.
         }
@@ -2508,7 +2647,7 @@ export class MediaStreamHandlerService {
           !state.patientIdentityReadyForBenefits &&
           !state.allDoneAnnounced &&
           toSpeak &&
-          isBenefitFieldAsk(toSpeak, orderedF) &&
+          isBenefitFieldAsk(toSpeak, orderedF, state.fieldQuestionByKey) &&
           !identityAsk &&
           !identityDirectReply
         ) {
@@ -2540,7 +2679,7 @@ export class MediaStreamHandlerService {
           !allCollected &&
           state.lastAskedField &&
           toSpeak &&
-          isBenefitFieldAsk(toSpeak, orderedF)
+          isBenefitFieldAsk(toSpeak, orderedF, state.fieldQuestionByKey)
         ) {
           const expected = state.lastAskedField;
           const expectedSpaced = expected
@@ -2548,7 +2687,11 @@ export class MediaStreamHandlerService {
             .toLowerCase()
             .trim();
           const toSpeakLc = toSpeak.toLowerCase();
+          const verbatimQ = state.fieldQuestionByKey[expected]?.trim();
+          const verbatimLc = verbatimQ?.toLowerCase() ?? '';
           const alreadyAsksExpected =
+            (verbatimLc && toSpeakLc === verbatimLc) ||
+            (verbatimLc && toSpeakLc.includes(verbatimLc)) ||
             toSpeakLc.includes(expected.toLowerCase()) ||
             toSpeakLc.includes(expectedSpaced);
           if (!alreadyAsksExpected) {
@@ -2556,12 +2699,13 @@ export class MediaStreamHandlerService {
               `[MediaStream] LLM asked wrong field (draft="${toSpeak}") — realigning to expected="${expected}".`,
             );
             // Keep any acknowledgement of the value we just received, then ask the right field.
-            const ack = /^(got it|thanks|thank\s*you|okay|noted|alright|great)[.,!]?/i.test(
-              toSpeak,
-            )
-              ? 'Thanks. '
-              : '';
-            toSpeak = ack + askForFieldPhrase(expected);
+            const ack =
+              /^(got it|thanks|thank\s*you|okay|noted|alright|great)[.,!]?/i.test(
+                toSpeak,
+              )
+                ? 'Thanks. '
+                : '';
+            toSpeak = ack + qField(expected);
           }
         }
 
@@ -2584,7 +2728,8 @@ export class MediaStreamHandlerService {
             expectedField === 'deductible' ||
             expectedField === 'coverage'
           ) {
-            const unit = expectedField === 'coverage' ? 'a percentage' : 'dollars';
+            const unit =
+              expectedField === 'coverage' ? 'a percentage' : 'dollars';
             toSpeak = `Thanks, but for the ${expectedField.replace(
               /([A-Z])/g,
               ' $1',
@@ -2614,7 +2759,7 @@ export class MediaStreamHandlerService {
           (isGenericFallback && state.lastAskedField)
         ) {
           toSpeak = state.lastAskedField
-            ? askForFieldPhrase(state.lastAskedField)
+            ? qField(state.lastAskedField)
             : toSpeak?.trim() || 'Is there anything else you can share?';
           if (!(nextMessage ?? '').trim() || isGenericFallback) {
             this.logger.warn(
@@ -2625,7 +2770,7 @@ export class MediaStreamHandlerService {
         // Final safeguard: never speak blank (eliminates silent/blank responses)
         if (!(toSpeak ?? '').trim()) {
           toSpeak = state.lastAskedField
-            ? askForFieldPhrase(state.lastAskedField)
+            ? qField(state.lastAskedField)
             : getRepeatOnlyPrompt();
         } else {
           toSpeak = (toSpeak ?? '').trim();
@@ -2641,7 +2786,9 @@ export class MediaStreamHandlerService {
         // expect the TPA's confirmation on the next turn. This lets the Phase 2 → Phase 3
         // transition fire after e.g. member ID confirmation, not just DOB.
         if (identityDirectReply && toSpeak === identityDirectReply) {
-          const isNotOnFile = /\bI\s+do\s+not\s+have\b/i.test(identityDirectReply);
+          const isNotOnFile = /\bI\s+do\s+not\s+have\b/i.test(
+            identityDirectReply,
+          );
           if (!isNotOnFile) state.evaAwaitingYesAfterIdentity = true;
         }
         // In-memory transcript updates (sync): needed for verification save on stop.
@@ -2752,18 +2899,18 @@ export class MediaStreamHandlerService {
         state.callSid = msg?.start?.callSid ?? msg?.callSid ?? null;
         this.logCallEvent(
           state.callSid,
-          `start mode=${state.mode} payeeId=${state.payeeId ?? 'none'}`,
+          `start mode=${state.mode} patientId=${state.patientId ?? 'none'}`,
         );
         if (!state.mode || state.mode === 'eva' || state.mode === 'tpa-ivr') {
-          // Resolve payeeId from URL param or from call SID (stored when makeCall was used), so patient details are available before greeting
+          // Resolve patientId from URL param or from call SID (stored when makeCall was used)
           if (state.callSid) {
             const ctx = this.twilioService.getStreamContextForCall(
               state.callSid,
             );
             if (ctx) {
-              if (!state.payeeId?.trim()) state.payeeId = ctx.payeeId;
-              if (!state.appointmentId?.trim() && ctx.appointmentId) {
-                state.appointmentId = ctx.appointmentId;
+              if (!state.patientId?.trim()) state.patientId = ctx.PatientID;
+              if (!state.appointmentId?.trim() && ctx.AppointmentID) {
+                state.appointmentId = ctx.AppointmentID;
               }
             }
           }
@@ -2781,9 +2928,9 @@ export class MediaStreamHandlerService {
             this.ensureTpaIvrState(state.callSid);
           }
           void (async () => {
-            if (!state.payeeId?.trim()) return;
+            if (!state.patientId?.trim()) return;
             const ctx = await this.verificationService
-              .getPayeeCallContext(state.payeeId, state.appointmentId)
+              .getPatientCallContext(state.patientId, state.appointmentId)
               .catch((e: any) => {
                 this.logger.warn(
                   '[MediaStream] TPA IVR: failed to load call context',
@@ -2800,6 +2947,7 @@ export class MediaStreamHandlerService {
                 dobFormatted: ctx.patient.dobFormatted,
                 ssn: ctx.patient.ssn,
               };
+              this.applyVerificationStepsToStreamState(state, ctx);
               this.logger.log(
                 `[MediaStream] TPA IVR context loaded: memberId=${ctx.memberId ? 'yes' : 'no'} dob=${ctx.patient.dob ? 'yes' : 'no'}`,
               );
@@ -2812,11 +2960,11 @@ export class MediaStreamHandlerService {
             // Kick off the DB fetch for the full call context IN PARALLEL with the opening
             // greeting TTS. EVA can greet while the patient/provider/payer data loads — this
             // way the TPA's first verification question already has the answer cached.
-            let contextPromise: Promise<PayeeCallContext | null> =
+            let contextPromise: Promise<PatientCallContext | null> =
               Promise.resolve(null);
-            if (state.payeeId) {
+            if (state.patientId) {
               contextPromise = this.verificationService
-                .getPayeeCallContext(state.payeeId, state.appointmentId)
+                .getPatientCallContext(state.patientId, state.appointmentId)
                 .catch((e: any) => {
                   this.logger.warn(
                     '[MediaStream] Failed to load call context',
@@ -2846,24 +2994,29 @@ export class MediaStreamHandlerService {
                 dobFormatted: ctx.patient.dobFormatted,
                 ssn: ctx.patient.ssn,
               };
+              this.applyVerificationStepsToStreamState(state, ctx);
               this.logger.log(
                 `[MediaStream] Call context loaded: patient=${ctx.patient.fullName} provider=${ctx.provider?.fullName ?? 'none'} payer=${ctx.payer?.companyName ?? 'none'} memberId=${ctx.memberId ? 'yes' : 'no'} taxId=${ctx.provider?.taxId ? 'yes' : 'no'}`,
               );
-            } else if (state.payeeId) {
+            } else if (state.patientId) {
               state.patientInfo = null;
               state.callContext = null;
               this.logger.warn(
-                '[MediaStream] Payee not found in DB for payeeId=' +
-                  state.payeeId +
+                '[MediaStream] Patient not found for patientId=' +
+                  state.patientId +
                   ' — patient details will be unavailable on this call.',
               );
             }
-            // Only use static patient info when there is no payeeId (e.g. generic inbound); never when payeeId is set but payee missing.
-            if (!state.patientInfo && !state.payeeId) {
+            // Only use static patient info when there is no patientId (e.g. generic inbound); never when patientId is set but patient missing.
+            if (!state.patientInfo && !state.patientId) {
               state.patientInfo = STATIC_PATIENT_INFO;
               state.callContext = STATIC_CALL_CONTEXT;
+              this.applyVerificationStepsToStreamState(
+                state,
+                STATIC_CALL_CONTEXT,
+              );
               this.logger.warn(
-                '[MediaStream] Using static patient info (no payeeId on stream). Pass payeeId in the stream URL to use real patient details from the database.',
+                '[MediaStream] Using static patient info (no patientId on stream). Pass patientId (or payeeId) in the stream URL to use real patient details from the database.',
               );
             }
             this.logCallTurn(state.callSid, {
@@ -2917,7 +3070,7 @@ export class MediaStreamHandlerService {
           ? state.orderedFields
           : ['coverage', 'deductible', 'copay', 'validity'];
         if (
-          state.payeeId &&
+          state.patientId &&
           finalFields.some(
             (f) =>
               state.extractedData[f] != null &&
@@ -2925,9 +3078,9 @@ export class MediaStreamHandlerService {
           )
         ) {
           pushToVerificationService();
-        } else if (!state.payeeId) {
+        } else if (!state.patientId) {
           this.logger.warn(
-            '[MediaStream] Call stopped but payeeId missing — verification NOT saved. Use ?payeeId=... in stream URL.',
+            '[MediaStream] Call stopped but patientId missing — verification NOT saved. Use ?patientId=... or ?payeeId=... in stream URL.',
           );
         }
       }
@@ -3021,19 +3174,21 @@ export class MediaStreamHandlerService {
     }
     state.mode = 'eva';
     const sourceLabel = source === 'tpa-ivr' ? 'TPA_IVR' : 'IVR_BYPASS';
-    void pushLiveTracker(`[CALL_EVENT] ${sourceLabel}_LIVE_AGENT — EVA greeting`);
+    void pushLiveTracker(
+      `[CALL_EVENT] ${sourceLabel}_LIVE_AGENT — EVA greeting`,
+    );
     this.logCallEvent(
       state.callSid,
       `${sourceLabel} handoff: live agent detected`,
     );
 
-    let contextPromise: Promise<PayeeCallContext | null> =
+    let contextPromise: Promise<PatientCallContext | null> =
       Promise.resolve(null);
-    if (state.payeeId) {
+    if (state.patientId) {
       contextPromise = state.callContext
         ? Promise.resolve(state.callContext)
         : this.verificationService
-            .getPayeeCallContext(state.payeeId, state.appointmentId)
+            .getPatientCallContext(state.patientId, state.appointmentId)
             .catch((e: any) => {
               this.logger.warn(
                 `[MediaStream] Failed to load call context after ${sourceLabel}`,
@@ -3060,22 +3215,24 @@ export class MediaStreamHandlerService {
         dobFormatted: ctx.patient.dobFormatted,
         ssn: ctx.patient.ssn,
       };
+      this.applyVerificationStepsToStreamState(state, ctx);
       this.logger.log(
         `[MediaStream] Call context loaded after ${sourceLabel}: patient=${ctx.patient.fullName}`,
       );
-    } else if (state.payeeId) {
+    } else if (state.patientId) {
       state.patientInfo = null;
       state.callContext = null;
       this.logger.warn(
-        `[MediaStream] Payee context missing after ${sourceLabel} — patient details may be unavailable.`,
+        `[MediaStream] Patient context missing after ${sourceLabel} — patient details may be unavailable.`,
       );
     }
 
-    if (!state.patientInfo && !state.payeeId) {
+    if (!state.patientInfo && !state.patientId) {
       state.patientInfo = STATIC_PATIENT_INFO;
       state.callContext = STATIC_CALL_CONTEXT;
+      this.applyVerificationStepsToStreamState(state, STATIC_CALL_CONTEXT);
       this.logger.warn(
-        `[MediaStream] Using static patient info (no payeeId after ${sourceLabel}).`,
+        `[MediaStream] Using static patient info (no patientId after ${sourceLabel}).`,
       );
     }
 

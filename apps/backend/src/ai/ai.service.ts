@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { ModelParams } from '@google/generative-ai';
+import type { PatientCallContext } from '../verification/verification.service';
 import { VerificationService } from '../verification/verification.service';
 
 /** Stable Pro model for conversation, extraction, and classification. */
@@ -168,22 +169,45 @@ ${patientBlock}
       : [...AiService.INSURANCE_FIELDS];
   }
 
-  private hasValue(v: string | null | undefined): boolean {
-    return v != null && String(v).trim().length > 0;
+  /** Fallback benefit questions when the appointment payload has no `verificationFields`. */
+  private static readonly LEGACY_VERBATIM_BENEFIT_QUESTIONS: Record<
+    string,
+    string
+  > = {
+    coverage: 'What is the basic coverage?',
+    deductible: 'Can you provide the deductible?',
+    copay: 'What is the copay?',
+    validity: 'What is the validity of the insurance?',
+  };
+
+  private fieldQuestionMapFromContext(
+    ctx: PatientCallContext | null | undefined,
+  ): Record<string, string> {
+    if (!ctx?.verificationSteps?.length) return {};
+    const m: Record<string, string> = {};
+    for (const s of ctx.verificationSteps) {
+      const q = s.question?.trim();
+      if (s.field && q) m[s.field] = q;
+    }
+    return m;
   }
 
-  /** Pick a random phrase for asking a benefit field (varied so we don't repeat the same question) */
-  private askForFieldPhrase(field: string): string {
-    const templates = [
-      `What is the ${field}?`,
-      `Can I get the ${field}?`,
-      `May I have the ${field}?`,
-      `Can you provide the ${field}?`,
-      `Can I have the ${field}?`,
-      `Could you share the ${field}?`,
-      `What's the ${field}?`,
-    ];
-    return templates[Math.floor(Math.random() * templates.length)];
+  /** Exact line EVA should speak for a benefit field (from appointment payload when present). */
+  private verbatimBenefitQuestion(
+    field: string | null | undefined,
+    fieldQ: Record<string, string>,
+  ): string {
+    if (!field) return '';
+    const fromPayload = fieldQ[field]?.trim();
+    if (fromPayload) return fromPayload;
+    return (
+      AiService.LEGACY_VERBATIM_BENEFIT_QUESTIONS[field] ??
+      String(field)
+    );
+  }
+
+  private hasValue(v: string | null | undefined): boolean {
+    return v != null && String(v).trim().length > 0;
   }
 
   /** Returns missing field names in required order (uses orderedFields or default four) */
@@ -355,47 +379,10 @@ Examples (use current data to fill [value] and next field):
     orderedFields?: string[] | null,
     callHints?: ConversationCallHints | null,
     /**
-     * Optional pre-loaded call context — provider NPI / Tax ID, member ID, payer info, etc.
-     * When provided, the prompt embeds direct ready-to-speak answers for every TPA identity
-     * question so EVA does not have to reason — she just repeats the cached line.
+     * Pre-loaded patient / subscriber / payer / provider / office context plus `verificationSteps`
+     * (exact benefit questions from the appointment payload).
      */
-    callContext?: {
-      patient: {
-        firstName: string;
-        lastName: string;
-        fullName: string;
-        dob: Date | null;
-        dobFormatted: string | null;
-        ssn: string | null;
-      };
-      subscriber: {
-        firstName: string;
-        lastName: string;
-        fullName: string;
-        dobFormatted: string | null;
-      };
-      memberId: string | null;
-      provider: {
-        firstName: string;
-        lastName: string;
-        fullName: string;
-        npi: string | null;
-        billingNpi: string | null;
-        taxId: string | null;
-        specialty: string | null;
-      } | null;
-      office: {
-        name: string;
-        city: string;
-        state: string;
-      } | null;
-      payer: {
-        companyName: string;
-        groupName: string | null;
-        groupNumber: string | null;
-        planName: string | null;
-      } | null;
-    } | null,
+    callContext?: PatientCallContext | null,
   ): Promise<{
     nextMessage: string;
     extractedUpdates: Record<string, string | null>;
@@ -431,12 +418,21 @@ INTERNAL CALL STATE (never read aloud verbatim):
     );
     const fieldsList = fields.join(', ');
     const numFields = fields.length;
+    const fieldQ = this.fieldQuestionMapFromContext(callContext);
     const firstFieldName = nextFieldToAsk ?? fields[0];
+    const firstFieldQuestion = this.verbatimBenefitQuestion(firstFieldName, fieldQ);
+    const nextFieldQuestion = nextFieldToAsk
+      ? this.verbatimBenefitQuestion(nextFieldToAsk, fieldQ)
+      : '';
+    const lastFieldQuestion =
+      lastAskedField && fields.includes(lastAskedField)
+        ? this.verbatimBenefitQuestion(lastAskedField, fieldQ)
+        : '';
 
     const oneFieldRule =
       nextFieldToAsk === null
         ? `All ${numFields} fields (${fieldsList}) are collected. TWO-STEP ENDING FLOW (never skip step 1): (1) If the user JUST GAVE a value in this turn (completing the last field): say "That's all I have. Thank you for your help." and set endCall FALSE — do NOT say "Have a good day" yet. (2) On the NEXT turn, if the user said thank you / welcome / you're welcome / yes / okay / that's all / we're done / goodbye / I'm good / have a good day / nothing else: say "You're welcome. Have a wonderful day." and set endCall TRUE. (3) If the user asked a question AFTER we said "That's all I have": answer it completely from the call context (or briefly if not in context), then ask "Anything else?" and set endCall FALSE; when they say yes/thank you in a later turn, say "You're welcome. Have a wonderful day." and set endCall TRUE. Do NOT say your name, company, or repeat the introduction. Do NOT collapse steps 1 and 2 into a single turn.`
-        : `IDENTITY-FIRST RULE — if patient_identity_cleared_for_benefits is no, do NOT ask for ${nextFieldToAsk} or any benefit field this turn. Just answer whatever the TPA said (identity question → use CHEAT-SHEET; filler "okay" → "Of course."; nothing → "Sure."). Only when identity is yes, ask for ONE benefit field. VARY the phrase every time — use a different one each turn: "What is the ${nextFieldToAsk}?" / "Can I get the ${nextFieldToAsk}?" / "May I have the ${nextFieldToAsk}?" / "Can you provide the ${nextFieldToAsk}?" / "Can I have the ${nextFieldToAsk}?" / "Could you share the ${nextFieldToAsk}?" / "What's the ${nextFieldToAsk}?" If you just got a value from them: acknowledge with ONE of "Got it, thanks." / "Thanks." / "Okay, thank you." / "Noted." then IMMEDIATELY ask for the NEXT field. EXCEPTION: If that value was the LAST missing field (so after this turn all fields are collected), say "That's all I have. Thank you for your help." and set endCall FALSE — do NOT ask for another field or say "Have a good day." NEVER say "Thank you, what is the ${nextFieldToAsk}?" or re-ask the same field they just answered. Do NOT say "Is that all you have?" or "Are we good?" after a normal value. Keep nextMessage under 25 words.`;
+        : `IDENTITY-FIRST RULE — if patient_identity_cleared_for_benefits is no, do NOT ask for the next benefit item or any benefit field this turn. Just answer whatever the TPA said (identity question → use CHEAT-SHEET; filler "okay" → "Of course."; nothing → "Sure."). Only when identity is yes, ask for EXACTLY ONE benefit item by speaking this question verbatim (do not rephrase, do not substitute field names for a new sentence): """${nextFieldQuestion}""". If you just got a value from them: acknowledge with ONE of "Got it, thanks." / "Thanks." / "Okay, thank you." / "Noted." then IMMEDIATELY ask for the NEXT missing item using ONLY that item's exact question from the BENEFIT QUESTIONS list in the prompt. EXCEPTION: If that value was the LAST missing field (so after this turn all fields are collected), say "That's all I have. Thank you for your help." and set endCall FALSE — do NOT ask for another field or say "Have a good day." NEVER re-ask the same field they just answered. Do NOT say "Is that all you have?" or "Are we good?" after a normal value. Keep nextMessage under 25 words.`;
 
     const patientBlock = patientInfo
       ? `
@@ -453,10 +449,10 @@ PURPOSE OF CALL — SAY IT ONCE, THEN MOVE ON (this is the single biggest source
 - OPENING / GREETING ("Hello" / "Hi" alone, nothing asked): One short greeting acknowledgement is fine; do NOT proactively state purpose unless they asked. Do NOT ask for ${firstFieldName} yet unless patient_identity_cleared_for_benefits is yes. extractedUpdates {}.
 - WHEN they ask for patient name / spell name / "what is the patient's name" / full name: Answer ONLY with the name, e.g. "The patient is ${patientInfo.fullName}." — English only. Do NOT give DOB unless they also asked for DOB in this turn. Do NOT ask for benefit fields in the same turn. extractedUpdates {}.
 - WHEN they ask for DOB / date of birth / birthday: Answer with DOB only in English, e.g. "The date of birth is ${patientInfo.dobFormatted ?? 'not provided'}." Then ONE short confirmation: "Is that correct?" or "Does that match your records?" Do NOT ask for ${firstFieldName} in this turn. extractedUpdates {}.
-- WHEN they confirm after you gave DOB in the previous turn ("yes" / "correct" / "thanks") and internal state shows patient_identity_cleared_for_benefits is yes: Say "Thanks." then ask for the first missing benefit field (${firstFieldName}) with a varied phrase. extractedUpdates {}.
+- WHEN they confirm after you gave DOB in the previous turn ("yes" / "correct" / "thanks") and internal state shows patient_identity_cleared_for_benefits is yes: Say "Thanks." then ask the first missing benefit question verbatim: """${firstFieldQuestion}""". extractedUpdates {}.
 - BENEFIT FIELDS (${fieldsList}): HARD RULE — do NOT ask for any benefit field (no "Can I get the group ID / coverage / deductible / copay / validity", no "What is the ...", no "May I have ...") until patient_identity_cleared_for_benefits is YES. If it is NO, your reply must NOT contain any of those field names as a question.
    • If the TPA just said purpose is stated and then replies with a short "okay" / "alright" / "sure" / "got it": respond with a tiny acknowledgement ("Of course.") and STOP. Do NOT volunteer the first benefit field. Wait for them to ask for patient name / DOB / NPI / Tax ID / member ID first.
-   • If the TPA explicitly hands the floor ("what do you need", "go ahead", "what information", "anything else"): ONLY THEN may you ask the first missing benefit field (${firstFieldName}).
+   • If the TPA explicitly hands the floor ("what do you need", "go ahead", "what information", "anything else"): ONLY THEN may you ask the first missing benefit question verbatim: """${firstFieldQuestion}""".
    • If identity is still NO and the TPA says anything else that is not a question: answer if needed, otherwise say "Sure." or stay brief. Never re-state name+DOB in full unless they ask again.
    • extractedUpdates {} unless they clearly give a benefit value — then extract it.
 - EXAMPLES while patient_identity_cleared_for_benefits is NO:
@@ -482,7 +478,7 @@ CONFIRMATION PHRASES — Use "Is it okay?" / "Is that all you have?" / "Are we g
    2) The NEXT TPA turn (they say "thank you" / "you're welcome" / "have a good day" / "bye" / "yes") → "You're welcome. Have a wonderful day." endCall TRUE.
    Do NOT collapse these into one turn. Do NOT say "Have a good day" on the same turn you confirmed the last field.
 - Value after hold: say "So the [field] is [value], right?" then wait for yes; then ask next field. extractedUpdates {}.
-- After patient DOB: give DOB then ONE of "Are we good?" / "Is that all you have?" / "Are we clear?" Only when they say "yes" / "we're good" ask for first benefit field (${firstFieldName}). extractedUpdates {}.
+- After patient DOB: give DOB then ONE of "Are we good?" / "Is that all you have?" / "Are we clear?" Only when they say "yes" / "we're good" ask the first benefit question verbatim: """${firstFieldQuestion}""". extractedUpdates {}.
 - When they ask for RECALL ("what is the [field]?" / "do you have the [field]?"): give the value from data then ONE of "Is that all you have?" / "Are we good?" / "Are we clear?" (random). Do NOT ask for next field in same turn. extractedUpdates {}.
 - When they correct a value: put NEW value in extractedUpdates, say "Got it. So the [field] is [value], right?" Wait for yes then ask next field. extractedUpdates for the corrected field only.
 `;
@@ -492,9 +488,9 @@ CONFIRMATION PHRASES — Use "Is it okay?" / "Is that all you have?" / "Are we g
         ? `
 AFTER-HOLD CONTEXT: They just came back from hold. We were asking for "${lastAskedField}" ONLY.
 - If they now gave a value (number, dollar, percent): put it in extractedUpdates for "${lastAskedField}" ONLY. Do NOT put it in any other field. Then VERIFY with acknowledgment: say "So the ${lastAskedField} is [value], right?" or "Just to confirm, the value for this field is [value], correct?" Do NOT ask for the next field in this turn. Wait for them to say "yes" in the next turn; only then ask for the next field.
-- When they CONFIRM after this ("yes" / "correct" / "that's right" / "yeah"): then say "Thanks." and ask for the next missing field with a varied phrase. extractedUpdates {}.
-- If they ask what we need or what was the question: re-ask "${lastAskedField}" with a varied phrase. set extractedUpdates {}.
-- If they did not give a value (inaudible/unclear): "Can I get the ${lastAskedField}?" again and set extractedUpdates {}.
+- When they CONFIRM after this ("yes" / "correct" / "that's right" / "yeah"): then say "Thanks." and ask for the next missing field using ONLY that field's exact question from BENEFIT QUESTIONS (verbatim). extractedUpdates {}.
+- If they ask what we need or what was the question: speak ONLY this exact question verbatim: """${lastFieldQuestion}""". set extractedUpdates {}.
+- If they did not give a value (inaudible/unclear): speak ONLY this exact question verbatim again: """${lastFieldQuestion}""" and set extractedUpdates {}.
 `
         : '';
 
@@ -556,8 +552,20 @@ CRITICAL — For any identity question above:
 - If a field on the cheat-sheet is "—" (missing), say: ${notOnFileLine} extractedUpdates {}.
 `
       : `
-PRE-LOADED IDENTITY CHEAT-SHEET: (no payee on file — TPA will lead identity verification; answer only when they give you the value, otherwise say ${notOnFileLine})
+PRE-LOADED IDENTITY CHEAT-SHEET: (no patient appointment context on file — TPA will lead identity verification; answer only when they give you the value, otherwise say ${notOnFileLine})
 `;
+
+    const benefitQuestionsBlock =
+      callContext?.verificationSteps?.length &&
+      callContext.verificationSteps.some((s) => s.question?.trim())
+        ? `
+BENEFIT QUESTIONS — speak EXACTLY one line per field below (verbatim). Keys (${fieldsList}) are for extraction only; do not invent new wording.
+${callContext.verificationSteps
+  .filter((s) => s.field && s.question?.trim())
+  .map((s) => `- (${s.field}) ${s.question.trim()}`)
+  .join('\n')}
+`
+        : '';
 
     const prompt = `You are EVA (Reena), a customer care representative from Went Dentals. You are on a call with the insurance company to obtain patient benefit details: ${fieldsList}.
 
@@ -575,7 +583,7 @@ PACE — Short sentences. Acknowledge values quickly; ask one thing at a time.
 
 CONVERSATION FLOW:
 - They ask DOB: give DOB from PATIENT INFO + one confirmation phrase only; no benefit field same turn.
-- They confirm after DOB (yes / correct): if patient_identity_cleared_for_benefits is yes, ask first missing benefit (${firstFieldName}). extractedUpdates {}.
+- They confirm after DOB (yes / correct): if patient_identity_cleared_for_benefits is yes, ask first missing benefit using this exact question verbatim: """${firstFieldQuestion}""". extractedUpdates {}.
 - They ask patient name: give name only in English; no benefit field same turn unless identity already cleared and they moved on.
 - Greeting / purpose-of-call questions ("how can I help", "why are you calling", etc.): one varied sentence of purpose in English — no name, no DOB; never the exact same wording as your last purpose line if they ask again. extractedUpdates {}.
 - Benefit values (${fieldsList}): extract, thank, ask next — only when allowed by INTERNAL CALL STATE and missing fields.
@@ -592,6 +600,7 @@ ROLE & TONE:
 
 ${patientBlock}
 ${callContextBlock}
+${benefitQuestionsBlock}
 ${recallBlock}
 ${afterResumeBlock}
 
@@ -610,7 +619,7 @@ Data we have so far (use ONLY these values for recall — never invent or guess)
 Explicit values (— means we do not have that field yet; never say "not collected" or "the field is not collected" to the user—just ask for the field): ${fields.map((f) => `${f} = ${(currentExtracted as Record<string, string | null>)[f] ?? '—'}`).join(', ')}.
 We are currently asking for: ${nextFieldToAsk ?? 'nothing (all done)'}.
 
-CRITICAL — SOURCE OF TRUTH: The "Data we have so far" and "Explicit values" above are what we have already collected. If a field shows a value (not —), we HAVE it. NEVER ask for that field again. ONLY ask for fields that show —. When asking for a missing benefit field (${fieldsList}), use ONLY phrases like "Can I get the [field]?" / "May I have the [field]?" / "What's the [field]?" — NEVER say "I don't have that on my end" or "I don't have these noted" or "please provide the details" for benefit fields. Reserve "I don't have that on my end" ONLY for things like policy number or member ID that we truly do not have.
+CRITICAL — SOURCE OF TRUTH: The "Data we have so far" and "Explicit values" above are what we have already collected. If a field shows a value (not —), we HAVE it. NEVER ask for that field again. ONLY ask for fields that show —. When asking for a missing benefit item, speak ONLY the exact question line for that field from BENEFIT QUESTIONS above (verbatim). If BENEFIT QUESTIONS is empty, ask using the fixed legacy lines only — never improvise from the field key. Reserve "I don't have that on my end" ONLY for things like policy number or member ID that we truly do not have.
 
 What they just said (respond only to this): "${transcript}"
 → If they asked a question: answer it, then continue (e.g. ask for next field if needed). If they gave a value: extract it, acknowledge, ask for next field. If they confirmed (yes/thanks): say Thanks and ask for next field. If unclear/inaudible: ask to repeat for the current field only. Do not skip or answer something they did not say.
@@ -622,23 +631,23 @@ RECALL (what is the deductible / what did I say for X): When they ask what value
 
 EXTRACTION (CRITICAL — field assignment and multi-value in one go):
 - When the user provides MULTIPLE benefit values in one turn (e.g. "coverage is 80%, deductible 500, copay 20 dollars" or "80%, 500 dollars, 20 dollars, valid through December 2024"), extract EVERY value mentioned into extractedUpdates in a single response. Put each value in its correct field (coverage = %, deductible/copay = dollars, validity = date). Return all of them in one extractedUpdates object so we collect them in one go. Then acknowledge briefly and ask only for the next missing field (or "That's all I need, thank you." if none left).
-- We are currently asking for "${nextFieldToAsk ?? 'none'}". When the user gives a single number, dollar amount, or percentage in response to our question, put it ONLY in "${nextFieldToAsk}". Do NOT put it in any other field (e.g. if we asked for deductible and they say "20 dollars", set ONLY {"deductible": "20 dollars"}, NOT copay). Your nextMessage must: acknowledge the value (e.g. "Got it, thanks." or "Okay, thank you.") then ask for the NEXT field only (e.g. "Can I get the copay?" or "Can I have the validity?"). NEVER say "Thank you, what is the deductible?" when they just gave you the deductible. NEVER re-ask the same field they just answered.
+- We are currently asking for: "${nextFieldToAsk ?? 'none'}". When the user gives a single number, dollar amount, or percentage in response to our question, put it ONLY in "${nextFieldToAsk}". Do NOT put it in any other field (e.g. if we asked for deductible and they say "20 dollars", set ONLY {"deductible": "20 dollars"}, NOT copay). Your nextMessage must: acknowledge the value (e.g. "Got it, thanks." or "Okay, thank you.") then ask for the NEXT field only by speaking that field's exact question from BENEFIT QUESTIONS verbatim. NEVER re-ask the same field they just answered.
 - If they explicitly name a field and a value (e.g. "deductible is 500 and copay is 25 percent"), extract each into the correct field. Otherwise, a single value goes ONLY into "${nextFieldToAsk}".
 - VALIDITY: Only set validity when the user explicitly says a date, month, or year (e.g. "December 31st 2024", "valid through Dec 2024"). Do NOT set validity to any default or assumed date (e.g. "31st Dec 2024", "July 17 2025"). If they did not say anything about validity or a date, leave validity empty. Never invent a date. CRITICAL — If we do NOT have validity in "Data we have so far", never say a date in your nextMessage and never ask "is it [date] right?". Only ask "What is the validity?" or "Can I get the validity?" or "Can you provide the validity?". Only confirm a date for validity ("So the validity is [date], right?") if the user JUST said that date in this turn.
 - Only ask them to repeat when transcript is exactly "User did not respond or was inaudible". Do not ask to repeat if they gave a number or amount.
 - After extracting a value (or multiple): acknowledge once and ask for the NEXT missing field only.
 
 WHAT TO SAY (check in this order). Use "Are we good?" / "Is that all you have?" / "Is it okay?" / a confirmation question ONLY after: (1) patient DOB when they asked for DOB alone, (2) recall when they ask what value we have and you gave it, (3) when they correct/change a value and you confirmed it, (4) when all fields collected and waiting for thank you. NEVER after a normal benefit value.
-- If they GAVE a value for the current field (number/amount/dollars/percent/date): extract it, say ONE of "Got it, thanks." / "Thanks." / "Okay, thank you." / "Noted." then IMMEDIATELY ask for the NEXT field with a VARIED phrase (e.g. "Can I have the copay?"). Do NOT re-ask the same field. Do NOT say "Thank you, what is the [field]?" when they just gave you that field. Do NOT say "Are we good?" or "Is that all you have?" after a normal value.
-- If they CONFIRM ("yes" / "thank you" / "yeah" / "that's it" / "we're good"): Check "Data we have so far". If all ${numFields} fields collected: say "Thank you for helping me with the verification. Have a great day." and set endCall true. If some fields still missing (show —): say "Thanks." then ask for the FIRST missing field only with a simple phrase like "Can I get the [field]?" or "May I have the [field]?" — NEVER say "I don't have that on my end" or "please provide the details" for benefit fields. extractedUpdates {}.
+- If they GAVE a value for the current field (number/amount/dollars/percent/date): extract it, say ONE of "Got it, thanks." / "Thanks." / "Okay, thank you." / "Noted." then IMMEDIATELY ask for the NEXT field using ONLY that field's exact line from BENEFIT QUESTIONS. Do NOT re-ask the same field. Do NOT say "Are we good?" or "Is that all you have?" after a normal value.
+- If they CONFIRM ("yes" / "thank you" / "yeah" / "that's it" / "we're good"): Check "Data we have so far". If all ${numFields} fields collected: say "Thank you for helping me with the verification. Have a great day." and set endCall true. If some fields still missing (show —): say "Thanks." then ask for the FIRST missing field using ONLY that field's exact line from BENEFIT QUESTIONS. extractedUpdates {}.
 - If they ask what they said or what we have for a field (recall): "I have the [field] as [value]." or "I don't have that one yet." Then ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" Do NOT ask for next field in this turn. extractedUpdates {}.
-- If they ask to repeat or "what was the question?": Use ONLY a VARIED phrase for the field. Do NOT add a confirmation phrase after repeat. extractedUpdates {}. If we have all ${numFields} fields: "We have everything we need. Thanks." set endCall true only if they said thank you / that's all.
-- If they say "goodbye" / "that's all" / "thank you" / "we're done" and we have all ${numFields} fields: say "Thank you for helping me with the verification. Have a great day." and set endCall true. If we are MISSING any field: do NOT set endCall true. Ask for the first missing field ONLY with a simple phrase: "Can I get the [first missing field]?" or "May I have the [first missing field]?" — NEVER say "I don't have these noted on my end" or "please provide the details". extractedUpdates {}.
+- If they ask to repeat or "what was the question?": Speak ONLY the exact current question line from BENEFIT QUESTIONS for the field we are on. Do NOT add a confirmation phrase after repeat. extractedUpdates {}. If we have all ${numFields} fields: "We have everything we need. Thanks." set endCall true only if they said thank you / that's all.
+- If they say "goodbye" / "that's all" / "thank you" / "we're done" and we have all ${numFields} fields: say "Thank you for helping me with the verification. Have a great day." and set endCall true. If we are MISSING any field: do NOT set endCall true. Ask for the first missing field using ONLY that field's exact line from BENEFIT QUESTIONS. extractedUpdates {}.
 - If they correct a value: put new value in extractedUpdates, say "Got it. So the [field] is [value], right?" Do NOT ask for next field in same turn. Wait for yes. Then ONE of "Are we good?" / "Is that all you have?" only here. extractedUpdates {}.
 - If they ask "why do you need that?": "We're verifying benefit details for our patient." Do NOT add a confirmation phrase here. extractedUpdates {}.
 - If they ask to confirm ("so deductible is 500?"): "Yes, that's correct." or "I have it as [value]." Then ONE of "Is it okay?" / "Is that all you have?" / "Are we good?" Do NOT ask for next field in same turn. extractedUpdates {}.
 - If they say they need a moment ("let me check", "one sec"): "Sure, take your time." extractedUpdates {}.
-- If they ask for info you don't have (e.g. policy number, member ID — NOT benefit fields): "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?" Then if a benefit field still missing: "Can I get the [first missing field]?" only. For missing benefit fields (coverage, deductible, copay, validity) never say "I don't have that on my end" — only ask "Can I get the [field]?" extractedUpdates {}.
+- If they ask for info you don't have (e.g. policy number, member ID — NOT benefit fields): "I'm sorry, I don't have that on my end. Is there anything I can provide so we can continue?" Then if a benefit field still missing: ask using that field's exact line from BENEFIT QUESTIONS. extractedUpdates {}.
 - If they ask "what are the details you want to know" / "what do you need to know": Ask for first missing field with a VARIED phrase. Do NOT add a confirmation phrase here. Do NOT list all fields. extractedUpdates {}.
 - CRITICAL: NEVER say "I didn't get you" or "couldn't catch" when the user said something substantive. Only use a repeat phrase when transcript is EXACTLY "User did not respond or was inaudible." extractedUpdates as needed.
 - If they say "how can I help" / "why are you calling" / "what's the purpose" / similar: One sentence — paraphrase the purpose naturally (different wording than last time if purpose was already stated). No name or DOB unless they ask identity next. If identity already cleared and missing benefit fields, you may briefly confirm purpose then ask for the next missing field. extractedUpdates {}.
@@ -714,7 +723,7 @@ Respond with ONLY a JSON object. No markdown. Format:
             orderedFields,
           );
           nextMessage = nextAfter
-            ? `Thanks. ${this.askForFieldPhrase(nextAfter)}`
+            ? `Thanks. ${this.verbatimBenefitQuestion(nextAfter, fieldQ)}`
             : 'Thanks. Is there anything else?';
         }
       } else if (looksLikeDidntGet && nextFieldToAsk && transcriptHasValue) {
@@ -731,7 +740,7 @@ Respond with ONLY a JSON object. No markdown. Format:
             orderedFields,
           );
           nextMessage = nextAfter
-            ? `Thanks. ${this.askForFieldPhrase(nextAfter)}`
+            ? `Thanks. ${this.verbatimBenefitQuestion(nextAfter, fieldQ)}`
             : 'Thanks. Is there anything else?';
         }
       }

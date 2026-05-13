@@ -4,10 +4,11 @@ import {
   NotFoundException,
   Logger,
 } from '@nestjs/common';
+import { ObjectId } from 'mongodb';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { TwilioService } from 'src/twilio/twilio.service';
 import { AppointmentDetailsDto } from './dto/appointment-details.dto';
+import { MongoService } from 'src/mongo/mongo.service';
 
 @Injectable()
 export class AppointmentService {
@@ -16,153 +17,101 @@ export class AppointmentService {
   constructor(
     private prisma: PrismaService,
     private twilioService: TwilioService,
+    private readonly mongoService: MongoService,
   ) {}
 
   async create(appointment: AppointmentDetailsDto) {
     this.logger.debug(
       `Creating appointment with data: ${JSON.stringify(appointment)}`,
     );
-    // const payee = await this.prisma.payee.findUnique({
-    //   where: { id: appointment.PatientID },
-    // });
-    // if (!payee) {
-    //   throw new NotFoundException(
-    //     `Payee with ID ${appointment.PatientID} not found`,
-    //   );
-    // }
 
-    // const provider = await this.prisma.provider.findUnique({
-    //   where: { id: dto.providerId },
-    // });
-    // if (!provider) {
-    //   throw new NotFoundException(
-    //     `Provider with ID ${dto.providerId} not found`,
-    //   );
-    // }
+    const phone = (appointment.InsuranceCompany_Phone ?? '').trim();
+    const ext = (appointment.InsuranceCompany_Phone_Ext ?? '').trim();
+    const toPhoneNumber = ext ? `${ext}${phone}` : phone;
 
-    // //change
-    // const office = await this.prisma.office.findUnique({
-    //   where: { id: dto.officeId },
-    // });
-    // if (!office) {
-    //   throw new NotFoundException(`Office with ID ${dto.officeId} not found`);
-    // }
-
-    // const appointment = await this.prisma.appointment.create({
-    //   data: {
-    //     date: new Date(dto.date),
-    //     notes: dto.notes ?? null,
-    //     payee: { connect: { id: dto.payeeId } },
-    //     provider: { connect: { id: dto.providerId } },
-    //     office: { connect: { id: dto.officeId } },
-    //   },
-    //   include: {
-    //     payee: {
-    //       include: {
-    //         user: true,
-    //         payer: true,
-    //       },
-    //     },
-    //     provider: true,
-    //     office: true,
-    //   },
-    // });
-
-    const toPhoneNumber =
-      `${appointment.InsuranceCompany_Phone_Ext}` +
-      appointment.InsuranceCompany_Phone;
     if (toPhoneNumber) {
-      console.log('Making call to:', toPhoneNumber);
+      this.logger.debug(`Making call to: ${toPhoneNumber}`);
       await this.twilioService.makeCall(
         toPhoneNumber,
         appointment.PatientID,
-        appointment.AppointmentID,
+        String(appointment.AppointmentID),
         {
           navigateTpaIvr: process.env.EVA_NAVIGATE_TPA_IVR === 'true',
         },
       );
     } else {
       this.logger.warn(
-        `No phone number found for Payer linked to Payee ID ${appointment.PatientID}`,
+        `No phone number on appointment for PatientID ${appointment.PatientID}`,
       );
     }
 
     return appointment;
   }
 
+  private userDobToYmd(d: Date): string {
+    return d.toISOString().slice(0, 10);
+  }
+
   async findAll(user: { userId: string; role: 'ADMIN' | 'PAYEE' }) {
     if (user.role === 'ADMIN') {
-      return this.prisma.appointment.findMany({
-        include: {
-          payee: {
-            include: {
-              user: true, // to verify if the requester is the payee
-              payer: true, // Include payer details to verify payee Benfits
-            },
-          },
-          provider: true,
-          office: true,
-        },
-        orderBy: {
-          date: 'asc',
-        },
-      });
+      return this.mongoService.findAllAppointmentsSorted();
     }
 
-    // PAYEE ROLE
-    const payee = await this.prisma.payee.findUnique({
-      where: { userId: user.userId },
+    const u = await this.prisma.user.findUnique({
+      where: { id: user.userId },
+      select: { firstName: true, lastName: true, dob: true },
     });
-
-    if (!payee) {
-      throw new Error(`Payee record not found for user ID ${user.userId}`);
+    if (!u) {
+      throw new Error(`User not found for id ${user.userId}`);
     }
 
-    return this.prisma.appointment.findMany({
-      where: {
-        payeeId: payee.id,
-      },
-      include: {
-        payee: {
-          include: {
-            user: true, // to verify if the requester is the payee
-            payer: true, // Include payer details to verify payee Benfits
-          },
-        },
-        provider: true,
-        office: true,
-      },
-      orderBy: {
-        date: 'asc',
-      },
-    });
+    const dobYmd = u.dob ? this.userDobToYmd(u.dob) : undefined;
+    const patientIds = await this.mongoService.findPatientIdsByUserProfile(
+      u.firstName,
+      u.lastName,
+      dobYmd,
+    );
+    if (patientIds.length === 0) {
+      return [];
+    }
+
+    const col = await this.mongoService.appointmentsCollection();
+    return col
+      .find({ PatientID: { $in: patientIds } })
+      .sort({ AppointmentDate: 1, savedAt: 1 })
+      .toArray();
   }
 
   async findOne(id: string, user: { userId: string; role: 'ADMIN' | 'PAYEE' }) {
-    const appointment = await this.prisma.appointment.findUnique({
-      where: { id },
-      include: {
-        payee: {
-          include: {
-            user: true, // to verify if the requester is the payee
-            payer: true, // Include payer details to verify payee Benfits
-          },
-        },
-        provider: true,
-        office: true,
-      },
-    });
+    const col = await this.mongoService.appointmentsCollection();
+    const doc =
+      id.length === 24 && ObjectId.isValid(id)
+        ? await col.findOne({ _id: new ObjectId(id) })
+        : await col.findOne({
+            $or: [{ PatientID: id }, this.mongoService.appointmentIdQuery(id)],
+          });
 
-    if (!appointment) {
+    if (!doc) {
       throw new NotFoundException('Appointment not found');
     }
 
     if (user.role === 'PAYEE') {
-      if (appointment.payee?.user?.id !== user.userId) {
+      const u = await this.prisma.user.findUnique({
+        where: { id: user.userId },
+        select: { firstName: true, lastName: true, dob: true },
+      });
+      const dobYmd = u?.dob ? this.userDobToYmd(u.dob) : undefined;
+      const allowed = await this.mongoService.findPatientIdsByUserProfile(
+        u?.firstName,
+        u?.lastName,
+        dobYmd,
+      );
+      const pid = String(doc.PatientID ?? '');
+      if (!allowed.includes(pid)) {
         throw new ForbiddenException('Access denied to this appointment');
       }
     }
 
-    return appointment;
+    return doc;
   }
 }

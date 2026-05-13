@@ -18,7 +18,7 @@ export function setupSwagger(app: INestApplication): void {
         '### Conventions',
         '- Base URL: same host as this page (e.g. `http://localhost:3000`).',
         '- JSON bodies use `Content-Type: application/json` unless noted.',
-        '- **WebSocket** (not in Swagger): `GET ws://host/twilio/media-stream?payeeId=<uuid>` for EVA media stream.',
+        '- **WebSocket** (not in Swagger): `GET ws://host/twilio/media-stream?patientId=<id>` (legacy `payeeId` also accepted) for EVA media stream.',
         '',
         '### Auth schemes',
         '1. **jwt-auth** — User login; required for `/payees`, `/appointments`, `/payers`, `/verifications` (GET), `/transcription`.',

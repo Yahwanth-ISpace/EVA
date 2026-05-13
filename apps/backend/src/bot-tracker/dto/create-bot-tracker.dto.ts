@@ -1,11 +1,11 @@
-import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
+import { IsNotEmpty, IsString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 /** Body for POST /bot-trackers — live call lines are stored as JSON (usually a string). */
 export class CreateBotTrackerDto {
-  @ApiProperty({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
+  @ApiProperty({ example: '90560891', description: 'External PatientID (same as media-stream `patientId` / legacy `payeeId`).' })
   @IsNotEmpty()
-  @IsUUID()
+  @IsString()
   PatientID: string;
 
   @ApiProperty({

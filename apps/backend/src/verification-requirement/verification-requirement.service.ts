@@ -4,24 +4,32 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { MongoService } from '../mongo/mongo.service';
 import { CreateVerificationRequirementDto } from './dto/create-verification-requirement.dto';
 import { UpdateVerificationRequirementDto } from './dto/update-verification-requirement.dto';
 import type { VerificationFieldEntry } from './dto/verification-field.dto';
 
 @Injectable()
 export class VerificationRequirementService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mongoService: MongoService,
+  ) {}
 
   async create(dto: CreateVerificationRequirementDto) {
-    const payee = await this.prisma.payee.findUnique({
-      where: { id: dto.payeeId },
-    });
-    if (!payee) throw new NotFoundException('Payee not found');
+    if (!(await this.mongoService.patientHasAppointment(dto.payeeId))) {
+      throw new NotFoundException(
+        'Patient not found in appointments collection (payeeId path param is PatientID)',
+      );
+    }
     const verificationFields = dto.verificationFields as VerificationFieldEntry[];
     if (
       !verificationFields?.length ||
       verificationFields.some(
-        (f) => !f.field || typeof f.required !== 'boolean' || typeof f.order !== 'number',
+        (f) =>
+          !f.field ||
+          typeof f.required !== 'boolean' ||
+          typeof f.order !== 'number',
       )
     ) {
       throw new BadRequestException(
@@ -33,18 +41,17 @@ export class VerificationRequirementService {
         payeeId: dto.payeeId,
         verificationFields: verificationFields as object,
       },
-      include: { payee: true },
     });
   }
 
   async findByPayeeId(payeeId: string) {
-    const payee = await this.prisma.payee.findUnique({
-      where: { id: payeeId },
-    });
-    if (!payee) throw new NotFoundException('Payee not found');
+    if (!(await this.mongoService.patientHasAppointment(payeeId))) {
+      throw new NotFoundException(
+        'Patient not found in appointments collection (payeeId path param is PatientID)',
+      );
+    }
     return this.prisma.verificationRequirement.findMany({
       where: { payeeId },
-      include: { payee: true },
       orderBy: { createdAt: 'asc' },
     });
   }
@@ -52,7 +59,6 @@ export class VerificationRequirementService {
   async findOne(id: string) {
     const req = await this.prisma.verificationRequirement.findUnique({
       where: { id },
-      include: { payee: true },
     });
     if (!req) throw new NotFoundException('Verification requirement not found');
     return req;
@@ -61,12 +67,19 @@ export class VerificationRequirementService {
   async update(id: string, dto: UpdateVerificationRequirementDto) {
     await this.findOne(id);
     const data: { payeeId?: string; verificationFields?: object } = {};
-    if (dto.payeeId != null) data.payeeId = dto.payeeId;
-    if (dto.verificationFields != null) data.verificationFields = dto.verificationFields as object;
+    if (dto.payeeId != null) {
+      if (!(await this.mongoService.patientHasAppointment(dto.payeeId))) {
+        throw new NotFoundException(
+          'Patient not found in appointments collection (payeeId is PatientID)',
+        );
+      }
+      data.payeeId = dto.payeeId;
+    }
+    if (dto.verificationFields != null)
+      data.verificationFields = dto.verificationFields as object;
     return this.prisma.verificationRequirement.update({
       where: { id },
       data,
-      include: { payee: true },
     });
   }
 

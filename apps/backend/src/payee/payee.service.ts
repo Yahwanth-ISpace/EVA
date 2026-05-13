@@ -37,7 +37,6 @@ export class PayeeService {
       include: {
         payer: true,
         user: true,
-        verifications: true,
       },
     });
   }
@@ -48,7 +47,6 @@ export class PayeeService {
       include: {
         payer: true,
         user: true,
-        verifications: true,
       },
     });
   }
@@ -78,7 +76,6 @@ export class PayeeService {
       include: {
         payer: true,
         user: true,
-        verifications: true,
       },
     });
   }
