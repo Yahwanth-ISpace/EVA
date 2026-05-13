@@ -18,67 +18,72 @@ export class AppointmentService {
     private twilioService: TwilioService,
   ) {}
 
-  async create(dto: CreateAppointmentDto | AppointmentDetailsDto) {
-    this.logger.debug(`Creating appointment with data: ${JSON.stringify(dto)}`);
-    const payee = await this.prisma.payee.findUnique({
-      where: { id: dto.payeeId },
-    });
-    if (!payee) {
-      throw new NotFoundException(`Payee with ID ${dto.payeeId} not found`);
-    }
+  async create(appointment: AppointmentDetailsDto) {
+    this.logger.debug(
+      `Creating appointment with data: ${JSON.stringify(appointment)}`,
+    );
+    // const payee = await this.prisma.payee.findUnique({
+    //   where: { id: appointment.PatientID },
+    // });
+    // if (!payee) {
+    //   throw new NotFoundException(
+    //     `Payee with ID ${appointment.PatientID} not found`,
+    //   );
+    // }
 
-    const provider = await this.prisma.provider.findUnique({
-      where: { id: dto.providerId },
-    });
-    if (!provider) {
-      throw new NotFoundException(
-        `Provider with ID ${dto.providerId} not found`,
-      );
-    }
+    // const provider = await this.prisma.provider.findUnique({
+    //   where: { id: dto.providerId },
+    // });
+    // if (!provider) {
+    //   throw new NotFoundException(
+    //     `Provider with ID ${dto.providerId} not found`,
+    //   );
+    // }
 
-    //change
-    const office = await this.prisma.office.findUnique({
-      where: { id: dto.officeId },
-    });
-    if (!office) {
-      throw new NotFoundException(`Office with ID ${dto.officeId} not found`);
-    }
+    // //change
+    // const office = await this.prisma.office.findUnique({
+    //   where: { id: dto.officeId },
+    // });
+    // if (!office) {
+    //   throw new NotFoundException(`Office with ID ${dto.officeId} not found`);
+    // }
 
-    const appointment = await this.prisma.appointment.create({
-      data: {
-        date: new Date(dto.date),
-        notes: dto.notes ?? null,
-        payee: { connect: { id: dto.payeeId } },
-        provider: { connect: { id: dto.providerId } },
-        office: { connect: { id: dto.officeId } },
-      },
-      include: {
-        payee: {
-          include: {
-            user: true,
-            payer: true,
-          },
-        },
-        provider: true,
-        office: true,
-      },
-    });
+    // const appointment = await this.prisma.appointment.create({
+    //   data: {
+    //     date: new Date(dto.date),
+    //     notes: dto.notes ?? null,
+    //     payee: { connect: { id: dto.payeeId } },
+    //     provider: { connect: { id: dto.providerId } },
+    //     office: { connect: { id: dto.officeId } },
+    //   },
+    //   include: {
+    //     payee: {
+    //       include: {
+    //         user: true,
+    //         payer: true,
+    //       },
+    //     },
+    //     provider: true,
+    //     office: true,
+    //   },
+    // });
 
     const toPhoneNumber =
-      `${appointment.payee.payer?.phoneExt}` + appointment.payee.payer?.phone;
+      `${appointment.InsuranceCompany_Phone_Ext}` +
+      appointment.InsuranceCompany_Phone;
     if (toPhoneNumber) {
       console.log('Making call to:', toPhoneNumber);
       await this.twilioService.makeCall(
         toPhoneNumber,
-        dto.payeeId,
-        appointment.id,
+        appointment.PatientID,
+        appointment.AppointmentID,
         {
           navigateTpaIvr: process.env.EVA_NAVIGATE_TPA_IVR === 'true',
         },
       );
     } else {
       this.logger.warn(
-        `No phone number found for Payer linked to Payee ID ${dto.payeeId}`,
+        `No phone number found for Payer linked to Payee ID ${appointment.PatientID}`,
       );
     }
 
