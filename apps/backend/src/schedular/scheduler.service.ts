@@ -59,37 +59,37 @@ export class SchedulerService {
 
       const pendingAppointments = [finalAppointments];
 
-      while (pendingAppointments.length > 0) {
-        const agents: AgentDto[] = await this.prisma.agent.findMany({
-          where: { status: AgentStatus.COMPLETED },
-        });
+      // while (pendingAppointments.length > 0) {
+      //   const agents: AgentDto[] = await this.prisma.agent.findMany({
+      //     where: { status: AgentStatus.COMPLETED },
+      //   });
 
-        if (agents.length > 0) {
-          this.logger.debug(`Fetched ${agents.length} available agents.`);
-          const count = Math.min(agents.length, pendingAppointments.length);
+      //   if (agents.length > 0) {
+      //     this.logger.debug(`Fetched ${agents.length} available agents.`);
+      //     const count = Math.min(agents.length, pendingAppointments.length);
 
-          for (let i = 0; i < count; i++) {
-            const agent = agents[i];
-            const appointment = pendingAppointments.shift();
-            if (appointment) {
-              this.logger.log(
-                `Processing appointment for ${appointment.Patient_FirstName} ${appointment.Patient_LastName} with agent ${agent.name}`,
-              );
-              // un comment below lines  call appointment api for each agent and appointment and update agent status to IN_PROGRESS
-              // const response = this.appointmentService.create(appointment);
-              // this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
+      //     for (let i = 0; i < count; i++) {
+      //       const agent = agents[i];
+      //       const appointment = pendingAppointments.shift();
+      //       if (appointment) {
+      //         this.logger.log(
+      //           `Processing appointment for ${appointment.Patient_FirstName} ${appointment.Patient_LastName} with agent ${agent.name}`,
+      //         );
+      //         // un comment below lines  call appointment api for each agent and appointment and update agent status to IN_PROGRESS
+      //         // const response = this.appointmentService.create(appointment);
+      //         // this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
 
-              await this.callAppointmentApi(agent, appointment);
-            }
-          }
-        } else {
-          this.logger.debug('No agents available, waiting...');
-        }
+      //         await this.callAppointmentApi(agent, appointment);
+      //       }
+      //     }
+      //   } else {
+      //     this.logger.debug('No agents available, waiting...');
+      //   }
 
-        if (pendingAppointments.length > 0) {
-          await this.delay(30000); // Wait for 30 seconds before checking again
-        }
-      }
+      //   if (pendingAppointments.length > 0) {
+      //     await this.delay(30000); // Wait for 30 seconds before checking again
+      //   }
+      // }
     } catch (error) {
       this.logger.error(
         'Failed to call appointment list API',
