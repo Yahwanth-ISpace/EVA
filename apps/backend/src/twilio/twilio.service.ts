@@ -17,8 +17,8 @@ const client = twilio(accountSid, authToken);
 
 /** In-memory map: call SID → stream context when Twilio omits query params on the WebSocket URL. */
 export type CallStreamContext = {
-  payeeId: string;
-  appointmentId: string | null;
+  PatientID: string;
+  AppointmentID: string | null;
 };
 
 const callSidToStreamContext = new Map<string, CallStreamContext>();
@@ -52,7 +52,7 @@ export class TwilioService {
     'Can you provide the deductible?',
     'What is the copay?',
     'What is the validity of the insurance?',
-    'Thank you for confirming the details. That\'s all I have. Have a good day.',
+    "Thank you for confirming the details. That's all I have. Have a good day.",
   ];
 
   /**
@@ -94,7 +94,9 @@ export class TwilioService {
   async callIvrAndBypass(to?: string) {
     const ivrNumber = (to || process.env.TWILIO_IVR_PHONE_NUMBER || '').trim();
     if (!ivrNumber) {
-      throw new Error('TWILIO_IVR_PHONE_NUMBER environment variable is not set (or pass `to` in the request body).');
+      throw new Error(
+        'TWILIO_IVR_PHONE_NUMBER environment variable is not set (or pass `to` in the request body).',
+      );
     }
     if (!fromNumber) {
       throw new Error('TWILIO_PHONE_NUMBER environment variable is not set.');
@@ -109,6 +111,7 @@ export class TwilioService {
       url: connectUrl,
       method: 'POST',
     });
+
     return call;
   }
 
@@ -118,31 +121,28 @@ export class TwilioService {
    */
   async makeCall(
     to: string,
-    payeeId: string,
-    appointmentId?: string | null,
+    PatientID: string,
+    AppointmentID?: string | null,
     options?: { navigateTpaIvr?: boolean },
   ) {
     if (!fromNumber) {
       throw new Error('TWILIO_PHONE_NUMBER environment variable is not set.');
     }
 
-    const apptId = appointmentId?.trim();
-    const apptQ = apptId
-      ? `&appointmentId=${encodeURIComponent(apptId)}`
-      : '';
-    const modeQ =
-      options?.navigateTpaIvr === true ? '&mode=tpa-ivr' : '';
+    const apptId = AppointmentID?.trim();
+    const apptQ = apptId ? `&appointmentId=${encodeURIComponent(apptId)}` : '';
+    const modeQ = options?.navigateTpaIvr === true ? '&mode=tpa-ivr' : '';
     const call = await client.calls.create({
       to,
       from: fromNumber,
-      url: `${backendBaseUrl}/twilio/inbound-stream?payeeId=${encodeURIComponent(payeeId)}${apptQ}${modeQ}`,
+      url: `${backendBaseUrl}/twilio/inbound-stream?payeeId=${encodeURIComponent(PatientID)}${apptQ}${modeQ}`,
       record: true,
     });
 
-    if (call?.sid && payeeId) {
+    if (call?.sid && PatientID) {
       callSidToStreamContext.set(call.sid, {
-        payeeId,
-        appointmentId: apptId || null,
+        PatientID,
+        AppointmentID: apptId || null,
       });
     }
     return call;
@@ -152,7 +152,7 @@ export class TwilioService {
    * STEP 3: Handle recording from Twilio
    * Downloads recording and forwards to verification API
    */
-  async handleRecording(recordingUrl: string, payeeId: string) {
+  async handleRecording(recordingUrl: string, PatientID: string) {
     try {
       const localPath = await this.downloadRecording(recordingUrl);
 
@@ -160,10 +160,13 @@ export class TwilioService {
       form.append('file', fs.createReadStream(localPath));
 
       await axios.post(
-        `${backendBaseUrl}/verifications/from-audio/${payeeId}`,
+        `${backendBaseUrl}/verifications/from-audio/${PatientID}`,
         form,
         {
-          headers: { ...form.getHeaders(), Authorization: `Bearer ${apiToken}` },
+          headers: {
+            ...form.getHeaders(),
+            Authorization: `Bearer ${apiToken}`,
+          },
         },
       );
 

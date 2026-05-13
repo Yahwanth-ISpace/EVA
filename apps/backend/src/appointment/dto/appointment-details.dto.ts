@@ -10,7 +10,7 @@ export interface VerificationField {
 export class AppointmentDetailsDto {
   ClientID: number;
   UserID: number;
-  AppointmentID: number;
+  AppointmentID: string;
   AppointmentDate: string;
   AppointmentNote: string;
   Insurance_GroupName: string;
