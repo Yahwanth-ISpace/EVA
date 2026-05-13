@@ -11,7 +11,7 @@ export class BotTrackerDto {
     description: 'UUID of the payee',
     example: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
   })
-  payeeId: string;
+  PatientID: string;
 
   @ApiProperty({
     description: 'Call log data - accepts any data type',
