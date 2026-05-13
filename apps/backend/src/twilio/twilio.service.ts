@@ -38,7 +38,7 @@ export class TwilioService {
 
   /** @deprecated Prefer getStreamContextForCall */
   getPayeeIdForCall(callSid: string | null): string | null {
-    return this.getStreamContextForCall(callSid)?.payeeId ?? null;
+    return this.getStreamContextForCall(callSid)?.PatientID ?? null;
   }
 
   /**
@@ -135,7 +135,7 @@ export class TwilioService {
     const call = await client.calls.create({
       to,
       from: fromNumber,
-      url: `${backendBaseUrl}/twilio/inbound-stream?payeeId=${encodeURIComponent(PatientID)}${apptQ}${modeQ}`,
+      url: `${backendBaseUrl}/twilio/inbound-stream?patientId=${encodeURIComponent(PatientID)}${apptQ}${modeQ}`,
       record: true,
     });
 

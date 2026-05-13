@@ -8,8 +8,8 @@ export class BotTrackerDto {
   id: string;
 
   @ApiProperty({
-    description: 'UUID of the payee',
-    example: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+    description: 'External patient id (stored as payeeId in DB; same as stream payeeId query param)',
+    example: '90560891',
   })
   PatientID: string;
 

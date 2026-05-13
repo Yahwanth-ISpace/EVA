@@ -8,10 +8,18 @@ import * as fs from 'fs';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { TranscriptionService } from 'src/transcription/transcription.service';
+import { MongoService } from 'src/mongo/mongo.service';
+
+/** One benefit question from the appointment / requirement payload (ask this verbatim). */
+export type PatientVerificationStep = {
+  field: string;
+  question: string;
+  order: number;
+};
 
 /** Full call context pre-loaded at Twilio stream start so EVA can answer
  * TPA identity/verification questions instantly from cached state. */
-export interface PayeeCallContext {
+export interface PatientCallContext {
   patient: {
     firstName: string;
     lastName: string;
@@ -47,7 +55,12 @@ export interface PayeeCallContext {
     groupNumber: string | null;
     planName: string | null;
   } | null;
+  /** Benefit verification questions from the appointment payload (Sabrina), in ask order. */
+  verificationSteps: PatientVerificationStep[];
 }
+
+/** @deprecated Use {@link PatientCallContext} */
+export type PayeeCallContext = PatientCallContext;
 
 @Injectable()
 export class VerificationService {
@@ -57,13 +70,15 @@ export class VerificationService {
     private readonly prisma: PrismaService,
     private readonly aiService: AiService,
     private readonly transcriptionService: TranscriptionService,
+    private readonly mongoService: MongoService,
   ) {}
 
   async simulateVerification(payeeId: string, transcript: string) {
-    const payee = await this.prisma.payee.findUnique({
-      where: { id: payeeId },
-    });
-    if (!payee) throw new NotFoundException('Payee not found');
+    if (!(await this.mongoService.patientHasAppointment(payeeId))) {
+      throw new NotFoundException(
+        'Patient not found in appointments collection',
+      );
+    }
 
     const extracted = await this.aiService.extractInsuranceDetails(transcript);
 
@@ -78,7 +93,7 @@ export class VerificationService {
         },
         transcript,
       },
-      include: { payee: true },
+      include: { verificationRequirement: true },
     });
   }
 
@@ -91,6 +106,11 @@ export class VerificationService {
     }
     if (!fs.existsSync(filePath)) {
       throw new BadRequestException('Uploaded audio file not found on server');
+    }
+    if (!(await this.mongoService.patientHasAppointment(payeeId))) {
+      throw new NotFoundException(
+        'Patient not found in appointments collection',
+      );
     }
 
     try {
@@ -122,7 +142,7 @@ export class VerificationService {
           appointmentId: null,
         },
         orderBy: { createdAt: 'desc' },
-        include: { payee: true },
+        include: { verificationRequirement: true },
       });
 
       // Helper function to check if a value is meaningful (not null, undefined, or empty string)
@@ -170,7 +190,7 @@ export class VerificationService {
         record = await this.prisma.verification.update({
           where: { id: existingVerification.id },
           data: updateData,
-          include: { payee: true },
+          include: { verificationRequirement: true },
         });
       } else {
         record = await this.prisma.verification.create({
@@ -184,7 +204,7 @@ export class VerificationService {
             },
             transcript: transcript,
           },
-          include: { payee: true },
+          include: { verificationRequirement: true },
         });
       }
 
@@ -239,25 +259,29 @@ export class VerificationService {
         throw new Error('Missing payee user ID');
       }
 
+      const u = await this.prisma.user.findUnique({
+        where: { id: user.userId },
+        select: { firstName: true, lastName: true, dob: true },
+      });
+      const dobYmd = u?.dob ? u.dob.toISOString().slice(0, 10) : undefined;
+      const patientIds = await this.mongoService.findPatientIdsByUserProfile(
+        u?.firstName,
+        u?.lastName,
+        dobYmd,
+      );
+      if (patientIds.length === 0) {
+        return [];
+      }
+
       return this.prisma.verification.findMany({
-        where: {
-          payee: {
-            userId: user.userId, // This assumes `Payee.userId` is unique and maps to the logged-in user
-          },
-        },
-        include: { payee: true, verificationRequirement: true },
+        where: { payeeId: { in: patientIds } },
+        include: { verificationRequirement: true },
         orderBy: { createdAt: 'desc' },
       });
     }
 
-    // ADMIN view: Filter out broken `payee` relations
     return this.prisma.verification.findMany({
-      where: {
-        payee: {
-          isNot: undefined,
-        },
-      },
-      include: { payee: true, verificationRequirement: true },
+      include: { verificationRequirement: true },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -289,19 +313,21 @@ export class VerificationService {
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
   ) {
-    const payee = await this.prisma.payee.findUnique({
-      where: { id: payeeId },
-    });
-    if (!payee) throw new NotFoundException('Payee not found');
+    if (!(await this.mongoService.patientHasAppointment(payeeId))) {
+      throw new NotFoundException(
+        'Patient not found in appointments collection',
+      );
+    }
 
     const apptId = appointmentId?.trim() || null;
     if (apptId) {
-      const appt = await this.prisma.appointment.findFirst({
-        where: { id: apptId, payeeId },
-      });
-      if (!appt) {
+      const row = await this.mongoService.findAppointmentDocument(
+        payeeId,
+        apptId,
+      );
+      if (!row) {
         throw new BadRequestException(
-          'appointmentId does not match this payee or was not found',
+          'appointmentId does not match this patient or was not found in appointments',
         );
       }
     }
@@ -311,7 +337,7 @@ export class VerificationService {
       ? await this.prisma.verification.findFirst({
           where: { payeeId, appointmentId: apptId },
           orderBy: { createdAt: 'desc' },
-          include: { payee: true },
+          include: { verificationRequirement: true },
         })
       : await this.prisma.verification.findFirst({
           where: {
@@ -320,7 +346,7 @@ export class VerificationService {
             appointmentId: null,
           },
           orderBy: { createdAt: 'desc' },
-          include: { payee: true },
+          include: { verificationRequirement: true },
         });
 
     const hasValue = (v: string | null | undefined) =>
@@ -362,7 +388,7 @@ export class VerificationService {
       return this.prisma.verification.update({
         where: { id: existing.id },
         data: updatePayload,
-        include: { payee: true },
+        include: { verificationRequirement: true },
       });
     }
     const createData = {
@@ -374,14 +400,14 @@ export class VerificationService {
     };
     return this.prisma.verification.create({
       data: createData,
-      include: { payee: true },
+      include: { verificationRequirement: true },
     });
   }
 
   async findById(id: string) {
     const verification = await this.prisma.verification.findUnique({
       where: { id },
-      include: { payee: true, verificationRequirement: true },
+      include: { verificationRequirement: true },
     });
 
     if (!verification) throw new NotFoundException('Verification not found');
@@ -416,10 +442,9 @@ export class VerificationService {
   }
 
   /**
-   * Get patient (payee) info from the database for EVA to use in prompts.
-   * Includes all patient-related fields: name, DOB, SSN (for tax ID / SSN when asked).
+   * Get patient info for EVA prompts from the Mongo `appointments` document (`patientId` = `PatientID`).
    */
-  async getPayeePatientInfo(payeeId: string): Promise<{
+  async getPatientInfo(patientId: string): Promise<{
     firstName: string;
     lastName: string;
     fullName: string;
@@ -427,21 +452,28 @@ export class VerificationService {
     dobFormatted: string | null;
     ssn: string | null;
   } | null> {
-    const payee = await this.prisma.payee.findUnique({
-      where: { id: payeeId },
-      select: { firstName: true, lastName: true, dob: true, ssn: true },
-    });
-    if (!payee) return null;
-    const fullName = `${payee.firstName} ${payee.lastName}`.trim();
-    const dobFormatted = payee.dob ? this.formatDobForSpeech(payee.dob) : null;
+    const doc = await this.mongoService.findAppointmentDocument(patientId, null);
+    if (!doc) return null;
+    const fn = String(doc.Patient_FirstName ?? '');
+    const ln = String(doc.Patient_LastName ?? '');
+    const dob = this.parseAppointmentDob(doc.Patient_DOB);
+    const dobFormatted = dob ? this.formatDobForSpeech(dob) : null;
     return {
-      firstName: payee.firstName,
-      lastName: payee.lastName,
-      fullName,
-      dob: payee.dob,
+      firstName: fn,
+      lastName: ln,
+      fullName: `${fn} ${ln}`.trim(),
+      dob,
       dobFormatted,
-      ssn: payee.ssn ?? null,
+      ssn: doc.SSN != null && String(doc.SSN).trim() !== '' ? String(doc.SSN) : null,
     };
+  }
+
+  private parseAppointmentDob(raw: unknown): Date | null {
+    if (raw == null) return null;
+    const s = String(raw).trim();
+    if (!s) return null;
+    const d = new Date(s);
+    return Number.isFinite(d.getTime()) ? d : null;
   }
 
   private formatDobForSpeech(d: Date): string {
@@ -464,111 +496,166 @@ export class VerificationService {
   }
 
   /**
-   * Pre-fetch the full identity context the TPA is likely to quiz us on at the start of the call
-   * (provider NPI / Tax ID, member ID, patient name + DOB, provider name, subscriber name + DOB).
-   * Called once when the Twilio Media Stream opens so EVA can answer each verification question
-   * immediately without an extra DB round-trip or extra LLM "thinking".
-   *
-   * Fields not in the schema today fall back to env vars:
-   *   - Member ID:          EVA_MEMBER_ID (or per-payer later)
-   *   - Provider Tax ID:    EVA_PROVIDER_TAX_ID
-   *   - Billing Provider NPI: EVA_BILLING_PROVIDER_NPI (falls back to rendering NPI)
-   * Subscriber defaults to the patient (common in dental) unless overridden via env.
+   * Pre-fetch identity + benefit-question context from Mongo `appointments` (`patientId` = `PatientID`).
    */
-  async getPayeeCallContext(
-    payeeId: string,
+  async getPatientCallContext(
+    patientId: string,
     appointmentId?: string | null,
-  ): Promise<PayeeCallContext | null> {
-    const payee = await this.prisma.payee.findUnique({
-      where: { id: payeeId },
-      include: {
-        payer: true,
-        appointments: {
-          orderBy: { date: 'desc' },
-          include: { provider: true, office: true },
-        },
-      },
-    });
-    if (!payee) return null;
+  ): Promise<PatientCallContext | null> {
+    const doc = await this.mongoService.findAppointmentDocument(
+      patientId,
+      appointmentId,
+    );
+    if (!doc) return null;
 
-    // Pick the requested appointment if given, else the most recent one.
-    const appt =
-      (appointmentId?.trim() &&
-        payee.appointments.find((a) => a.id === appointmentId.trim())) ||
-      payee.appointments[0] ||
+    const patientDob = this.parseAppointmentDob(doc.Patient_DOB);
+    const patientDobFormatted = patientDob
+      ? this.formatDobForSpeech(patientDob)
+      : null;
+
+    const insuredDob = this.parseAppointmentDob(doc.Insured_DOB);
+    const insuredDobFormatted = insuredDob
+      ? this.formatDobForSpeech(insuredDob)
+      : null;
+
+    const provider =
+      doc.Provider_FirstName || doc.Provider_LastName
+        ? {
+            firstName: String(doc.Provider_FirstName ?? ''),
+            lastName: String(doc.Provider_LastName ?? ''),
+            fullName:
+              `${doc.Provider_FirstName ?? ''} ${doc.Provider_LastName ?? ''}`.trim(),
+            npi: doc.Provider_NPI ? String(doc.Provider_NPI) : null,
+            billingNpi:
+              process.env.EVA_BILLING_PROVIDER_NPI?.trim() ||
+              (doc.Provider_NPI ? String(doc.Provider_NPI) : null),
+            taxId: process.env.EVA_PROVIDER_TAX_ID?.trim() || null,
+            specialty: doc.Provider_Specialty
+              ? String(doc.Provider_Specialty)
+              : null,
+          }
+        : null;
+
+    const office =
+      doc.OfficeName || doc.OfficeCity || doc.OfficeState
+        ? {
+            name: String(doc.OfficeName ?? ''),
+            city: String(doc.OfficeCity ?? ''),
+            state: String(doc.OfficeState ?? ''),
+          }
+        : null;
+
+    const payer =
+      doc.InsuranceCompany_Name || doc.Insurance_GroupName
+        ? {
+            companyName: String(doc.InsuranceCompany_Name ?? ''),
+            groupName: doc.Insurance_GroupName
+              ? String(doc.Insurance_GroupName)
+              : null,
+            groupNumber: doc.Insurance_GroupNumber
+              ? String(doc.Insurance_GroupNumber)
+              : null,
+            planName: doc.InsurancePlan_GroupName
+              ? String(doc.InsurancePlan_GroupName)
+              : null,
+          }
+        : null;
+
+    const subscriberId =
+      doc.SubscriberID != null && String(doc.SubscriberID).trim() !== ''
+        ? String(doc.SubscriberID).trim()
+        : null;
+    const memberId =
+      subscriberId ||
+      process.env.EVA_MEMBER_ID?.trim() ||
       null;
 
-    const patientFullName = `${payee.firstName} ${payee.lastName}`.trim();
-    const patientDobFormatted = payee.dob
-      ? this.formatDobForSpeech(payee.dob)
-      : null;
+    const sf = String(doc.Insured_FirstName ?? '').trim();
+    const sl = String(doc.Insured_LastName ?? '').trim();
+    const useInsured = Boolean(sf || sl);
+    const subscriberFirstName = useInsured
+      ? sf || String(doc.Patient_FirstName ?? '')
+      : process.env.EVA_SUBSCRIBER_FIRST_NAME?.trim() ||
+        String(doc.Patient_FirstName ?? '');
+    const subscriberLastName = useInsured
+      ? sl || String(doc.Patient_LastName ?? '')
+      : process.env.EVA_SUBSCRIBER_LAST_NAME?.trim() ||
+        String(doc.Patient_LastName ?? '');
 
-    const provider = appt?.provider
-      ? {
-          firstName: appt.provider.firstName,
-          lastName: appt.provider.lastName,
-          fullName:
-            `${appt.provider.firstName} ${appt.provider.lastName}`.trim(),
-          npi: appt.provider.npi ?? null,
-          billingNpi:
-            process.env.EVA_BILLING_PROVIDER_NPI?.trim() ||
-            appt.provider.npi ||
-            null,
-          taxId: process.env.EVA_PROVIDER_TAX_ID?.trim() || null,
-          specialty: appt.provider.specialty ?? null,
-        }
-      : null;
-
-    const office = appt?.office
-      ? {
-          name: appt.office.name,
-          city: appt.office.city,
-          state: appt.office.state,
-        }
-      : null;
-
-    const payer = payee.payer
-      ? {
-          companyName: payee.payer.companyName,
-          groupName: payee.payer.groupName ?? null,
-          groupNumber: payee.payer.groupNumber ?? null,
-          planName: payee.payer.planName ?? null,
-        }
-      : null;
-
-    // Subscriber defaults to the patient; override via env if the practice has a different policyholder.
-    const subscriberFirstName =
-      process.env.EVA_SUBSCRIBER_FIRST_NAME?.trim() || payee.firstName;
-    const subscriberLastName =
-      process.env.EVA_SUBSCRIBER_LAST_NAME?.trim() || payee.lastName;
     const subscriberDobRaw = process.env.EVA_SUBSCRIBER_DOB?.trim();
-    const subscriberDob = subscriberDobRaw
+    const subscriberDobFormatted = subscriberDobRaw
       ? this.tryFormatDateString(subscriberDobRaw)
-      : patientDobFormatted;
+      : insuredDobFormatted || patientDobFormatted;
+
+    const verificationSteps = this.verificationStepsFromAppointmentDoc(
+      doc as Record<string, unknown>,
+    );
 
     return {
       patient: {
-        firstName: payee.firstName,
-        lastName: payee.lastName,
-        fullName: patientFullName,
-        dob: payee.dob,
+        firstName: String(doc.Patient_FirstName ?? ''),
+        lastName: String(doc.Patient_LastName ?? ''),
+        fullName:
+          `${doc.Patient_FirstName ?? ''} ${doc.Patient_LastName ?? ''}`.trim(),
+        dob: patientDob,
         dobFormatted: patientDobFormatted,
-        ssn: payee.ssn ?? null,
+        ssn:
+          doc.SSN != null && String(doc.SSN).trim() !== ''
+            ? String(doc.SSN)
+            : null,
       },
       subscriber: {
         firstName: subscriberFirstName,
         lastName: subscriberLastName,
         fullName: `${subscriberFirstName} ${subscriberLastName}`.trim(),
-        dobFormatted: subscriberDob,
+        dobFormatted: subscriberDobFormatted,
       },
-      memberId: process.env.EVA_MEMBER_ID?.trim() || null,
+      memberId,
       provider,
       office,
       payer,
+      verificationSteps,
     };
   }
 
-  /** Accept common date inputs ("1985-03-15", "03/15/1985") and return speech-friendly text. */
+  /** @deprecated Use {@link getPatientCallContext} */
+  async getPayeeCallContext(
+    patientId: string,
+    appointmentId?: string | null,
+  ): Promise<PatientCallContext | null> {
+    return this.getPatientCallContext(patientId, appointmentId);
+  }
+
+  /** @deprecated Use {@link getPatientInfo} */
+  async getPayeePatientInfo(patientId: string) {
+    return this.getPatientInfo(patientId);
+  }
+
+  private verificationStepsFromAppointmentDoc(
+    doc: Record<string, unknown>,
+  ): PatientVerificationStep[] {
+    const raw = doc['verificationFields'];
+    if (!Array.isArray(raw) || raw.length === 0) return [];
+    const steps: PatientVerificationStep[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      const item = raw[i] as Record<string, unknown>;
+      const field = String(item?.field ?? '').trim();
+      if (!field) continue;
+      const qRaw = String(item?.question ?? '').trim();
+      const order =
+        typeof item?.order === 'number' && Number.isFinite(item.order)
+          ? (item.order as number)
+          : i + 1;
+      steps.push({
+        field,
+        question: qRaw || field,
+        order,
+      });
+    }
+    steps.sort((a, b) => a.order - b.order);
+    return steps;
+  }
+
   private tryFormatDateString(raw: string): string | null {
     if (!raw) return null;
     const d = new Date(raw);
@@ -585,11 +672,17 @@ export class VerificationService {
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
   ): Promise<{ id: string } | null> {
-    const payee = await this.prisma.payee.findUnique({
-      where: { id: payeeId },
-    });
-    if (!payee) return null;
+    if (!(await this.mongoService.patientHasAppointment(payeeId))) {
+      return null;
+    }
     const apptId = appointmentId?.trim() || undefined;
+    if (apptId) {
+      const row = await this.mongoService.findAppointmentDocument(
+        payeeId,
+        apptId,
+      );
+      if (!row) return null;
+    }
     const data: {
       payeeId: string;
       transcript: string;
@@ -700,13 +793,6 @@ export class VerificationService {
     this.logger.log('Extracted data: {}', extracted);
     // If verification requirement is provided, get the fields from it
     if (extracted) {
-      // const verReq = await this.prisma.verificationRequirement.findUnique({
-      //   where: { id: verificationRequirementId },
-      // });
-
-      // if (!verReq) {
-      //   throw new NotFoundException('VerificationRequirement not found');
-      // }
       const verReq = Object.keys(extracted);
       // If verificationFields is stored as JSON array, parse it
       if (verReq && Array.isArray(verReq)) {

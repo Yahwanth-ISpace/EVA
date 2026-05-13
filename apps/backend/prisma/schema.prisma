@@ -21,29 +21,28 @@ model User {
 }
 
 model Payee {
-  id                     String                   @id @default(uuid()) @map("_id")
-  user                   User?                    @relation("UserPayee", fields: [userId], references: [id])
-  userId                 String?                  @unique
-  firstName              String
-  lastName               String
-  dob                    DateTime?
-  ssn                    String? //make manditory in production (US Citizens)
-  appointments           Appointment[]
-  payer                  Payer?                   @relation(fields: [payerId], references: [id])
-  payerId                String?
-  verifications          Verification[]
+  id           String        @id @default(uuid()) @map("_id")
+  user         User?         @relation("UserPayee", fields: [userId], references: [id])
+  userId       String?       @unique
+  firstName    String
+  lastName     String
+  dob          DateTime?
+  ssn          String? //make manditory in production (US Citizens)
+  appointments Appointment[]
+  payer        Payer?        @relation(fields: [payerId], references: [id])
+  payerId      String?
 }
 
 /// Defines which fields to collect during a verification call and in what order.
 /// Payee can have multiple verification requirements (e.g. different plans or call types).
 model VerificationRequirement {
-  id                 String   @id @default(uuid()) @map("_id")
+  id                 String         @id @default(uuid()) @map("_id")
   /// Legacy field name: stores external `PatientID` from Mongo `appointments` or a legacy Payee `_id`.
   payeeId            String
   /// Array of { field: string, required: boolean, order: number } — fields to ask for, in order.
-  verificationFields Json     // e.g. [{"field":"coverage","required":true,"order":1},{"field":"deductible","required":true,"order":2},{"field":"copay","required":true,"order":3},{"field":"validity","required":true,"order":4}]
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  verificationFields Json // e.g. [{"field":"coverage","required":true,"order":1},{"field":"deductible","required":true,"order":2},{"field":"copay","required":true,"order":3},{"field":"validity","required":true,"order":4}]
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
   verifications      Verification[]
 }
 
@@ -86,40 +85,114 @@ model Office {
 }
 
 model Appointment {
-  id             String          @id @default(uuid()) @map("_id")
-  payee          Payee           @relation(fields: [payeeId], references: [id])
-  payeeId        String
-  provider       Provider        @relation(fields: [providerId], references: [id])
-  providerId     String
-  office         Office          @relation(fields: [officeId], references: [id])
-  officeId       String
-  date           DateTime
-  notes          String?
-  verifications  Verification[]
+  id String @id @default(uuid()) @map("_id")
+
+  // clientId Int
+  // userId   Int
+
+  // appointmentId   String    @unique
+  // appointmentDate DateTime?
+  // appointmentNote String?
+
+  // insuranceGroupName     String?
+  // insuranceGroupNumber   String?
+  // insurancePlanGroupName String?
+  // insuranceBusinessKey   String?
+  // pristinePlanMasterId   Int?
+
+  // pmsType     String?
+  // pgid        String?
+  // feeSchedule String?
+  // planType    String?
+
+  // patientOfficeId      String?
+  // patientOfficeName    String?
+  // patientOfficeStreet1 String?
+  // patientOfficeStreet2 String?
+  // patientOfficeCity    String?
+  // patientOfficeState   String?
+  // patientOfficeZip     String?
+
+  // jsonId String?
+
+  // patientId          String
+  // patientBusinessKey String?
+
+  // patientFirstName String
+  // patientLastName  String
+  // patientMi        String?
+
+  // patientDob DateTime?
+  // ssn        String?
+
+  // patientZip String?
+
+  // insuredFirstName String?
+  // insuredLastName  String?
+  // insuredDob       DateTime?
+
+  // subscriberId String?
+
+  // insuranceCompanyName     String?
+  // insuranceCompanyPhone    String?
+  // insuranceCompanyPhoneExt String?
+
+  // priSecTerQua String?
+
+  // providerFirstName String?
+  // providerLastName  String?
+  // providerMi        String?
+
+  // providerIsNonPerson Boolean @default(false)
+
+  // providerNpi       String?
+  // providerNetwork   String?
+  // providerSpecialty String?
+
+  // officeName        String?
+  // officeBusinessKey String?
+  // officeId          String?
+  // officeCode        String?
+
+  // officeStreet1 String?
+  // officeStreet2 String?
+
+  // officeCity  String?
+  // officeState String?
+  // officeZip   String?
+
+  // verificationFields Json?
+
+  // createdAt  DateTime  @default(now())
+  // updatedAt  DateTime  @updatedAt
+  // payee      Payee?    @relation(fields: [payeeId], references: [id])
+  // payeeId    String?
+  // provider   Provider? @relation(fields: [providerId], references: [id])
+  // providerId String?
+  // office     Office?   @relation(fields: [officeId], references: [id])
 }
 
 model Verification {
-  id                      String                 @id @default(uuid()) @map("_id")
-  payee                   Payee?                 @relation(fields: [payeeId], references: [id])
-  payeeId                 String?
-  /// When set, this verification belongs to a specific appointment visit (not shared across all visits for the payee).
-  appointment             Appointment?           @relation(fields: [appointmentId], references: [id])
-  appointmentId           String?
-  verificationRequirement VerificationRequirement? @relation(fields: [verificationRequirementId], references: [id])
+  id                        String                   @id @default(uuid()) @map("_id")
+  /// Legacy name: external `PatientID` from Mongo `appointments` or legacy Payee `_id` (no Prisma relation).
+  payeeId                   String?
+  /// Sabrina `AppointmentID` or legacy Prisma appointment `_id` (no Prisma relation — source of truth is Mongo `appointments`).
+  appointmentId             String?
+  verificationRequirement   VerificationRequirement? @relation(fields: [verificationRequirementId], references: [id])
   verificationRequirementId String?
   /// Dynamic field values (key = field name from VerificationRequirement.verificationFields). Used when verificationRequirementId is set.
-  extractedData          Json?
-  transcript              String
-  createdAt               DateTime @default(now())
+  extractedData             Json?
+  transcript                String
+  createdAt                 DateTime                 @default(now())
 }
 
 model Agent {
-  id        String    @id @default(uuid()) @map("_id")
-  name      String    @unique
+  id                String      @id @default(uuid()) @map("_id")
+  name              String      @unique
   twilioPhoneNumber String
-  status    AgentStatus
-  startTime DateTime?  @default(now())
-  endTime   DateTime? @default(now())
+  status            AgentStatus
+  startTime         DateTime?   @default(now())
+  endTime           DateTime?   @default(now())
 }
 
 model BotTracker {
