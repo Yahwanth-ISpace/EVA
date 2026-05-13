@@ -1009,9 +1009,9 @@ export class MediaStreamHandlerService {
 
   handleConnection(
     ws: WebSocket,
-    payeeId?: string | null,
+    PatientID?: string | null,
     mode?: string | null,
-    appointmentId?: string | null,
+    AppointmentID?: string | null,
   ): void {
     const isIvrBypass = mode === 'ivr-bypass';
     const isTpaIvr = mode === 'tpa-ivr';

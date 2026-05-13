@@ -6,7 +6,7 @@ export class CreateBotTrackerDto {
   @ApiProperty({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
   @IsNotEmpty()
   @IsUUID()
-  payeeId: string;
+  PatientID: string;
 
   @ApiProperty({
     example: 'EVA: Can you provide the deductible?',
