@@ -55,6 +55,16 @@ export function isTpaBenefitQnaHandoff(userSaid: string): boolean {
     ) ||
     /\bready\s+when\s+you\s+are\s+for\s+your\s+(benefit|verification)\s+questions\b/.test(
       t,
+    ) ||
+    /\bokay,?\s+so\s+(now\s+)?what\s+(kind\s+of\s+)?(benefit|benefits)\b/i.test(
+      t,
+    ) ||
+    /\bnow,?\s+what\s+(benefit|benefits|details|information)\b/i.test(t) ||
+    /\bwhat\s+(kind\s+of\s+)?benefit\s+details\b.*\b(do you|you)\s+need\b/i.test(
+      t,
+    ) ||
+    /\b(regarding|about)\s+(the\s+)?(patient|member|subscriber)\b.*\b(what|which|need)\b.*\b(benefit|details|information|fields)\b/i.test(
+      t,
     )
   );
 }

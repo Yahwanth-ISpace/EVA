@@ -39,9 +39,11 @@ import {
   ANSWER_WINDOW_MS,
   EVA_INTRO_LINE,
   EVA_HOLD_ACK,
+  EVA_POST_DOB_SILENCE_NUDGE,
   EVA_RESUME_ACK,
   FALLBACK_PROCESS_INTERVAL_MS,
   HOLD_MAX_MS,
+  POST_DOB_LONG_SILENCE_NUDGE_MS,
   TPA_IVR_STREAM_FALLBACK_MS,
   TPA_IVR_STREAM_MIN_BYTES,
   MAX_BUFFER_BYTES,
@@ -184,6 +186,7 @@ export class MediaStreamHandlerService {
       tpaBenefitQnaOpen: false,
       patientIdentityReadyForBenefits: false,
       evaAwaitingYesAfterDob: false,
+      postDobSilenceNudgePlayed: false,
       identityAnswersGiven: 0,
       evaAwaitingYesAfterIdentity: false,
       justCompletedAllFields: false,
@@ -1030,6 +1033,41 @@ export class MediaStreamHandlerService {
         }
         // Inaudible/empty: re-ask the same field only (no AI call) so conversation stays in phase.
         if (wasInaudibleTurn) {
+          const quietMs =
+            state.lastSpeakTime > 0 ? Date.now() - state.lastSpeakTime : 0;
+          const awaitingBenefitTopicOrDobAck =
+            state.evaAwaitingYesAfterDob ||
+            (state.patientIdentityReadyForBenefits &&
+              !state.tpaBenefitQnaOpen);
+          if (
+            state.mode === 'eva' &&
+            awaitingBenefitTopicOrDobAck &&
+            !state.postDobSilenceNudgePlayed &&
+            state.lastSpeakTime > 0 &&
+            quietMs >= POST_DOB_LONG_SILENCE_NUDGE_MS
+          ) {
+            state.postDobSilenceNudgePlayed = true;
+            state.conversationTranscript.push('EVA: ' + EVA_POST_DOB_SILENCE_NUDGE);
+            void pushLiveTracker(`EVA: ${EVA_POST_DOB_SILENCE_NUDGE}`);
+            const ttsNudge = await speak(
+              EVA_POST_DOB_SILENCE_NUDGE,
+              'post_dob_long_silence_nudge',
+            );
+            this.logCallTurn(state.callSid, {
+              prepMs,
+              sttMs,
+              llmMs: null,
+              ttsMs: ttsNudge,
+              totalMs: Date.now() - turnStart,
+              tpa: effectiveTranscript,
+              eva: EVA_POST_DOB_SILENCE_NUDGE,
+              note: `(post-DOB long silence ≥ ${POST_DOB_LONG_SILENCE_NUDGE_MS}ms)`,
+            });
+            state.consecutiveNoiseOrEmptyTurns = 0;
+            state.processing = false;
+            startFallbackTimer();
+            return;
+          }
           const repeatPhrase = getRepeatOnlyPrompt();
           const reaskSame = state.lastAskedField
             ? repeatPhrase + ' ' + qField(state.lastAskedField)
@@ -1124,10 +1162,12 @@ export class MediaStreamHandlerService {
           state.patientIdentityReadyForBenefits = true;
           state.evaAwaitingYesAfterDob = false;
           state.evaAwaitingYesAfterIdentity = false;
+          state.postDobSilenceNudgePlayed = false;
         }
 
         if (isTpaBenefitQnaHandoff(userSaid)) {
           state.tpaBenefitQnaOpen = true;
+          state.postDobSilenceNudgePlayed = true;
         } else if (
           state.patientIdentityReadyForBenefits &&
           !state.tpaBenefitQnaOpen &&
@@ -1136,6 +1176,7 @@ export class MediaStreamHandlerService {
           )
         ) {
           state.tpaBenefitQnaOpen = true;
+          state.postDobSilenceNudgePlayed = true;
         }
 
         const recallReply = getRecallReply(
@@ -1605,15 +1646,40 @@ export class MediaStreamHandlerService {
           !identityDirectReply
         ) {
           this.logger.warn(
-            '[MediaStream] LLM asked benefit field before identity + benefit gate — replacing with neutral ack.',
+            '[MediaStream] LLM asked benefit field before identity + benefit gate — correcting.',
           );
-          toSpeak =
-            state.patientIdentityReadyForBenefits && !state.tpaBenefitQnaOpen
-              ? "Sounds good. Whenever you're ready, I can go through the benefit details we need for this patient."
-              : isBareAcknowledgement(userSaid)
-                ? 'Of course.'
-                : 'Sure, please go ahead with your verification questions.';
           state.lastAskedField = null;
+          if (
+            state.patientIdentityReadyForBenefits &&
+            !state.tpaBenefitQnaOpen
+          ) {
+            const uLogSilent =
+              userSaid &&
+              userSaid !== 'User did not respond or was inaudible.' &&
+              !/^\[?inaudible\]?\.?$/i.test(userSaid) &&
+              !/^\.{2,}$/.test(userSaid)
+                ? userSaid
+                : null;
+            if (uLogSilent)
+              state.conversationTranscript.push('User: ' + uLogSilent);
+            if (uLogSilent) void pushLiveTracker(`User: ${uLogSilent}`);
+            this.logCallTurn(state.callSid, {
+              prepMs,
+              sttMs,
+              llmMs,
+              ttsMs: 0,
+              totalMs: Date.now() - turnStart,
+              tpa: userSaid,
+              eva: '—',
+              note: '(benefit gate: silent until TPA opens benefit Q&A)',
+            });
+            state.processing = false;
+            startFallbackTimer();
+            return;
+          }
+          toSpeak = isBareAcknowledgement(userSaid)
+            ? 'Of course.'
+            : 'Sure, please go ahead with your verification questions.';
         }
 
         // ---------------------------------------------------------------------------
@@ -1735,6 +1801,7 @@ export class MediaStreamHandlerService {
         ) {
           state.evaAwaitingYesAfterDob = true;
           state.evaAwaitingYesAfterIdentity = true;
+          state.postDobSilenceNudgePlayed = false;
         }
         // Generalised: any time EVA's reply just delivered a cached identity value,
         // expect the TPA's confirmation on the next turn. This lets the Phase 2 → Phase 3
