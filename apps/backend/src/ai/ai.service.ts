@@ -1205,11 +1205,9 @@ Respond with ONLY a JSON object. No markdown. Format:
     }>,
   ): Promise<
     Array<{
+      normalizedQuestion: string;
       question: string;
-      field: string;
-      required: boolean;
-      order: number;
-      value: string | null;
+      answar: string;
     }>
   > {
     if (!verificationFields || verificationFields.length === 0) {
@@ -1232,15 +1230,22 @@ INSTRUCTIONS:
 2. For each EVA question, capture the USER response immediately after it.
 3. Return a JSON array of objects with exactly two keys: "question" and "answar".
 4. Preserve the question text exactly as EVA spoke it in the transcript.
-5. Preserve the USER answer text exactly as spoken in the transcript.
+5. For the USER answer (answar), normalize it to a clean value:
+   - Convert spoken numbers to digits: "twenty dollars" → "$20", "one hundred" → "100", "fourteen" → "14"
+   - Format dates properly: "May first twenty twenty six" → "May 1, 2026", "February twenty first two thousand twenty nine" → "February 21, 2029"
+   - Keep percentages as is or convert: "eighty percent" → "80%"
+   - Remove filler words and normalize: "Uh, it is, uh, two forty-four" → "244"
+   - For text answers, keep as clean text without extra words.
 6. Do NOT include any field definitions, metadata, markdown, code fences, or extra text.
 7. If a USER response is missing after an EVA question, omit that pair.
 8. Return valid JSON only.
 
 EXAMPLE OUTPUT:
 [
-  { "question": "What is the insurance group name?", "answar": "Uh, it is, uh, two forty-four" },
-  { "question": "What is the insurance group number?", "answar": "It is one seven one seven" }
+  { "question": "What is the insurance group name?", "answar": "244" },
+  { "question": "What is the insurance group number?", "answar": "1717" },
+  { "question": "What is the patient's date of birth?", "answar": "March 26, 1984" },
+  { "question": "What is the basic coverage?", "answar": "20%" }
 ]`;
 
       const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
@@ -1302,44 +1307,45 @@ EXAMPLE OUTPUT:
       }));
 
       this.logger.log('normalized pairs:::::: {}', normalizedPairs);
+      return normalizedPairs;
       // Ensure all fields are present and properly formatted
-      const result_array: Array<{
-        question: string;
-        field: string;
-        required: boolean;
-        order: number;
-        value: string | null;
-      }> = [];
-      for (const field of verificationFields) {
-        const normalizedFieldQuestion = normalizeText(
-          field.question || field.field,
-        );
-        const foundPair = normalizedPairs.find(
-          (pair) =>
-            pair.normalizedQuestion.includes(normalizedFieldQuestion) ||
-            normalizeText(field.field).includes(pair.normalizedQuestion),
-        );
+      // const result_array: Array<{
+      //   question: string;
+      //   field: string;
+      //   required: boolean;
+      //   order: number;
+      //   value: string | null;
+      // }> = [];
+      // for (const field of verificationFields) {
+      //   const normalizedFieldQuestion = normalizeText(
+      //     field.question || field.field,
+      //   );
+      //   const foundPair = normalizedPairs.find(
+      //     (pair) =>
+      //       pair.normalizedQuestion.includes(normalizedFieldQuestion) ||
+      //       normalizeText(field.field).includes(pair.normalizedQuestion),
+      //   );
 
-        const found = parsedRecords.find(
-          (p) => typeof p.field === 'string' && p.field === field.field,
-        );
+      //   const found = parsedRecords.find(
+      //     (p) => typeof p.field === 'string' && p.field === field.field,
+      //   );
 
-        result_array.push({
-          question:
-            foundPair?.question ||
-            (typeof found?.question === 'string'
-              ? found.question
-              : field.question),
-          field: field.field,
-          required: field.required,
-          order: field.order,
-          value:
-            foundPair?.answar ??
-            (typeof found?.value === 'string' ? found.value : null),
-        });
-      }
-      this.logger.log('The final response is: {}', result_array);
-      return result_array;
+      //   result_array.push({
+      //     question:
+      //       foundPair?.question ||
+      //       (typeof found?.question === 'string'
+      //         ? found.question
+      //         : field.question),
+      //     field: field.field,
+      //     required: field.required,
+      //     order: field.order,
+      //     value:
+      //       foundPair?.answar ??
+      //       (typeof found?.value === 'string' ? found.value : null),
+      //   });
+      // }
+      // this.logger.log('The final response is: {}', result_array);
+      // return result_array;
     } catch (err) {
       this.logger.error(
         '❌ Error extracting verification fields from transcript:',
@@ -1348,10 +1354,8 @@ EXAMPLE OUTPUT:
       // Return array with null values
       return verificationFields.map((f) => ({
         question: f.question,
-        field: f.field,
-        required: f.required,
-        order: f.order,
-        value: null,
+        normalizedQuestion: f.question,
+        answar: null,
       }));
     }
   }

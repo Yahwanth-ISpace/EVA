@@ -452,7 +452,10 @@ export class VerificationService {
     dobFormatted: string | null;
     ssn: string | null;
   } | null> {
-    const doc = await this.mongoService.findAppointmentDocument(patientId, null);
+    const doc = await this.mongoService.findAppointmentDocument(
+      patientId,
+      null,
+    );
     if (!doc) return null;
     const fn = String(doc.Patient_FirstName ?? '');
     const ln = String(doc.Patient_LastName ?? '');
@@ -464,7 +467,10 @@ export class VerificationService {
       fullName: `${fn} ${ln}`.trim(),
       dob,
       dobFormatted,
-      ssn: doc.SSN != null && String(doc.SSN).trim() !== '' ? String(doc.SSN) : null,
+      ssn:
+        doc.SSN != null && String(doc.SSN).trim() !== ''
+          ? String(doc.SSN)
+          : null,
     };
   }
 
@@ -565,10 +571,7 @@ export class VerificationService {
       doc.SubscriberID != null && String(doc.SubscriberID).trim() !== ''
         ? String(doc.SubscriberID).trim()
         : null;
-    const memberId =
-      subscriberId ||
-      process.env.EVA_MEMBER_ID?.trim() ||
-      null;
+    const memberId = subscriberId || process.env.EVA_MEMBER_ID?.trim() || null;
 
     const sf = String(doc.Insured_FirstName ?? '').trim();
     const sl = String(doc.Insured_LastName ?? '').trim();
@@ -656,11 +659,67 @@ export class VerificationService {
     return steps;
   }
 
-  private tryFormatDateString(raw: string): string | null {
-    if (!raw) return null;
-    const d = new Date(raw);
-    if (!Number.isFinite(d.getTime())) return null;
-    return this.formatDobForSpeech(d);
+  private normalizeText(value: string): string {
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  private mapSubrinaAnswers(
+    verificationFields: Array<Record<string, unknown>>,
+    subrinaData: unknown[],
+  ): void {
+    if (!Array.isArray(subrinaData) || subrinaData.length === 0) {
+      return;
+    }
+
+    const verificationByQuestion = new Map<string, string>();
+    for (const field of verificationFields) {
+      const question = field.question;
+      const answer = field.answar ?? field.answer ?? field.value;
+      if (typeof question === 'string' && answer != null) {
+        verificationByQuestion.set(
+          this.normalizeText(question),
+          String(answer).trim(),
+        );
+      }
+    }
+
+    const setSubrinaAnswer = (
+      target: Record<string, unknown>,
+      targetQuestion: unknown,
+    ) => {
+      if (typeof targetQuestion !== 'string') return false;
+      const normalizedTargetQuestion = this.normalizeText(targetQuestion);
+      const match = [...verificationByQuestion.entries()].find(
+        ([key]) =>
+          key === normalizedTargetQuestion ||
+          key.includes(normalizedTargetQuestion) ||
+          normalizedTargetQuestion.includes(key),
+      );
+      if (match) {
+        target.answer = match[1];
+        return true;
+      }
+      return false;
+    };
+
+    const doc = subrinaData[0] as Record<string, unknown>;
+    for (const value of Object.values(doc)) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        continue;
+      }
+      const nested = value as Record<string, unknown>;
+      setSubrinaAnswer(nested, nested.question);
+    }
+
+    const history = Array.isArray(doc.history) ? doc.history : [];
+    for (const item of history) {
+      if (!item || typeof item !== 'object') continue;
+      const historyItem = item as Record<string, unknown>;
+      setSubrinaAnswer(historyItem, historyItem.question);
+    }
   }
 
   /**
@@ -834,11 +893,20 @@ export class VerificationService {
     }
 
     // Use Gemini to extract the values from the transcript
-    const verificationFields =
+    let verificationFields =
       await this.aiService.extractVerificationFieldsFromTranscript(
         transcriptToAppend,
         fieldsToExtract,
       );
+    const subrinaData = await this.mongoService.getSubrinaAppointments(
+      payeeId,
+      appointmentId,
+    );
+    if (subrinaData && Array.isArray(subrinaData)) {
+      this.mapSubrinaAnswers(verificationFields, subrinaData);
+    }
+    this.logger.log(subrinaData);
+
     this.logger.log('Extracted verification appointmentId:', appointmentId);
     this.logger.log('Extracted verificationfields:::: {}', verificationFields);
     return {
