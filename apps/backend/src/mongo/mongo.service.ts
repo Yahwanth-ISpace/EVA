@@ -158,8 +158,8 @@ export class MongoService implements OnModuleDestroy {
 
       // Insert new document
       const result = await col.insertOne({
-        subrinaData,
-        savedAt: new Date(),
+        ...subrinaData,
+        createdOn: new Date(),
       });
 
       this.logger.log(
