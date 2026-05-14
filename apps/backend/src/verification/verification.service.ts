@@ -699,8 +699,8 @@ export class VerificationService {
     }
 
     const setSubrinaAnswer = (
-      target: Record<string, unknown>,
-      targetQuestion: unknown,
+      target: Record<string, any>,
+      targetQuestion: any,
       isHistory,
     ) => {
       if (typeof targetQuestion !== 'string') return false;
@@ -727,14 +727,14 @@ export class VerificationService {
       if (!value || typeof value !== 'object' || Array.isArray(value)) {
         continue;
       }
-      const nested = value as Record<string, unknown>;
+      const nested = value as Record<string, any>;
       setSubrinaAnswer(nested, nested.question, false);
     }
 
     const history = Array.isArray(doc.history) ? doc.history : [];
     for (const item of history) {
       if (!item || typeof item !== 'object') continue;
-      const historyItem = item as Record<string, unknown>;
+      const historyItem = item as Record<string, any>;
       historyItem.history = [];
       setSubrinaAnswer(historyItem, historyItem.question, true);
     }
