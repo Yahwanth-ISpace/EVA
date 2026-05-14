@@ -64,8 +64,7 @@ export class TwilioService {
   }
 
   /**
-   * Redirect an in-progress call to a new TwiML URL (e.g. to send DTMF then let IVR continue).
-   * Used by IVR bypass: when we hear "customer agent", redirect to /twilio/play-dtmf-4 to send digit 4.
+   * Redirect an in-progress call to a new TwiML URL (e.g. TPA IVR DTMF then reconnect stream).
    */
   async redirectCall(callSid: string, twimlUrl: string): Promise<void> {
     if (!callSid?.trim() || !twimlUrl?.trim()) return;
@@ -84,35 +83,6 @@ export class TwilioService {
     const base = backendBaseUrl.replace(/\/+$/, '');
     const holdUrl = `${base}/twilio/hold-music`;
     await client.calls(callSid).update({ url: holdUrl, method: 'POST' });
-  }
-
-  /**
-   * Start an outbound call from EVA's number to the IVR number and connect to the media stream
-   * in ivr-bypass mode (listen for "customer agent", then send DTMF 4).
-   * Uses TWILIO_IVR_PHONE_NUMBER or optional `to` override.
-   */
-  async callIvrAndBypass(to?: string) {
-    const ivrNumber = (to || process.env.TWILIO_IVR_PHONE_NUMBER || '').trim();
-    if (!ivrNumber) {
-      throw new Error(
-        'TWILIO_IVR_PHONE_NUMBER environment variable is not set (or pass `to` in the request body).',
-      );
-    }
-    if (!fromNumber) {
-      throw new Error('TWILIO_PHONE_NUMBER environment variable is not set.');
-    }
-    if (!backendBaseUrl) {
-      throw new Error('BACKEND_URL environment variable is not set.');
-    }
-    const connectUrl = `${backendBaseUrl}/twilio/outbound-ivr-connect`;
-    const call = await client.calls.create({
-      to: ivrNumber,
-      from: fromNumber,
-      url: connectUrl,
-      method: 'POST',
-    });
-
-    return call;
   }
 
   /**

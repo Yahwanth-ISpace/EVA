@@ -34,16 +34,6 @@ export class TwilioInitiateCallDto {
   navigateTpaIvr?: boolean;
 }
 
-/** Body for `POST /twilio/call-ivr-and-bypass`. */
-export class TwilioCallIvrDto {
-  @ApiPropertyOptional({
-    example: '+15559876543',
-    description: 'Override IVR destination; defaults to `TWILIO_IVR_PHONE_NUMBER`.',
-  })
-  to?: string;
-}
-
-/** Shared: Twilio Call SID for REST call control (hold, hang up, etc.). */
 export class TwilioCallSidDto {
   @ApiProperty({
     example: 'CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',

@@ -43,12 +43,9 @@ Do **not** put the IVR account’s auth token in the backend; the IVR account is
 
 When EVA (or anyone) calls +15158825548, this IVR account will request your backend and get the IVR menu (Press 1–4). After we send DTMF 4, the IVR returns option 4 TwiML (hold 10s, dial `IVR_AGENT_PHONE_NUMBER`).
 
-### How to trigger the flow
+### How to trigger the TPA IVR navigation flow
 
-- **POST** `https://YOUR_BACKEND_URL/twilio/call-ivr-and-bypass`  
-  (optional body: `{ "to": "+15158825548" }` if you want to override the IVR number).
-
-The backend will place an outbound call from **+14847598215** to **+15158825548**, listen via STT for “customer agent”, send 4, and the IVR will redirect to the customer agent number.
+Use **`POST /twilio/call`** with **`navigateTpaIvr: true`** (see `TwilioInitiateCallDto`). That connects the outbound call to the media stream with **`mode=tpa-ivr`**, which runs the scripted payer IVR phase (listen → speech answers for provider / eligibility / representative → DTMF for member ID and DOB → silence through routing/survey → handoff when a live agent is detected).
 
 ---
 
@@ -88,11 +85,11 @@ Set these in `apps/backend/.env` (or your deployment environment).
 - If **neither** is set, the backend uses the default **+919515663123** (9515663123 with India +91).
 - To use a different number (e.g. US), set `IVR_AGENT_PHONE_NUMBER=+1XXXXXXXXXX`.
 
-### EVA calls IVR and bypasses to customer agent (option 4)
+### EVA outbound to a payer IVR (TPA navigation)
 
 | Variable | Description | Example |
 |----------|-------------|--------|
-| `TWILIO_IVR_PHONE_NUMBER` | The **IVR number** that EVA (your Twilio account) will **call**. When EVA calls this number, the backend streams the call audio, uses **ElevenLabs STT with Whisper fallback** to transcribe the IVR menu, and when it hears “customer agent” (or “press 4 to talk”), it sends **DTMF 4** so the IVR runs option 4 (10s hold, then dial 9515663123). | `+15551234567` (the number that has the IVR on the other account) |
+| `TWILIO_IVR_PHONE_NUMBER` | The **IVR number** that EVA will **call** for payer verification when you use TPA IVR navigation. The media stream runs **`mode=tpa-ivr`**, which follows the scripted payer prompts (speech + DTMF for member ID / DOB) until a live agent is detected. | `+15551234567` |
 
 ### Optional
 
@@ -202,18 +199,11 @@ After this, calling **either** Twilio number will play the IVR; pressing **4** w
 
 ---
 
-## 6. EVA calls IVR and bypasses to customer agent
+## 6. EVA navigates payer IVR (`mode=tpa-ivr`)
 
-Use this when **EVA’s Twilio account** should **call the IVR number** (e.g. the other account’s number), have the backend **listen** to the IVR menu via the media stream, and **automatically press 4** when it hears “customer agent” (using ElevenLabs STT with Whisper fallback). The IVR then runs option 4 (10s hold, dial to 9515663123).
+Use this when EVA should **call the payer/TPA IVR** and the backend should **listen with STT**, respond with **scripted speech** (e.g. “Yes”, “Eligibility Benefits”, “Representative”), send **DTMF** for member ID and date of birth from appointment context, stay **silent** through recording disclaimers and hold/survey prompts, then **hand off to normal EVA** once a live agent is detected.
 
-1. **Set** `TWILIO_IVR_PHONE_NUMBER` to the IVR number (E.164). This is the number that plays the IVR menu (e.g. the number on your second Twilio account).
-2. **Trigger the call** from your app by calling:
-   - `POST {{BACKEND_URL}}/twilio/call-ivr-and-bypass`
-   - Optional body: `{ "to": "+1..." }` to override the IVR number for that request.
-3. **Flow:**
-   - EVA’s Twilio places an outbound call to `TWILIO_IVR_PHONE_NUMBER`.
-   - The call is connected to the media stream with `mode=ivr-bypass`.
-   - The backend receives the IVR’s audio, runs **ElevenLabs STT** (with **Whisper fallback** if needed) on chunks every ~2.5 s.
-   - When the transcript contains **“customer agent”**, **“press 4 to talk”**, **“talk to our customer agent”**, or **“option 4”**, the backend **redirects the call** to `{{BACKEND_URL}}/twilio/play-dtmf-4`, which returns TwiML `<Play digits="4"/>`.
-   - The IVR receives DTMF 4, runs option 4: “Please hold”, 10s pause, then dials 9515663123 (or your agent number).
-   - The call is then connected to the customer agent.
+1. Set **`EVA_NAVIGATE_TPA_IVR=true`** (or pass **`navigateTpaIvr: true`** on `POST /twilio/call`) so outbound verification calls include **`mode=tpa-ivr`** on the media stream URL.
+2. The stream uses the same **`patientId`** / **`appointmentId`** as the main EVA call so member ID and DOB can be sent as keypad tones when prompted.
+
+The legacy **`ivr-bypass`** path (press-4 / “customer agent” only), **`POST /twilio/call-ivr-and-bypass`**, **`/twilio/outbound-ivr-connect`**, **`/twilio/ivr-bypass-dtmf`**, and **`/twilio/play-dtmf-4`** have been **removed** from the backend in favor of this single TPA IVR script.
