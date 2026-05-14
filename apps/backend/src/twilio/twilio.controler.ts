@@ -21,7 +21,6 @@ import { Response } from 'express';
 import { TwilioService } from './twilio.service';
 import { ElevenLabsService } from '../voice/elevenlabs.service';
 import {
-  TwilioCallIvrDto,
   TwilioEndCallDto,
   TwilioInitiateCallDto,
   TwilioPutOnHoldDto,
@@ -263,87 +262,6 @@ export class TwilioController {
   }
 
   /**
-   * TwiML for outbound IVR-bypass call: connect the call to the media stream in ivr-bypass mode.
-   * EVA's Twilio calls the IVR number with this as the initial URL; we return <Connect><Stream url="...?mode=ivr-bypass"/>.
-   */
-  @Get('outbound-ivr-connect')
-  @Post('outbound-ivr-connect')
-  @ApiOperation({
-    summary: 'IVR-bypass stream (TwiML)',
-    description: 'Media stream with `mode=ivr-bypass` for STT-driven DTMF 4 flow.',
-  })
-  @ApiProduces('text/xml')
-  outboundIvrConnect(@Res() res: Response) {
-    const streamUrl = getStreamBaseUrl() + '/twilio/media-stream?mode=ivr-bypass';
-    res.type('text/xml').send(`
-      <Response>
-        <Connect>
-          <Stream url="${escapeXmlAttr(streamUrl)}" />
-        </Connect>
-      </Response>
-    `);
-  }
-
-  /**
-   * TwiML that sends DTMF 4 into the call (used when IVR bypass detects "customer agent").
-   * Twilio redirects the call here; we return <Play digits="4"/> so the IVR receives 4 and runs option 4 (hold 10s, dial agent).
-   */
-  @Get('play-dtmf-4')
-  @Post('play-dtmf-4')
-  @ApiOperation({ summary: 'Send DTMF digit 4 (TwiML)' })
-  @ApiProduces('text/xml')
-  playDtmf4(@Res() res: Response) {
-    res.type('text/xml').send(
-      '<Response><Play digits="4"/></Response>',
-    );
-  }
-
-  /**
-   * Play DTMF digits into an in-progress IVR-bypass call, then reconnect the media stream
-   * in ivr-bypass mode so phase 1 can continue until a live agent is reached.
-   * Query: `digits` (Twilio: 0-9, w/W pauses, # *), optional `patientId` or legacy `payeeId`, optional `appointmentId`.
-   */
-  @Get('ivr-bypass-dtmf')
-  @Post('ivr-bypass-dtmf')
-  @ApiOperation({
-    summary: 'Send DTMF then reconnect IVR bypass stream',
-    description:
-      'Returns TwiML `<Play digits/><Connect><Stream...mode=ivr-bypass/></Connect>`.',
-  })
-  @ApiProduces('text/xml')
-  ivrBypassDtmf(
-    @Query('digits') digits: string,
-    @Query('patientId') patientId: string,
-    @Query('payeeId') payeeId: string,
-    @Query('appointmentId') appointmentId: string,
-    @Res() res: Response,
-  ) {
-    const raw = (digits || '').trim();
-    if (!raw || !/^[\d#*wW]+$/.test(raw)) {
-      throw new BadRequestException(
-        'Query `digits` is required and must contain only 0-9, #, *, w, W.',
-      );
-    }
-    const pid = (patientId || payeeId || '').trim();
-    const q = new URLSearchParams({ mode: 'ivr-bypass' });
-    if (pid) {
-      q.set('patientId', pid);
-      q.set('payeeId', pid);
-    }
-    if (appointmentId?.trim()) q.set('appointmentId', appointmentId.trim());
-    const streamUrl = `${getStreamBaseUrl()}/twilio/media-stream?${q.toString()}`;
-
-    res.type('text/xml').send(`
-      <Response>
-        <Play digits="${escapeXmlAttr(raw)}" />
-        <Connect>
-          <Stream url="${escapeXmlAttr(streamUrl)}" />
-        </Connect>
-      </Response>
-    `);
-  }
-
-  /**
    * Play DTMF digits into an in-progress call, then reconnect the media stream for TPA IVR navigation.
    * Query: `digits` (Twilio: 0-9, w/W pauses, # *), `patientId` or legacy `payeeId`, optional `appointmentId`.
    */
@@ -392,20 +310,6 @@ export class TwilioController {
         </Connect>
       </Response>
     `);
-  }
-
-  /**
-   * Start outbound call from EVA's number to the IVR number; stream runs in ivr-bypass mode (STT listens for "customer agent", then sends 4).
-   * Body optional: { "to": "+1..." } to override TWILIO_IVR_PHONE_NUMBER.
-   */
-  @Post('call-ivr-and-bypass')
-  @ApiOperation({
-    summary: 'Start outbound call to IVR in bypass mode',
-    description: 'JSON body optional `{ "to": "+1..." }`; defaults to `TWILIO_IVR_PHONE_NUMBER`.',
-  })
-  @ApiBody({ type: TwilioCallIvrDto })
-  async callIvrAndBypass(@Body() body: TwilioCallIvrDto) {
-    return this.twilioService.callIvrAndBypass(body?.to);
   }
 
   /**

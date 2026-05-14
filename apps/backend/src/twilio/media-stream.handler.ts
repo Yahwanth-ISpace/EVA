@@ -1,15 +1,16 @@
 /**
- * Media stream handler for EVA voice calls (Twilio bidirectional stream).
- * Handled edge cases: processing during greeting (lastSpeakTime), transcription failure (fallback TTS),
- * inaudible-like transcripts ([inaudible], ...), empty/generic AI reply (re-ask lastAskedField),
- * end-call only when all four fields collected (never end with missing fields).
- * On any failure we ask the user to repeat only the current field; we never go back or re-ask earlier questions.
+ * Media stream handler — Twilio WebSocket orchestration for EVA (STT → LLM → TTS, verification, IVR modes).
  *
- * TURN-TAKING (clear flow: EVA asks → wait for user to finish → process → respond):
- * - We only process when we detect clear end-of-speech (silence at end of buffer) or buffer is full (long monologue).
- * - Silence and fallback are tuned so we do NOT process mid-sentence: longer silence tail, stricter ratio,
- *   and fallback interval long enough that we don't fire every few seconds and interrupt the user.
- * - ANSWER_WINDOW_MS ensures we never process audio from right after EVA spoke (avoids echo / double response).
+ * Supporting modules live in this folder, grouped by concern:
+ * - `constants.ts` — buffer/timing tunables and fixed phrases (`CONVERSATION_GREETING`, hold/resume lines, …)
+ * - `speech.ts` — mulaw silence / end-of-turn detection and `streamModeUsesIvrTiming`
+ * - `tpa-ivr.ts` — payer IVR phrase detection and DTMF builders
+ * - `guardrails.ts` — user/EVA intent, identity Q&A, benefit heuristics, recall/hold/resume
+ * - `stream-state.ts` — `StreamState`, `TpaIvrRuntimeState`, `PatientInfo`
+ * - `static-context.ts` — fallback patient + `PatientCallContext` for inbound/demo
+ * - `call-context-sync.ts` — map appointment `verificationSteps` → `fieldQuestionByKey`
+ * - `field-order-load.ts` — lazy-load ordered fields + questions (Mongo vs Prisma)
+ * - `logging.ts` — log line truncation
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { spawnSync } from 'child_process';
@@ -32,1009 +33,71 @@ import {
   type TpaEmotionCategory,
 } from '../audio-emotion/audio-emotion.service';
 import { getFfmpegErrorMessage } from '../voice/ffmpeg-check';
-
-/** Minimum speech bytes before we consider processing (~0.6 sec at 8kHz mulaw). Low enough to feel snappy but still rejects noise blips. */
-const MIN_SPEECH_BYTES = 4_800;
-/** Tail bytes to check for silence (~0.35 sec). Short enough that EVA replies almost immediately after the user finishes. */
-const SILENCE_TAIL_BYTES = 2_800;
-/** When transcript is empty, only say "please repeat" if we had at least this much audio (~4 sec). Otherwise skip speaking to avoid cutting off the user. */
-const MIN_BYTES_BEFORE_REPEAT = 32_000;
-/** Fraction of tail bytes that must be "silent" to trigger end-of-speech (0–1). 0.78 balances fast turn-end vs. not cutting on brief mid-sentence breaths. */
-const SILENCE_RATIO_THRESHOLD = 0.78;
-/** Max buffer before we process anyway (~10 sec). Long monologues get processed so we don't wait forever. */
-const MAX_BUFFER_BYTES = 80_000;
-/** Fallback: process at most every N ms when silence not detected. Tightened (2.5s) so an un-detected end-of-turn is caught quickly rather than waiting 5.5s. */
-const FALLBACK_PROCESS_INTERVAL_MS = 2_500;
-/** Minimum ms to wait after EVA speaks before we process user audio (avoid capturing EVA's voice and instant double-response). Kept short so barge-in feels natural. */
-const ANSWER_WINDOW_MS = 900;
-/** Max time allowed on hold before ending the call (9 minutes) */
-const HOLD_MAX_MS = 9 * 60 * 1000;
-/** Chunk size to send back to Twilio (20ms = 160 bytes at 8kHz mulaw). Smaller chunks = playback starts faster. */
-const OUTBOUND_CHUNK_BYTES = 160;
-
-/** After this many consecutive noise / empty / inaudible turns, skip LLM and use a fixed English line. */
-const MAX_NOISE_TURNS_BEFORE_SKIP_LLM = 5;
-/** After this many, apologize and end the call (audio unusable). */
-const MAX_NOISE_TURNS_BEFORE_ABORT_CALL = 12;
-
-/** IVR bypass: process audio every N ms to detect "customer agent" quickly (ElevenLabs STT + Whisper fallback). */
-const IVR_BYPASS_FALLBACK_MS = 2500;
-/** IVR bypass: minimum audio bytes before running STT (~0.5 s). */
-const IVR_BYPASS_MIN_BYTES = 4_000;
-
-/** If no IVR start phrase is detected, begin scripted matching after this many ms. */
-const TPA_IVR_FORCE_START_MS = Number(
-  process.env.TPA_IVR_FORCE_START_MS || 28000,
-);
-/** After English recording disclaimer, auto-skip waiting for Spanish if not heard (ms). */
-const TPA_IVR_SPANISH_WAIT_MS = Number(
-  process.env.TPA_IVR_SPANISH_WAIT_MS || 16000,
-);
-
-function streamModeUsesIvrTiming(m: 'eva' | 'ivr-bypass' | 'tpa-ivr'): boolean {
-  return m === 'ivr-bypass' || m === 'tpa-ivr';
-}
-
-/** Member ID for keypad: digits only; optional `TPA_IVR_MEMBER_SUFFIX` (e.g. `#`). */
-function buildMemberIdDtmf(memberId: string | null | undefined): string {
-  const digits = (memberId || '').replace(/\D/g, '');
-  const suffix = (process.env.TPA_IVR_MEMBER_SUFFIX || '').trim();
-  return digits + suffix;
-}
-
-/** DOB as MMDDYYYY for US payer keypads. Optional `TPA_IVR_DOB_SUFFIX`. */
-function buildDobDtmf(dob: Date | null | undefined): string | null {
-  if (!dob || !Number.isFinite(dob.getTime())) return null;
-  const m = dob.getMonth() + 1;
-  const day = dob.getDate();
-  const y = dob.getFullYear();
-  const core = `${String(m).padStart(2, '0')}${String(day).padStart(2, '0')}${y}`;
-  const suffix = (process.env.TPA_IVR_DOB_SUFFIX || '').trim();
-  return core + suffix;
-}
-
-/** Provider tax ID / TIN for keypad (digits only). Optional `TPA_IVR_TAX_ID_SUFFIX`. */
-function buildTaxIdDtmf(taxId: string | null | undefined): string {
-  const digits = (taxId || '').replace(/\D/g, '');
-  const suffix = (process.env.TPA_IVR_TAX_ID_SUFFIX || '').trim();
-  return digits + suffix;
-}
-
-/** First IVR audio (menus, recording notice, language choice). */
-function tpaIvrSoundsLikeIvrStart(t: string): boolean {
-  const s = t.toLowerCase();
-  if (s.length < 12) return false;
-  return (
-    /this call (may be|will be|is being) (recorded|monitored)/.test(s) ||
-    /recorded (or|and) monitored|quality assurance|training purposes/.test(s) ||
-    /for english|for spanish|para español|presione|press\s*[12]/.test(s) ||
-    /welcome to|thank you for calling/.test(s)
-  );
-}
-
-function tpaIvrSoundsLikeEnglishRecordingDisclaimer(t: string): boolean {
-  const s = t.toLowerCase();
-  return (
-    /this call (may be|will be|is) (recorded|monitored)/.test(s) ||
-    /recorded for quality|monitor(ed)? or record(ed)?|training and quality/.test(
-      s,
-    )
-  );
-}
-
-function tpaIvrSoundsLikeSpanishRecordingDisclaimer(t: string): boolean {
-  const s = t.toLowerCase();
-  return (
-    (/español|espanol|ser[aá]\s+grabad|esta llamada|grabaci[oó]n/.test(s) &&
-      /(llamada|ser[aá]|grabad|calidad)/.test(s)) ||
-    /esta llamada.*grab/.test(s)
-  );
-}
-
-function tpaIvrSoundsLikeBenefitSummaryOrDetailPrompt(t: string): boolean {
-  const s = t.toLowerCase();
-  if (s.length < 20) return false;
-  return (
-    /brief\s+benefits?\s+summary|detail\s+facts?|benefits?\s+summary\s+or\s+detail/.test(
-      s,
-    ) ||
-    (/would you like\b/.test(s) &&
-      /brief/.test(s) &&
-      (/detail|summary/.test(s) || /representative/.test(s)))
-  );
-}
-
-function tpaIvrSoundsLikeTaxIdPrompt(t: string): boolean {
-  const s = t.toLowerCase();
-  return (
-    /tax\s*(id|identification)|\btin\b|federal\s*(tax\s*)?id|employer\s*(id|identification)|\be\.?i\.?n\.?\b|enter.*tax/.test(
-      s,
-    ) && !/member\s*(id|number)/.test(s)
-  );
-}
-
-function tpaIvrSoundsLikePullUpAccountRouting(t: string): boolean {
-  const s = t.toLowerCase();
-  return (
-    /thank you.*one moment.*pull\s+up|pull\s+up (the|your) account|while i pull up (the|your) account/.test(
-      s,
-    ) || /one moment.*pull up/.test(s)
-  );
-}
-
-function tpaIvrSoundsLikeAgentOnlineRouting(t: string): boolean {
-  const s = t.toLowerCase();
-  return (
-    /one moment.*get.*agent|get the agent online|agent online to help|connect you to (a\s+)?(live\s+)?agent/.test(
-      s,
-    ) || /representative will be with you/.test(s)
-  );
-}
-
-function tpaIvrSoundsLikeSurveyStayOnLine(t: string): boolean {
-  const s = t.toLowerCase();
-  return (
-    /survey/.test(s) &&
-    (/stay on the line|your experience is important|rate your experience|take the survey/.test(
-      s,
-    ) ||
-      /wait on the call.*survey/.test(s))
-  );
-}
-
-/** Part 2 handoff: live TPA intro (e.g. “calling Dental …, my name is …, how can I help you today”). */
-function tpaIvrSoundsLikeDentalTpaLiveIntro(t: string): boolean {
-  const s = t.toLowerCase();
-  if (s.length < 25) return false;
-  const dental =
-    /calling\s+(dental|the dental)/.test(s) ||
-    /\bdental\s+(clinic|office|plan|clawn|lawn)\b/.test(s);
-  const named =
-    /\bmy name is\b/.test(s) ||
-    /\bthis is\b.{0,30}\b(from|with)\b/.test(s) ||
-    /\b(i am|i'm)\b.{0,20}\b(from|with)\b/.test(s);
-  const offersHelp = /how can i help you( today)?\??/i.test(s);
-  return dental && named && offersHelp;
-}
-
-function tpaIvrSoundsLikeProviderQuestion(t: string): boolean {
-  const s = t.toLowerCase();
-  return (
-    /health care provider|healthcare provider/.test(s) &&
-    /are you|calling from|provider/.test(s)
-  );
-}
-
-function tpaIvrSoundsLikeReasonPrompt(t: string): boolean {
-  const s = t.toLowerCase();
-  if (s.length < 10) return false;
-  if (tpaIvrSoundsLikeBenefitSummaryOrDetailPrompt(t)) return false;
-  return (
-    /what can i help you( with)?( today)?\?*/.test(s) ||
-    /what can i do for you( today)?\?*/.test(s) ||
-    /how can i help you( today)?\?*/.test(s) ||
-    /how may i (direct|assist|help) you( today)?\?*/.test(s)
-  );
-}
-
-function tpaIvrSoundsLikeMemberIdPrompt(t: string): boolean {
-  const s = t.toLowerCase();
-  return (
-    /member\s*(id|i\.?\s*d\.?|number|#)|subscriber\s*(id|number)|identification number|enter.*(your\s*)?(id|member)/.test(
-      s,
-    ) && !/date of birth|dob|birthday/.test(s)
-  );
-}
-
-function tpaIvrSoundsLikeDobPrompt(t: string): boolean {
-  const s = t.toLowerCase();
-  return (
-    /date of birth|birth\s*date|enter.*dob|your birthday|month.*day.*year/.test(
-      s,
-    ) && !/member\s*id/.test(s)
-  );
-}
-
-function tpaIvrSoundsLikeLiveAgent(t: string): boolean {
-  const s = t.trim();
-  if (s.length < 10 || s.length > 500) return false;
-  if (tpaIvrSoundsLikeDentalTpaLiveIntro(s)) return true;
-  if (
-    /for english|for spanish|press \d|say or press|enter your \d|this call may be recorded/i.test(
-      s,
-    )
-  ) {
-    return false;
-  }
-  const selfIntro =
-    (/\b(hi|hello|good (morning|afternoon|evening))\b/i.test(s) &&
-      /\b(i'?m|my name is|this is|speaking)\b/i.test(s)) ||
-    /\b(this is)\b.{0,40}\b(from|with)\b/i.test(s) ||
-    /\bmy name is\b/i.test(s);
-  const holdReturnWithAssist =
-    /\b(thank you for holding|thanks for holding|appreciate your patience)\b/i.test(
-      s,
-    ) && /\b(how can i help|how may i help|how can i assist)\b/i.test(s);
-  return selfIntro || holdReturnWithAssist;
-}
-
-function normalizeIvrDigitToken(token: string): string | null {
-  const t = token.trim().toLowerCase();
-  if (/^\d$/.test(t)) return t;
-  if (t === 'zero') return '0';
-  if (t === 'one') return '1';
-  if (t === 'two') return '2';
-  if (t === 'three') return '3';
-  if (t === 'four') return '4';
-  if (t === 'five') return '5';
-  if (t === 'six') return '6';
-  if (t === 'seven') return '7';
-  if (t === 'eight') return '8';
-  if (t === 'nine') return '9';
-  if (t === 'star') return '*';
-  if (t === 'pound' || t === 'hash') return '#';
-  return null;
-}
-
-function extractAgentRouteDigitFromIvrPrompt(t: string): string | null {
-  const s = t.trim();
-  if (!s) return null;
-  const digitToken =
-    '(?:\\d|zero|one|two|three|four|five|six|seven|eight|nine|star|pound|hash)';
-  const agentTarget =
-    '(?:live\\s+agent|representative|customer\\s+agent|customer\\s+service|customer\\s+support|agent\\s+support|support|operator)';
-
-  const pressForAgent = new RegExp(
-    `\\b(?:press|dial|select|choose|enter)\\s+(${digitToken})\\b[^.?!]{0,90}\\b(?:for|to)\\b[^.?!]{0,70}\\b(?:a\\s+)?${agentTarget}\\b`,
-    'i',
-  );
-  const agentThenPress = new RegExp(
-    `\\b(?:a\\s+)?${agentTarget}\\b[^.?!]{0,90}\\b(?:press|dial|select|choose|enter)\\s+(${digitToken})\\b`,
-    'i',
-  );
-
-  const m = pressForAgent.exec(s) || agentThenPress.exec(s);
-  if (!m?.[1]) return null;
-  return normalizeIvrDigitToken(m[1]);
-}
-
-/** Mulaw: 0xFF (positive silence) and 0x7F (negative silence) are the two silence poles; treat nearby codes as silent too so we detect end-of-speech reliably. */
-function isSilentByte(b: number): boolean {
-  // Positive-silence neighborhood (0xFD..0xFF) and negative-silence neighborhood (0x7D..0x7F, 0xFE).
-  return (
-    b === 0xff ||
-    b === 0xfe ||
-    b === 0xfd ||
-    b === 0x7f ||
-    b === 0x7e ||
-    b === 0x7d
-  );
-}
-
-/** Check if the last SILENCE_TAIL_BYTES of buffer are mostly silence */
-function isSilenceAtEnd(buffer: Buffer): boolean {
-  if (buffer.length < SILENCE_TAIL_BYTES) return false;
-  const tail = buffer.subarray(buffer.length - SILENCE_TAIL_BYTES);
-  let silent = 0;
-  for (let i = 0; i < tail.length; i++) {
-    if (isSilentByte(tail[i])) silent++;
-  }
-  return silent / tail.length >= SILENCE_RATIO_THRESHOLD;
-}
-
-/** Collapse whitespace and cap length for log lines. */
-function truncateForLogLine(s: string, maxLen: number): string {
-  const t = s.replace(/\s+/g, ' ').trim();
-  if (!t.length) return '';
-  if (t.length <= maxLen) return t;
-  return `${t.slice(0, Math.max(0, maxLen - 1))}…`;
-}
-
-/** First thing EVA says: natural, human intro. Do not ask for any field — wait for the user to respond. */
-const CONVERSATION_GREETING =
-  "Hi, I'm Reena from Went Dentals. How are you doing?";
-
-/** One sentence, same intent — rotate so we never sound canned when TPA asks purpose (fallback if LLM mis-hears). */
-const PURPOSE_OF_CALL_LINE_VARIANTS = [
-  'I need a few benefit details for a patient.',
-  "I'm calling to collect insurance benefit information for one of our patients.",
-  'Our office needs to verify a few benefit details for a patient.',
-  "I'm reaching out to confirm coverage and related benefit information for a patient.",
-  'I need to verify some benefit items for a patient we have on file.',
-  "I'm following up to get benefit details we need for a patient's visit.",
-  'The call is about gathering benefit verification for a patient appointment.',
-] as const;
-
-function pickPurposeOfCallPhrase(): string {
-  const i = Math.floor(Math.random() * PURPOSE_OF_CALL_LINE_VARIANTS.length);
-  return PURPOSE_OF_CALL_LINE_VARIANTS[i] ?? PURPOSE_OF_CALL_LINE_VARIANTS[0];
-}
-
-/** TPA asks why we are calling / purpose / what they can help with in that sense. */
-function userAsksPurposeOfCallOrOpening(userSaid: string): boolean {
-  const t = userSaid.trim().toLowerCase();
-  if (t.length < 3) return false;
-  return (
-    /how can i help|how may i help|what can i do for you|how can i (direct|assist)|need help with/i.test(
-      t,
-    ) ||
-    /why are you calling|purpose of (this|your|the)?\s*call|reason for (this|your)?\s*call/i.test(
-      t,
-    ) ||
-    /what (is this|do you need) (call )?regarding|what'?s this (call )?about/i.test(
-      t,
-    ) ||
-    /what (kind of )?information do you need|what details (are you|do you) (looking|calling) for/i.test(
-      t,
-    )
-  );
-}
-
-const EVA_HOLD_ACK = "Sure, I'll hold. Take your time.";
-/** After they say "thanks for waiting", "are you there" etc. — acknowledge only; do not re-ask the question yet. */
-const EVA_RESUME_ACK =
-  "No problem, thank you for getting back. I'm on the call.";
-
-/** Duration (ms) to stay on the line after saying goodbye (in case user responds); then hang up if no input */
-const POST_GOODBYE_LISTEN_MS = 10_000;
-
-/** Detect if user is saying thank you / no more questions / goodbye / confirmation (used in post-goodbye phase). End call when they say e.g. "yeah I'm good", "yes thank you". */
-function isThankYouOrGoodbye(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  if (!t || t.length < 2) return false;
-  return (
-    /^(thank you|thanks|thank you so much|thanks a lot)/i.test(t) ||
-    /^(yes|yeah|yep),?\s*(thank you|thanks)/i.test(t) ||
-    /^(thank you|thanks),?\s*(yes|yeah)?/i.test(t) ||
-    /^(yeah,?\s*)?(thank you|thanks)(\.?\s*)$/i.test(t) ||
-    /^(no,?\s*)?(that'?s\s+all|nothing else|we'?re\s+done|goodbye|bye)$/i.test(
-      t,
-    ) ||
-    /^(that'?s\s+all|nothing else|we'?re\s+done|goodbye|bye)(\s|$)/i.test(t) ||
-    /goodbye|that'?s\s+all\s*\.?\s*$/i.test(t) ||
-    /^(yes|yeah|yep|i'?m\s+all\s+set|we'?re\s+good|that'?s\s+it|all\s+good)$/i.test(
-      t,
-    ) ||
-    /^(yeah,?\s*)?(i'?m\s+good|we'?re\s+good)(\.?\s*)$/i.test(t) ||
-    /(i'?m\s+good|we'?re\s+good|that'?s\s+it)(\.?\s*)$/i.test(t)
-  );
-}
-
-/** First missing field in order (uses orderedFields or default four). */
-function getFirstMissingField(
-  data: Record<string, string | null>,
-  orderedFields: string[],
-): string | null {
-  const has = (v: string | null) => v != null && String(v).trim().length > 0;
-  const fields = orderedFields.length
-    ? orderedFields
-    : ['coverage', 'deductible', 'copay', 'validity'];
-  for (const f of fields) {
-    if (!has(data[f] ?? null)) return f;
-  }
-  return null;
-}
-
-/** When we couldn't hear or had an error: only ask to repeat; do not mention the field. */
-function getRepeatOnlyPrompt(): string {
-  const options = [
-    'Can you please repeat that?',
-    'Can you say that once again?',
-  ];
-  return options[Math.floor(Math.random() * options.length)];
-}
-
-/** Exact benefit question for `field` from appointment payload (`fieldQuestionByKey`) or legacy default. */
-function verbatimBenefitQuestion(
-  field: string,
-  fieldQuestionByKey: Record<string, string>,
-): string {
-  const q = fieldQuestionByKey[field]?.trim();
-  if (q) return q;
-  const legacy: Record<string, string> = {
-    coverage: 'What is the basic coverage?',
-    deductible: 'Can you provide the deductible?',
-    copay: 'What is the copay?',
-    validity: 'What is the validity of the insurance?',
-  };
-  return legacy[field] ?? field;
-}
-
-/** Extract a single value for a benefit field from transcript (e.g. "28 dollars" -> "28 dollars"). Used to correct after-hold when AI puts value in wrong field. */
-function extractValueForField(
-  transcript: string,
-  field: string,
-): string | null {
-  const t = transcript.trim().toLowerCase();
-  const dollarMatch = t.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
-  const percentMatch = t.match(/(\d+)\s*%|(\d+)\s*percent/i);
-  const numberMatch = t.match(/\b(\d+)\b/);
-  if (field === 'validity') {
-    // Validity MUST be a date. If the transcript is a dollar amount or a percentage,
-    // it is clearly NOT a validity answer — return null so we don't pollute the field
-    // with "twenty-four dollars" just because the word "twenty" appeared.
-    if (/dollar|\$|%\s|\s%|\bpercent\b/i.test(t)) return null;
-    // Require an explicit date marker: full month name, abbreviated month, 4-digit year,
-    // "/YY", or a clear recurrence word. Dropped the overly-broad "twenty" and bare
-    // "dec"/"feb" duplicates from the previous regex.
-    const monthRe =
-      /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\b/i;
-    const yearRe = /\b(19|20)\d{2}\b/;
-    const wordRe = /\b(valid|till|until|through|expires?|expiry|thru|to)\b/i;
-    if (monthRe.test(t) || yearRe.test(t) || wordRe.test(t)) {
-      return transcript.trim().replace(/\s+/g, ' ');
-    }
-    return null;
-  }
-  if (dollarMatch) {
-    const num = dollarMatch[1] || dollarMatch[2] || dollarMatch[3];
-    return num ? `${num} dollars` : null;
-  }
-  if (percentMatch && (field === 'copay' || field === 'coverage')) {
-    const num = percentMatch[1] || percentMatch[2];
-    return num ? `${num} percent` : null;
-  }
-  if (numberMatch) {
-    const num = numberMatch[1];
-    if (field === 'deductible' || field === 'copay') return `${num} dollars`;
-    if (field === 'coverage') return num;
-    return num;
-  }
-  return null;
-}
-
-/** Does the transcript contain an unambiguous dollar amount? Used to skip the
- *  "reassign to validity" rescue when the user clearly gave a money value. */
-function transcriptIsMoney(transcript: string): boolean {
-  const t = transcript.trim().toLowerCase();
-  return /\$\s*\d+|\d+\s*dollars?|\bdollars?\b/.test(t);
-}
-
-/** Does the transcript look like a date/validity answer (month name, 4-digit year, "till", etc.)? */
-function transcriptIsDate(transcript: string): boolean {
-  const t = transcript.trim().toLowerCase();
-  if (/dollar|\$|%\s|\s%|\bpercent\b/i.test(t)) return false;
-  return (
-    /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\b/i.test(
-      t,
-    ) ||
-    /\b(19|20)\d{2}\b/.test(t) ||
-    /\b(valid|till|until|through|thru|expires?|expiry)\b/i.test(t)
-  );
-}
-
-/** True if transcript looks like it contains a number, dollar amount, or percent (user may be giving a value). */
-function transcriptHasValue(transcript: string): boolean {
-  return /\d+|dollar|percent|%\s*\$/.test(transcript);
-}
-
-/**
- * True if the reply is the intro/purpose phrase we only say once.
- * Catches all common variants the LLM produces: "I'm calling to verify / get / collect / confirm
- * ... patient / benefit / coverage details / information", "I need some benefit details",
- * "here to verify ...", "reaching out to confirm ...", etc. Keep this broad — any false
- * positive just gets swapped for an identity/next-field answer, which is always acceptable
- * once purpose has already been stated in the call.
- */
-function isIntroPurposePhrase(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  if (!t) return false;
-  // "calling / here / reaching out ... to (verify|get|collect|confirm|obtain|gather|check) ... patient|benefit|coverage|details|information"
-  if (
-    /\b(i'?m|i am|we'?re|we are)\s+(calling|here|reaching\s+out|on\s+the\s+(phone|line))\s+(to|for)\s+(verify|get|collect|confirm|obtain|gather|check|follow\s+up|follow-up|look|ask)/i.test(
-      t,
-    )
-  ) {
-    return true;
-  }
-  if (
-    /\bcalling\s+to\s+(verify|get|collect|confirm|obtain|gather|check|follow\s+up|follow-up)\b/i.test(
-      t,
-    )
-  ) {
-    return true;
-  }
-  if (
-    /\bi\s+need\s+(a\s+few|some|to\s+get|to\s+collect|to\s+verify)\s+(benefit|patient|coverage|insurance)\s+(detail|info|information)/i.test(
-      t,
-    )
-  ) {
-    return true;
-  }
-  if (
-    /\b(verify|confirm|collect|gather|get)\s+(a\s+few\s+|some\s+|the\s+)?(benefit|patient|coverage|insurance)\s+(detail|info|information)/i.test(
-      t,
-    )
-  ) {
-    return true;
-  }
-  if (/\b(i'?m|i am)\s+here\s+to\s+verify\b/i.test(t)) return true;
-  if (/\bi\s+want\s+to\s+verify\s+(the\s+)?patient\b/i.test(t)) return true;
-  if (
-    /\bto\s+(verify|confirm|check)\s+(the\s+)?patient'?s?\s+(benefit|coverage|insurance|eligibility)/i.test(
-      t,
-    )
-  )
-    return true;
-  if (/\bget\s+benefit\s+(detail|info|information)/i.test(t)) return true;
-  if (/\bpurpose\s+of\s+(this|the|my)\s+call\s+is\b/i.test(t)) return true;
-  return false;
-}
-
-/** Which identity/verification item the TPA just asked about, if any.
- *  Used so we can answer directly from `state.callContext` and avoid LLM drift (e.g.
- *  re-emitting the purpose sentence). Returns null when no identity question is detected. */
-type IdentityAsk =
-  | 'provider_npi'
-  | 'billing_npi'
-  | 'tax_id'
-  | 'member_id'
-  | 'patient_dob'
-  | 'patient_first_name'
-  | 'patient_last_name'
-  | 'patient_full_name'
-  | 'provider_name'
-  | 'subscriber_dob'
-  | 'subscriber_first_name'
-  | 'subscriber_last_name'
-  | 'subscriber_full_name'
-  | null;
-
-function detectIdentityAsk(userSaid: string): IdentityAsk {
-  const t = userSaid.trim().toLowerCase();
-  if (t.length < 3) return null;
-  // Tax ID / EIN
-  if (/\b(tax\s*id|tin|ein|tax\s+identification)\b/.test(t)) return 'tax_id';
-  // Billing vs rendering NPI
-  if (/\b(billing\s+(provider\s+)?npi|billing\s+npi)\b/.test(t))
-    return 'billing_npi';
-  if (
-    /\b(provider\s+npi|rendering\s+npi|npi\s+(number|of|for))\b/.test(t) ||
-    /\bwhat(?:'s|\s+is)\s+(the\s+)?npi\b/.test(t) ||
-    /\bnpi\s*\??$/.test(t)
-  ) {
-    return 'provider_npi';
-  }
-  // Member ID
-  if (
-    /\b(member\s*id|member\s+number|subscriber\s*id|policy\s*(number|id)|id\s+number)\b/.test(
-      t,
-    )
-  )
-    return 'member_id';
-  // Subscriber questions (check before patient so "subscriber first name" matches here)
-  if (
-    /\bsubscriber'?s?\s+(date\s+of\s+birth|dob|birthday)\b/.test(t) ||
-    /\bdob\s+(of\s+)?(the\s+)?subscriber\b/.test(t)
-  ) {
-    return 'subscriber_dob';
-  }
-  if (/\bsubscriber'?s?\s+first\s+name\b/.test(t))
-    return 'subscriber_first_name';
-  if (/\bsubscriber'?s?\s+last\s+name\b/.test(t)) return 'subscriber_last_name';
-  if (/\b(subscriber'?s?\s+name|name\s+of\s+(the\s+)?subscriber)\b/.test(t))
-    return 'subscriber_full_name';
-  // Patient / provider
-  if (
-    /\b(patient'?s?\s+(date\s+of\s+birth|dob|birthday)|patient\s+dob)\b/.test(
-      t,
-    ) ||
-    /\b(date\s+of\s+birth|dob|birthday)\b/.test(t)
-  ) {
-    return 'patient_dob';
-  }
-  if (/\bpatient'?s?\s+first\s+name\b/.test(t)) return 'patient_first_name';
-  if (/\bpatient'?s?\s+last\s+name\b/.test(t)) return 'patient_last_name';
-  if (/\b(patient'?s?\s+(full\s+)?name|name\s+of\s+(the\s+)?patient)\b/.test(t))
-    return 'patient_full_name';
-  if (
-    /\b(provider'?s?\s+(full\s+)?name|name\s+of\s+(the\s+)?(provider|doctor|dentist)|treating\s+(provider|doctor|dentist)|rendering\s+(provider|doctor|dentist)|who\s+is\s+(the\s+)?(provider|doctor|dentist))\b/.test(
-      t,
-    )
-  ) {
-    return 'provider_name';
-  }
-  return null;
-}
-
-/** Compose a one-line reply for an identity question directly from cached call context.
- *  Returns null when we don't have the requested field (caller decides what to say).
- *  When this produces a value we use it verbatim and skip the LLM — that is what keeps
- *  EVA fast and on-script, and it is what stops the "I am calling to verify..." drift. */
-function answerIdentityFromContext(
-  ask: NonNullable<IdentityAsk>,
-  ctx: PatientCallContext | null,
-): string | null {
-  if (!ctx) return null;
-  const notOnFile =
-    'I am sorry, I do not have that on my end. Is there anything else I can share so we can continue?';
-  switch (ask) {
-    case 'provider_npi':
-      return ctx.provider?.npi
-        ? `The provider NPI is ${ctx.provider.npi}.`
-        : notOnFile;
-    case 'billing_npi': {
-      const b = ctx.provider?.billingNpi || ctx.provider?.npi;
-      return b ? `The billing provider NPI is ${b}.` : notOnFile;
-    }
-    case 'tax_id':
-      return ctx.provider?.taxId
-        ? `The provider tax ID is ${ctx.provider.taxId}.`
-        : notOnFile;
-    case 'member_id':
-      return ctx.memberId ? `The member ID is ${ctx.memberId}.` : notOnFile;
-    case 'patient_dob':
-      return ctx.patient.dobFormatted
-        ? `The patient's date of birth is ${ctx.patient.dobFormatted}. Does that match your records?`
-        : notOnFile;
-    case 'patient_first_name':
-      return ctx.patient.firstName
-        ? `The patient's first name is ${ctx.patient.firstName}.`
-        : notOnFile;
-    case 'patient_last_name':
-      return ctx.patient.lastName
-        ? `The patient's last name is ${ctx.patient.lastName}.`
-        : notOnFile;
-    case 'patient_full_name':
-      return ctx.patient.fullName
-        ? `The patient's name is ${ctx.patient.fullName}.`
-        : notOnFile;
-    case 'provider_name':
-      return ctx.provider?.fullName
-        ? `The treating provider is Dr. ${ctx.provider.fullName}.`
-        : notOnFile;
-    case 'subscriber_dob':
-      return ctx.subscriber.dobFormatted
-        ? `The subscriber's date of birth is ${ctx.subscriber.dobFormatted}.`
-        : notOnFile;
-    case 'subscriber_first_name':
-      return ctx.subscriber.firstName
-        ? `The subscriber's first name is ${ctx.subscriber.firstName}.`
-        : notOnFile;
-    case 'subscriber_last_name':
-      return ctx.subscriber.lastName
-        ? `The subscriber's last name is ${ctx.subscriber.lastName}.`
-        : notOnFile;
-    case 'subscriber_full_name':
-      return ctx.subscriber.fullName
-        ? `The subscriber's name is ${ctx.subscriber.fullName}.`
-        : notOnFile;
-    default:
-      return null;
-  }
-}
-
-/** Bare acknowledgement — "okay", "alright", "sure", "got it" — with no actual question or content.
- *  Used after purpose has been said to avoid EVA immediately volunteering a benefit field.
- *  Returns false for "yes" / "thank you" since those are handled as explicit confirmations elsewhere. */
-function isBareAcknowledgement(text: string): boolean {
-  const t = text
-    .trim()
-    .toLowerCase()
-    .replace(/[.!,]+$/, '');
-  if (!t) return false;
-  if (t.length > 28) return false;
-  return /^(ok|okay|alright|all\s*right|sure|got\s*it|understood|i\s*see|gotcha|mm[-\s]?hmm|mhm|mmk)$/i.test(
-    t,
-  );
-}
-
-/** TPA is handing control to EVA ("go ahead" / "what do you need" / "what fields" / "what information" /
- *  "anything else" / "how can I help"). On this signal we flip `patientIdentityReadyForBenefits` to true,
- *  which allows EVA to start asking benefit fields. */
-function isTpaHandoff(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  if (t.length < 3) return false;
-  return (
-    /\b(go\s+ahead|please\s+proceed|you\s+(can|may)\s+proceed|proceed)\b/.test(
-      t,
-    ) ||
-    /\bwhat\s+(do\s+you|can\s+i|may\s+i|is\s+it\s+you)\s+(need|want|want\s+to\s+know|looking\s+for|require)\b/.test(
-      t,
-    ) ||
-    /\bwhat\s+(fields|information|details|benefits|info)\s+(do\s+you|are\s+you|you\s+need|you\s+want)\b/.test(
-      t,
-    ) ||
-    /\b(anything|something)\s+else\s+(you\s+need|i\s+can\s+(help|share|provide))\b/.test(
-      t,
-    ) ||
-    /\bhow\s+(can|may)\s+i\s+help\b/.test(t) ||
-    /\bwhat\s+else\s+do\s+you\s+need\b/.test(t) ||
-    /\b(ready|i\s+am\s+ready)\b/.test(t)
-  );
-}
-
-/** Is EVA's proposed reply asking for a benefit field from the orderedFields list?
- *  We check for common "Can I get / May I have / What is / Could you provide / share"
- *  followed by any field name in its camel-case or space-separated form. */
-function isBenefitFieldAsk(
-  toSpeak: string,
-  orderedFields: string[],
-  fieldQuestionByKey?: Record<string, string>,
-): boolean {
-  if (!toSpeak?.trim() || !orderedFields.length) return false;
-  const t = toSpeak.toLowerCase();
-  const hasQuestion =
-    /\?|\bcan\s+(i|you)\b|\bmay\s+i\b|\bcould\s+(i|you)\b|\bwhat(?:'s|\s+is)\b|\bwhat\s+are\b|\bprovide|\bshare|\btell\s+me\b/i.test(
-      t,
-    );
-  if (!hasQuestion) return false;
-  if (fieldQuestionByKey) {
-    for (const f of orderedFields) {
-      const q = fieldQuestionByKey[f]?.trim().toLowerCase();
-      if (q && t.includes(q)) return true;
-    }
-  }
-  return orderedFields.some((f) => {
-    if (!f) return false;
-    const direct = f.toLowerCase();
-    // camelCase → space separated, e.g. "groupId" → "group id"
-    const spaced = f
-      .replace(/([A-Z])/g, ' $1')
-      .toLowerCase()
-      .trim();
-    return t.includes(direct) || t.includes(spaced);
-  });
-}
-
-/** Rep asks who is calling — a one-line identity answer is OK; full "Hi I'm Reena... how are you" is not. */
-function userAskedWhoIsCalling(userSaid: string): boolean {
-  const t = userSaid.trim().toLowerCase();
-  if (t.length < 4) return false;
-  return (
-    /\bwho\s+is\s+(this|calling|that)\b/.test(t) ||
-    /\bwho\s+are\s+you\b/.test(t) ||
-    /\bidentify\s+yourself\b/.test(t) ||
-    /\bwhat\s+(company|office)\s+is\s+this\b/.test(t) ||
-    /\bwhere\s+are\s+you\s+calling\s+from\b/.test(t)
-  );
-}
-
-/**
- * Matches the opening stream greeting or close variants the LLM sometimes repeats mid-call.
- */
-function isFullOpeningSelfIntro(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  if (t.length < 15) return false;
-  // Any greeting-style "Hi / Hey + I'm Reena from Went Dentals" (with or without "how are you")
-  if (/(hi|hey|hello),?\s+i'?m\s+reena\s+from\s+went\s+dentals/.test(t)) {
-    return true;
-  }
-  if (/(hi|hey|hello),?\s+i\s+am\s+reena\s+from\s+went\s+dentals/.test(t)) {
-    return true;
-  }
-  if (
-    /i\s+am\s+reena\s+from\s+went\s+dentals/.test(t) &&
-    /how\s+are\s+you/.test(t)
-  ) {
-    return true;
-  }
-  if (
-    t.includes('reena') &&
-    t.includes('went dentals') &&
-    (t.includes('how are you') || t.includes('how are you doing'))
-  ) {
-    return true;
-  }
-  return false;
-}
-
-/** Detect if user is asking to put the call on hold */
-function isHoldPhrase(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  return (
-    /putting?\s+(?:the\s+)?call\s+on\s+hold/i.test(t) ||
-    /put\s+(?:me\s+)?(?:on\s+)?hold/i.test(t) ||
-    /(?:please\s+)?hold\s+(?:please)?/i.test(t) ||
-    /(?:can you\s+)?(?:please\s+)?(?:wait|hold)/i.test(t) ||
-    /one\s+moment/i.test(t) ||
-    /putting\s+you\s+on\s+hold/i.test(t) ||
-    /i'?m\s+putting\s+(?:the\s+)?call\s+on\s+hold/i.test(t) ||
-    /please\s+wait/i.test(t)
-  );
-}
-
-/** Detect if user is saying they are back from hold. When matched, we stop hold, speak ack, and transcription + full conversation flow resume from the next user message. */
-function isResumePhrase(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  if (!t) return false;
-  return (
-    /i'?m\s+back/i.test(t) ||
-    /(?:thank you|thanks)\s+for\s+(?:waiting|holding)/i.test(t) ||
-    /thanks?\s+for\s+staying\s+on\s+hold/i.test(t) ||
-    /thanks?\s+for\s+waiting\s+on\s+(?:the\s+)?call/i.test(t) ||
-    /thanks?\s+for\s+waiting\s+on\s+hold/i.test(t) ||
-    /(?:we'?re\s+)?back\s+on\s+(?:the\s+)?line/i.test(t) ||
-    /(?:are\s+)?you\s+(?:still\s+)?(?:there|online)/i.test(t) ||
-    /(?:are\s+)?you\s+there/i.test(t) ||
-    /(?:are\s+)?you\s+online/i.test(t) ||
-    /let'?s\s+continue/i.test(t) ||
-    /ready\s+(?:to\s+)?continue/i.test(t) ||
-    /(?:i'?m\s+)?ready/i.test(t) ||
-    /continue\s+(?:please)?/i.test(t) ||
-    /hold\s+(?:is\s+)?(?:removed|off)/i.test(t)
-  );
-}
-
-/** If the user is asking what value we have for a benefit field (recall), return the reply from stored extractedData. */
-function getRecallReply(
-  userSaid: string,
-  extractedData: Record<string, string | null>,
-  orderedFields: string[],
-): string | null {
-  const t = userSaid.trim().toLowerCase();
-  if (!t || t.length < 3) return null;
-  const fields = orderedFields.length
-    ? orderedFields
-    : ['coverage', 'deductible', 'copay', 'validity'];
-  for (const field of fields) {
-    const re = new RegExp(
-      `\\bwhat('s| is)?\\s+(the\\s+)?${field}\\b|\\b${field}\\s+(provided|did you get|do you have|was that|we said)|\\bwhat did (i say|you get|you have)\\s+(for\\s+)?(the\\s+)?${field}|\\b(do you have|what (value|number|did you get))\\s+(for\\s+)?(the\\s+)?${field}`,
-      'i',
-    );
-    if (re.test(t)) {
-      const val = extractedData[field];
-      if (val != null && String(val).trim())
-        return `I have the ${field} as ${val}.`;
-      return `I don't have that one yet.`;
-    }
-  }
-  if (/\bwhat is the deductible\b/i.test(t)) {
-    const val = extractedData.deductible;
-    if (val != null && String(val).trim())
-      return `I have the deductible as ${val}.`;
-    return `I don't have that one yet.`;
-  }
-  if (/\bwhat is the (coverage|copay|validity)\b/i.test(t)) {
-    const k = t.includes('coverage')
-      ? 'coverage'
-      : t.includes('copay')
-        ? 'copay'
-        : 'validity';
-    const val = extractedData[k];
-    if (val != null && String(val).trim()) return `I have the ${k} as ${val}.`;
-    return `I don't have that one yet.`;
-  }
-  return null;
-}
-
-/** Patient info from DB for EVA to use in prompts (name, DOB, SSN when asked). */
-interface PatientInfo {
-  firstName: string;
-  lastName: string;
-  fullName: string;
-  dobFormatted: string | null;
-  ssn: string | null;
-}
-
-/** Static patient data when no payee is loaded (for testing / inbound calls). */
-const STATIC_PATIENT_INFO: PatientInfo = {
-  firstName: 'Sarah',
-  lastName: 'Johnson',
-  fullName: 'Sarah Johnson',
-  dobFormatted: 'March 15, 1985',
-  ssn: null,
-};
-
-/** Static call context used when no patient appointment is available (testing / inbound smoke tests).
- * Values here are only used as the final fallback so EVA still has something to say; real calls
- * get this data from `VerificationService.getPatientCallContext` at stream start. */
-const STATIC_CALL_CONTEXT: PatientCallContext = {
-  patient: {
-    firstName: STATIC_PATIENT_INFO.firstName,
-    lastName: STATIC_PATIENT_INFO.lastName,
-    fullName: STATIC_PATIENT_INFO.fullName,
-    dob: null,
-    dobFormatted: STATIC_PATIENT_INFO.dobFormatted,
-    ssn: null,
-  },
-  subscriber: {
-    firstName: STATIC_PATIENT_INFO.firstName,
-    lastName: STATIC_PATIENT_INFO.lastName,
-    fullName: STATIC_PATIENT_INFO.fullName,
-    dobFormatted: STATIC_PATIENT_INFO.dobFormatted,
-  },
-  memberId: process.env.EVA_MEMBER_ID?.trim() || null,
-  provider: null,
-  office: null,
-  payer: null,
-  verificationSteps: [
-    {
-      field: 'coverage',
-      question: 'What is the basic coverage?',
-      order: 1,
-    },
-    {
-      field: 'deductible',
-      question: 'Can you provide the deductible?',
-      order: 2,
-    },
-    { field: 'copay', question: 'What is the copay?', order: 3 },
-    {
-      field: 'validity',
-      question: 'What is the validity of the insurance?',
-      order: 4,
-    },
-  ],
-};
-
-interface StreamState {
-  buffer: Buffer[];
-  streamSid: string | null;
-  callSid: string | null;
-  processing: boolean;
-  fallbackTimer: ReturnType<typeof setInterval> | null;
-  patientId: string | null;
-  patientInfo: PatientInfo | null;
-  /** Pre-loaded full identity context (provider NPI/Tax ID, member ID, payer, etc.)
-   *  so EVA can answer TPA verification questions immediately without extra DB round-trips. */
-  callContext: PatientCallContext | null;
-  /** Dynamic verification fields (key = field name from VerificationRequirement). */
-  extractedData: Record<string, string | null>;
-  /** Ordered list of field keys to collect (matches appointment `verificationFields` or requirement). */
-  orderedFields: string[];
-  /** Exact question text per field key from appointment / requirement payload (ask verbatim). */
-  fieldQuestionByKey: Record<string, string>;
-  /** When set, verification is linked to this requirement and extractedData is stored in Verification.extractedData. */
-  verificationRequirementId: string | null;
-  /** When set, verification rows are scoped to this appointment (not merged across visits). */
-  appointmentId: string | null;
-  callEnded: boolean;
-  lastSpeakTime: number;
-  onHold: boolean;
-  holdStartedAt: number | null;
-  holdTimeoutId: ReturnType<typeof setTimeout> | null;
-  lastAskedField: string | null;
-  resumeCheckInterval: ReturnType<typeof setInterval> | null;
-  postGoodbyeUntil: number | null;
-  postGoodbyeTimeoutId: ReturnType<typeof setTimeout> | null;
-  conversationTranscript: string[];
-  mode: 'eva' | 'ivr-bypass' | 'tpa-ivr';
-  ivrDigitSent: boolean;
-  /** True after we've already said our purpose (e.g. "I need a few benefit details") — avoid repeating it while user is speaking. */
-  purposeSaid: boolean;
-  /** Rep confirmed after we gave DOB (handler detects yes/thanks following DOB answer). */
-  patientIdentityReadyForBenefits: boolean;
-  /** Last EVA reply included patient DOB from DB — next rep line may be confirmation. */
-  evaAwaitingYesAfterDob: boolean;
-  /** Count of TPA-led identity questions we have answered from the cache. Used to gate
-   *  the handoff from identity phase to benefit phase — we require the TPA to actually
-   *  perform verification before EVA starts asking for coverage / deductible / copay / validity. */
-  identityAnswersGiven: number;
-  /** After any identity answer we expect the TPA to either (a) ask the next identity item,
-   *  (b) confirm, or (c) signal they are done ("go ahead / what do you need"). This flag
-   *  generalises `evaAwaitingYesAfterDob` to every identity answer. */
-  evaAwaitingYesAfterIdentity: boolean;
-  /** True on the turn we completed the last benefit field — triggers the "That's all I have"
-   *  intermediate line. Next TPA turn will typically be a thank-you / goodbye; then we close. */
-  justCompletedAllFields: boolean;
-  /** Locked after we play the "That's all I have" line so we never ask any benefit field again. */
-  allDoneAnnounced: boolean;
-  /** Consecutive turns with skip / inaudible / weak audio — for skip-LLM and abort guardrails. */
-  consecutiveNoiseOrEmptyTurns: number;
-  /** Set after the Twilio stream plays CONVERSATION_GREETING — used to block repeated intros. */
-  openingGreetingPlayed: boolean;
-}
-
-/** Per-call TPA IVR script (Part 1); survives Twilio reconnect after DTMF. */
-type TpaIvrRuntimeState = {
-  callStartedAt: number;
-  /** Heard characteristic IVR open (recording, language menu, etc.). */
-  ivrStarted: boolean;
-  disclaimerEnDone: boolean;
-  disclaimerEsDone: boolean;
-  /** When English disclaimer was first heard (for Spanish wait timeout). */
-  disclaimerEnAt: number | null;
-  saidProviderYes: boolean;
-  saidEligibilityBenefits: boolean;
-  saidRepresentativeSummary: boolean;
-  memberDtmfSent: boolean;
-  dobDtmfSent: boolean;
-  taxIdDtmfSent: boolean;
-  routingPullDone: boolean;
-  routingAgentOnlineDone: boolean;
-  surveyDone: boolean;
-};
+import { applyVerificationStepsToStreamState } from './media-stream/call-context-sync';
+import { loadBenefitFieldOrderIfNeeded } from './media-stream/field-order-load';
+import {
+  ANSWER_WINDOW_MS,
+  CONVERSATION_GREETING,
+  EVA_HOLD_ACK,
+  EVA_RESUME_ACK,
+  FALLBACK_PROCESS_INTERVAL_MS,
+  HOLD_MAX_MS,
+  TPA_IVR_STREAM_FALLBACK_MS,
+  TPA_IVR_STREAM_MIN_BYTES,
+  MAX_BUFFER_BYTES,
+  MAX_NOISE_TURNS_BEFORE_ABORT_CALL,
+  MAX_NOISE_TURNS_BEFORE_SKIP_LLM,
+  MIN_BYTES_BEFORE_REPEAT,
+  MIN_SPEECH_BYTES,
+  OUTBOUND_CHUNK_BYTES,
+  POST_GOODBYE_LISTEN_MS,
+  TPA_IVR_FORCE_START_MS,
+  TPA_IVR_SPANISH_WAIT_MS,
+} from './media-stream/constants';
+import { truncateForLogLine } from './media-stream/logging';
+import { isSilenceAtEnd, streamModeUsesIvrTiming } from './media-stream/speech';
+import { STATIC_CALL_CONTEXT, STATIC_PATIENT_INFO } from './media-stream/static-context';
+import type { StreamState, TpaIvrRuntimeState } from './media-stream/stream-state';
+import {
+  buildDobDtmf,
+  buildMemberIdDtmf,
+  tpaIvrSoundsLikeAgentOnlineRouting,
+  tpaIvrSoundsLikeBenefitSummaryOrDetailPrompt,
+  tpaIvrSoundsLikeDentalTpaLiveIntro,
+  tpaIvrSoundsLikeDobPrompt,
+  tpaIvrSoundsLikeEnglishRecordingDisclaimer,
+  tpaIvrSoundsLikeIvrStart,
+  tpaIvrSoundsLikeLiveAgent,
+  tpaIvrSoundsLikeMemberIdPrompt,
+  tpaIvrSoundsLikeProviderQuestion,
+  tpaIvrSoundsLikePullUpAccountRouting,
+  tpaIvrSoundsLikeReasonPrompt,
+  tpaIvrSoundsLikeSpanishRecordingDisclaimer,
+  tpaIvrSoundsLikeSurveyStayOnLine,
+} from './media-stream/tpa-ivr';
+import {
+  answerIdentityFromContext,
+  detectIdentityAsk,
+  extractValueForField,
+  getFirstMissingField,
+  getRecallReply,
+  getRepeatOnlyPrompt,
+  isBareAcknowledgement,
+  isBenefitFieldAsk,
+  isFullOpeningSelfIntro,
+  isHoldPhrase,
+  isIntroPurposePhrase,
+  isResumePhrase,
+  isThankYouOrGoodbye,
+  isTpaHandoff,
+  pickPurposeOfCallPhrase,
+  transcriptHasValue,
+  transcriptIsDate,
+  transcriptIsMoney,
+  userAsksPurposeOfCallOrOpening,
+  userAskedWhoIsCalling,
+  verbatimBenefitQuestion,
+} from './media-stream/guardrails';
 
 @Injectable()
 export class MediaStreamHandlerService {
@@ -1084,30 +147,12 @@ export class MediaStreamHandlerService {
     private readonly audioEmotionService: AudioEmotionService,
   ) {}
 
-  /** Verbatim benefit questions from appointment context (available before lazy field load). */
-  private applyVerificationStepsToStreamState(
-    state: StreamState,
-    ctx: PatientCallContext,
-  ): void {
-    const steps = ctx.verificationSteps ?? [];
-    if (!steps.length) return;
-    state.fieldQuestionByKey = Object.fromEntries(
-      steps
-        .filter((s) => s.field)
-        .map((s) => [
-          s.field,
-          s.question?.trim() || verbatimBenefitQuestion(s.field, {}),
-        ]),
-    );
-  }
-
   handleConnection(
     ws: WebSocket,
     PatientID?: string | null,
     mode?: string | null,
     AppointmentID?: string | null,
   ): void {
-    const isIvrBypass = mode === 'ivr-bypass';
     const isTpaIvr = mode === 'tpa-ivr';
     const state: StreamState = {
       buffer: [],
@@ -1133,8 +178,7 @@ export class MediaStreamHandlerService {
       postGoodbyeUntil: null,
       postGoodbyeTimeoutId: null,
       conversationTranscript: [],
-      mode: isTpaIvr ? 'tpa-ivr' : isIvrBypass ? 'ivr-bypass' : 'eva',
-      ivrDigitSent: false,
+      mode: isTpaIvr ? 'tpa-ivr' : 'eva',
       purposeSaid: false,
       patientIdentityReadyForBenefits: false,
       evaAwaitingYesAfterDob: false,
@@ -1283,7 +327,7 @@ export class MediaStreamHandlerService {
       }
       const combined = Buffer.concat(state.buffer);
       const minBytes = streamModeUsesIvrTiming(state.mode)
-        ? IVR_BYPASS_MIN_BYTES
+        ? TPA_IVR_STREAM_MIN_BYTES
         : MIN_SPEECH_BYTES;
       if (combined.length < minBytes) return;
 
@@ -1329,7 +373,7 @@ export class MediaStreamHandlerService {
             dobFormatted: ctx.patient.dobFormatted,
             ssn: ctx.patient.ssn,
           };
-          this.applyVerificationStepsToStreamState(state, ctx);
+          applyVerificationStepsToStreamState(state, ctx);
         }
       };
 
@@ -1397,70 +441,6 @@ export class MediaStreamHandlerService {
           userSaid = '';
         }
 
-        // --- IVR bypass (Phase 1): no intro. Only listen to IVR and choose the option that routes to a live agent/support.
-        if (state.mode === 'ivr-bypass') {
-          const t = userSaid.trim();
-          if (tpaIvrSoundsLikeLiveAgent(t)) {
-            const ttsHandoff = await this.handoffToEvaSession(
-              state,
-              speak,
-              pushLiveTracker,
-              'ivr-bypass',
-            );
-            this.logCallTurn(state.callSid, {
-              prepMs,
-              sttMs,
-              llmMs: null,
-              ttsMs: ttsHandoff,
-              totalMs: Date.now() - turnStart,
-              tpa: t,
-              eva: CONVERSATION_GREETING,
-              note: '(IVR bypass → EVA live agent)',
-            });
-            state.processing = false;
-            return;
-          }
-
-          const liveAgentDigit = extractAgentRouteDigitFromIvrPrompt(t);
-          if (liveAgentDigit && !state.ivrDigitSent && state.callSid) {
-            const base = (process.env.BACKEND_URL || '').trim();
-            if (base) {
-              const q = new URLSearchParams({ digits: liveAgentDigit });
-              if (state.patientId?.trim()) {
-                q.set('patientId', state.patientId.trim());
-                q.set('payeeId', state.patientId.trim());
-              }
-              if (state.appointmentId?.trim()) {
-                q.set('appointmentId', state.appointmentId.trim());
-              }
-              const playDtmfUrl = `${base}/twilio/ivr-bypass-dtmf?${q.toString()}`;
-              this.twilioService
-                .redirectCall(state.callSid, playDtmfUrl)
-                .then(() => {})
-                .catch((e: any) =>
-                  this.logger.warn(
-                    '[MediaStream] IVR bypass redirect failed',
-                    (e as Error)?.message,
-                  ),
-                );
-            }
-            state.ivrDigitSent = true;
-            state.callEnded = true;
-            this.logCallTurn(state.callSid, {
-              prepMs,
-              sttMs,
-              llmMs: null,
-              ttsMs: 0,
-              totalMs: Date.now() - turnStart,
-              tpa: t,
-              eva: '—',
-              note: `(IVR bypass DTMF ${liveAgentDigit})`,
-            });
-          }
-          state.processing = false;
-          return;
-        }
-
         // --- TPA IVR Part 1: payer IVR script (listen → speech/DTMF) → Part 2: live TPA intro → EVA ---
         if (state.mode === 'tpa-ivr') {
           if (!state.callSid) {
@@ -1474,7 +454,7 @@ export class MediaStreamHandlerService {
           let redirected = false;
 
           const ivrDebugNote = () =>
-            `TPA_IVR flags ivr=${ivr.ivrStarted} en=${ivr.disclaimerEnDone} es=${ivr.disclaimerEsDone} prov=${ivr.saidProviderYes} elig=${ivr.saidEligibilityBenefits} rep=${ivr.saidRepresentativeSummary} mid=${ivr.memberDtmfSent} dob=${ivr.dobDtmfSent} tax=${ivr.taxIdDtmfSent} rPull=${ivr.routingPullDone} rAgent=${ivr.routingAgentOnlineDone} survey=${ivr.surveyDone}`;
+            `TPA_IVR flags ivr=${ivr.ivrStarted} en=${ivr.disclaimerEnDone} es=${ivr.disclaimerEsDone} prov=${ivr.saidProviderYes} elig=${ivr.saidEligibilityBenefits} rep=${ivr.saidRepresentativeSummary} mid=${ivr.memberDtmfSent} dob=${ivr.dobDtmfSent} rPull=${ivr.routingPullDone} rAgent=${ivr.routingAgentOnlineDone} survey=${ivr.surveyDone}`;
 
           if (
             ivr.disclaimerEnDone &&
@@ -1539,7 +519,6 @@ export class MediaStreamHandlerService {
                 state,
                 speak,
                 pushLiveTracker,
-                'tpa-ivr',
               );
               this.logCallTurn(state.callSid, {
                 prepMs,
@@ -1586,46 +565,6 @@ export class MediaStreamHandlerService {
           ) {
             spoke = 'Representative';
             ivr.saidRepresentativeSummary = true;
-          } else if (
-            ivr.saidProviderYes &&
-            !ivr.taxIdDtmfSent &&
-            tpaIvrSoundsLikeTaxIdPrompt(t) &&
-            state.patientId
-          ) {
-            await ensurePatientCallContext();
-            const taxRaw =
-              state.callContext?.provider?.taxId != null
-                ? state.callContext.provider.taxId
-                : process.env.EVA_PROVIDER_TAX_ID?.trim() || '';
-            const taxDigits = buildTaxIdDtmf(taxRaw);
-            if ((taxDigits.match(/\d/g) ?? []).length > 0) {
-              const base = (process.env.BACKEND_URL || '').trim();
-              if (base) {
-                const q = new URLSearchParams({
-                  digits: taxDigits,
-                  patientId: state.patientId,
-                  payeeId: state.patientId,
-                });
-                if (state.appointmentId?.trim()) {
-                  q.set('appointmentId', state.appointmentId.trim());
-                }
-                const url = `${base}/twilio/tpa-ivr-dtmf?${q.toString()}`;
-                ivr.taxIdDtmfSent = true;
-                redirected = true;
-                this.twilioService
-                  .redirectCall(state.callSid, url)
-                  .catch((e: any) =>
-                    this.logger.warn(
-                      '[MediaStream] TPA IVR tax ID DTMF redirect failed',
-                      (e as Error)?.message,
-                    ),
-                  );
-              }
-            } else {
-              this.logger.warn(
-                '[MediaStream] TPA IVR: tax ID prompt heard but no digits (set EVA_PROVIDER_TAX_ID or provider taxId on appointment).',
-              );
-            }
           } else if (
             ivr.saidRepresentativeSummary &&
             !ivr.memberDtmfSent &&
@@ -1751,61 +690,11 @@ export class MediaStreamHandlerService {
         }
 
         // --- Lazy-load benefit fields / questions for this patient (once per call) ---
-        if (state.patientId && state.orderedFields.length === 0) {
-          try {
-            await ensurePatientCallContext();
-            const steps = state.callContext?.verificationSteps;
-            if (steps && steps.length > 0) {
-              state.orderedFields = steps
-                .slice()
-                .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
-                .map((s) => s.field)
-                .filter(Boolean);
-              state.fieldQuestionByKey = Object.fromEntries(
-                steps.map((s) => [
-                  s.field,
-                  s.question?.trim() ||
-                    verbatimBenefitQuestion(s.field, {}),
-                ]),
-              );
-              state.verificationRequirementId = null;
-            } else {
-              const entries =
-                await this.verificationRequirementService.getOrderedFieldsForPayee(
-                  state.patientId,
-                  null,
-                );
-              state.orderedFields = entries.map((e) => e.field);
-              state.fieldQuestionByKey = {};
-              for (const e of entries) {
-                state.fieldQuestionByKey[e.field] =
-                  e.question?.trim() ||
-                  verbatimBenefitQuestion(e.field, {});
-              }
-              const { requirementId } =
-                await this.verificationRequirementService.getOrderedFieldsAndRequirementId(
-                  state.patientId,
-                );
-              state.verificationRequirementId = requirementId;
-            }
-          } catch (e: any) {
-            this.logger.warn(
-              '[MediaStream] Failed to load verification fields, using defaults',
-              e?.message,
-            );
-            state.orderedFields = [
-              'coverage',
-              'deductible',
-              'copay',
-              'validity',
-            ];
-            state.fieldQuestionByKey = {};
-            for (const f of state.orderedFields) {
-              state.fieldQuestionByKey[f] = verbatimBenefitQuestion(f, {});
-            }
-            state.verificationRequirementId = null;
-          }
-        }
+        await loadBenefitFieldOrderIfNeeded(state, {
+          ensurePatientCallContext,
+          verificationRequirementService: this.verificationRequirementService,
+          warn: (message, detail) => this.logger.warn(message, detail),
+        });
 
         // --- Hold / resume handling ---
         if (state.onHold) {
@@ -2919,10 +1808,6 @@ export class MediaStreamHandlerService {
           );
         }
         startFallbackTimer();
-        if (state.mode === 'ivr-bypass') {
-          // No greeting; we only listen for IVR menu and send DTMF 4 when we hear "customer agent"
-          return;
-        }
         if (state.mode === 'tpa-ivr') {
           if (state.callSid) {
             this.ensureTpaIvrState(state.callSid);
@@ -2947,7 +1832,7 @@ export class MediaStreamHandlerService {
                 dobFormatted: ctx.patient.dobFormatted,
                 ssn: ctx.patient.ssn,
               };
-              this.applyVerificationStepsToStreamState(state, ctx);
+              applyVerificationStepsToStreamState(state, ctx);
               this.logger.log(
                 `[MediaStream] TPA IVR context loaded: memberId=${ctx.memberId ? 'yes' : 'no'} dob=${ctx.patient.dob ? 'yes' : 'no'}`,
               );
@@ -2994,7 +1879,7 @@ export class MediaStreamHandlerService {
                 dobFormatted: ctx.patient.dobFormatted,
                 ssn: ctx.patient.ssn,
               };
-              this.applyVerificationStepsToStreamState(state, ctx);
+              applyVerificationStepsToStreamState(state, ctx);
               this.logger.log(
                 `[MediaStream] Call context loaded: patient=${ctx.patient.fullName} provider=${ctx.provider?.fullName ?? 'none'} payer=${ctx.payer?.companyName ?? 'none'} memberId=${ctx.memberId ? 'yes' : 'no'} taxId=${ctx.provider?.taxId ? 'yes' : 'no'}`,
               );
@@ -3011,7 +1896,7 @@ export class MediaStreamHandlerService {
             if (!state.patientInfo && !state.patientId) {
               state.patientInfo = STATIC_PATIENT_INFO;
               state.callContext = STATIC_CALL_CONTEXT;
-              this.applyVerificationStepsToStreamState(
+              applyVerificationStepsToStreamState(
                 state,
                 STATIC_CALL_CONTEXT,
               );
@@ -3109,10 +1994,10 @@ export class MediaStreamHandlerService {
     const startFallbackTimer = () => {
       if (state.fallbackTimer) return;
       const intervalMs = streamModeUsesIvrTiming(state.mode)
-        ? IVR_BYPASS_FALLBACK_MS
+        ? TPA_IVR_STREAM_FALLBACK_MS
         : FALLBACK_PROCESS_INTERVAL_MS;
       const minBytes = streamModeUsesIvrTiming(state.mode)
-        ? IVR_BYPASS_MIN_BYTES
+        ? TPA_IVR_STREAM_MIN_BYTES
         : MIN_SPEECH_BYTES;
       state.fallbackTimer = setInterval(() => {
         const combined = Buffer.concat(state.buffer);
@@ -3145,7 +2030,6 @@ export class MediaStreamHandlerService {
       saidRepresentativeSummary: false,
       memberDtmfSent: false,
       dobDtmfSent: false,
-      taxIdDtmfSent: false,
       routingPullDone: false,
       routingAgentOnlineDone: false,
       surveyDone: false,
@@ -3167,13 +2051,12 @@ export class MediaStreamHandlerService {
     state: StreamState,
     speak: (text: string, label?: string) => Promise<number>,
     pushLiveTracker: (line: string) => void | Promise<void>,
-    source: 'tpa-ivr' | 'ivr-bypass',
   ): Promise<number> {
     if (state.callSid) {
       this.tpaIvrByCallSid.delete(state.callSid);
     }
     state.mode = 'eva';
-    const sourceLabel = source === 'tpa-ivr' ? 'TPA_IVR' : 'IVR_BYPASS';
+    const sourceLabel = 'TPA_IVR';
     void pushLiveTracker(
       `[CALL_EVENT] ${sourceLabel}_LIVE_AGENT — EVA greeting`,
     );
@@ -3215,7 +2098,7 @@ export class MediaStreamHandlerService {
         dobFormatted: ctx.patient.dobFormatted,
         ssn: ctx.patient.ssn,
       };
-      this.applyVerificationStepsToStreamState(state, ctx);
+      applyVerificationStepsToStreamState(state, ctx);
       this.logger.log(
         `[MediaStream] Call context loaded after ${sourceLabel}: patient=${ctx.patient.fullName}`,
       );
@@ -3230,7 +2113,7 @@ export class MediaStreamHandlerService {
     if (!state.patientInfo && !state.patientId) {
       state.patientInfo = STATIC_PATIENT_INFO;
       state.callContext = STATIC_CALL_CONTEXT;
-      this.applyVerificationStepsToStreamState(state, STATIC_CALL_CONTEXT);
+      applyVerificationStepsToStreamState(state, STATIC_CALL_CONTEXT);
       this.logger.warn(
         `[MediaStream] Using static patient info (no patientId after ${sourceLabel}).`,
       );
