@@ -43,7 +43,7 @@ export const TPA_IVR_SPANISH_WAIT_MS = Number(
 
 /** First EVA line after the live TPA finishes their opener — identity only on request; no patient name/DOB here. */
 export const EVA_INTRO_LINE =
-  "Hi, this is Reena — I'm calling from Went Dentals on behalf of the practice.";
+  "Hi, this is Reena — I'm calling from Went Dentals.";
 
 /** @deprecated Use EVA_INTRO_LINE — kept for log labels / backwards compatibility. */
 export const CONVERSATION_GREETING = EVA_INTRO_LINE;
@@ -54,7 +54,7 @@ export const PURPOSE_OF_CALL_LINE_VARIANTS = [
   "I'm calling to collect insurance benefit information for one of our patients.",
   'Our office needs to verify a few benefit details for a patient.',
   "I'm reaching out to confirm coverage and related benefit information for a patient.",
-  'I need to verify some benefit items for a patient we have on file.',
+  'I want to verify benefit details of the patient I have.',
   "I'm following up to get benefit details we need for a patient's visit.",
   'The call is about gathering benefit verification for a patient appointment.',
 ] as const;
@@ -66,3 +66,14 @@ export const EVA_RESUME_ACK =
 
 /** Duration (ms) to stay on the line after saying goodbye (in case user responds); then hang up if no input */
 export const POST_GOODBYE_LISTEN_MS = 10_000;
+
+/**
+ * After EVA gives DOB (awaiting TPA), if the line is still quiet for this long, EVA may say
+ * one gentle nudge — not used during normal benefit-gate waiting.
+ */
+export const POST_DOB_LONG_SILENCE_NUDGE_MS = Number(
+  process.env.POST_DOB_LONG_SILENCE_NUDGE_MS || 42000,
+);
+
+export const EVA_POST_DOB_SILENCE_NUDGE =
+  "Sounds good. Whenever you're ready, I can go through the benefit details we need for this patient.";

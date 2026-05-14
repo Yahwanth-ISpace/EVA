@@ -53,6 +53,8 @@ export interface StreamState {
   patientIdentityReadyForBenefits: boolean;
   /** Last EVA reply included patient DOB from DB — next rep line may be confirmation. */
   evaAwaitingYesAfterDob: boolean;
+  /** One-time gentle line after very long silence while awaiting DOB acknowledgement or TPA benefit-topic handoff. */
+  postDobSilenceNudgePlayed: boolean;
   /** Count of TPA-led identity questions we have answered from the cache. Used to gate
    *  the handoff from identity phase to benefit phase — we require the TPA to actually
    *  perform verification before EVA starts asking for coverage / deductible / copay / validity. */
