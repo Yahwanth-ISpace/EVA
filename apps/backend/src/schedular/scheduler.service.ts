@@ -135,7 +135,7 @@ export class SchedulerService {
     appointmentData: Record<string, any>,
   ) {
     const db = await this.mongoService.getDb();
-    const collection = db.collection('subrina_appointments');
+    const collection = db.collection('sabrina_appointments');
 
     const appointmentId = appointmentData?.AppointmentID;
     const patientId = appointmentData?.PatientID;
@@ -241,5 +241,12 @@ export class SchedulerService {
 
   private delay(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async getSampleData() {
+    const db = await this.mongoService.getDb();
+    const collection = db.collection('sabrina_sample_data');
+    const sampleData = await collection.findOne();
+    return sampleData;
   }
 }

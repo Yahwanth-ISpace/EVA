@@ -3,8 +3,8 @@ import { Collection, Document, MongoClient, Db } from 'mongodb';
 
 /** Mongo collection that holds Sabrina / scheduler appointment + patient + payer + office + provider denormalized documents. */
 export const DEFAULT_APPOINTMENTS_COLLECTION = 'appointments';
-export const SUBRINA_APPOINTMENTS_COLLECTION = 'subrina_appointments';
-export const SUBRINA_RESPONSE_COLLECTION = 'subrina_response';
+export const SUBRINA_APPOINTMENTS_COLLECTION = 'sabrina_appointments';
+export const SUBRINA_RESPONSE_COLLECTION = 'sabrina_response';
 
 @Injectable()
 export class MongoService implements OnModuleDestroy {
@@ -147,19 +147,15 @@ export class MongoService implements OnModuleDestroy {
         query.AppointmentID = appointmentId.trim();
       }
 
-      // Check if document already exists and delete to avoid duplicates
-      const existingDoc = await col.findOne(query);
-      if (existingDoc) {
-        await col.deleteOne({ _id: existingDoc._id });
-        this.logger.log(
-          `Deleted existing Subrina debug data: ${existingDoc._id}`,
-        );
-      }
+      // Delete existing documents for this patient/appointment to ensure a fresh record
+      await col.deleteMany(query);
+
+      // Remove the original _id from the source data to allow MongoDB to generate a new one
+      const { _id, ...dataToSave } = (subrinaData || {}) as any;
 
       // Insert new document
       const result = await col.insertOne({
-        ...subrinaData,
-        createdOn: new Date(),
+        ...dataToSave,
       });
 
       this.logger.log(
