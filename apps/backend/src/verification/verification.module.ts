@@ -7,7 +7,12 @@ import { AiModule } from 'src/ai/ai.module';
 import { TranscriptionModule } from 'src/transcription/transcription.module';
 
 @Module({
-  imports: [PrismaModule, MongoModule, forwardRef(() => AiModule), TranscriptionModule],
+  imports: [
+    PrismaModule,
+    MongoModule,
+    forwardRef(() => AiModule),
+    TranscriptionModule,
+  ],
   controllers: [VerificationController],
   providers: [VerificationService],
   exports: [VerificationService],

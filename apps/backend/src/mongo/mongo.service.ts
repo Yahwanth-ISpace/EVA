@@ -3,6 +3,7 @@ import { Collection, Document, MongoClient, Db } from 'mongodb';
 
 /** Mongo collection that holds Sabrina / scheduler appointment + patient + payer + office + provider denormalized documents. */
 export const DEFAULT_APPOINTMENTS_COLLECTION = 'appointments';
+export const SUBRINA_APPOINTMENTS_COLLECTION = 'subrina_appointments';
 
 @Injectable()
 export class MongoService implements OnModuleDestroy {
@@ -14,10 +15,19 @@ export class MongoService implements OnModuleDestroy {
     const name = process.env.MONGO_APPOINTMENTS_COLLECTION?.trim();
     return name || DEFAULT_APPOINTMENTS_COLLECTION;
   }
+  getSubrinaAppointmentsCollectionName(): string {
+    const name = process.env.MONGO_SUBRINA_APPOINTMENTS_COLLECTION?.trim();
+    return name || SUBRINA_APPOINTMENTS_COLLECTION;
+  }
 
   async appointmentsCollection(): Promise<Collection<Document>> {
     const db = await this.getDb();
     return db.collection(this.getAppointmentsCollectionName());
+  }
+
+  async subrinaAppointmentsCollection(): Promise<Collection<Document>> {
+    const db = await this.getDb();
+    return db.collection(this.getSubrinaAppointmentsCollectionName());
   }
 
   /** Match either string or numeric `AppointmentID` stored in Mongo. */
@@ -90,6 +100,24 @@ export class MongoService implements OnModuleDestroy {
       .find({})
       .sort({ AppointmentDate: 1, savedAt: 1 } as Document)
       .toArray();
+  }
+
+  async getSubrinaAppointments(
+    payeeId: string,
+    appointmentId: string,
+  ): Promise<Document[] | null> {
+    const col = await this.subrinaAppointmentsCollection();
+    const aid = appointmentId.trim();
+    const pid = payeeId.trim();
+    if (!aid || !pid) return null;
+    const docs = await col
+      .find({
+        ...this.appointmentIdQuery(aid),
+        PatientID: pid,
+      })
+      .sort({ AppointmentDate: 1, savedAt: 1 } as Document)
+      .toArray();
+    return docs;
   }
 
   async getDb(): Promise<Db> {
