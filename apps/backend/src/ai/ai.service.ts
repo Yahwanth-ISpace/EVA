@@ -1351,11 +1351,11 @@ EXAMPLE OUTPUT:
         '❌ Error extracting verification fields from transcript:',
         err,
       );
-      // Return array with null values
+      // Return array with empty answers on failure
       return verificationFields.map((f) => ({
         question: f.question,
-        normalizedQuestion: f.question,
-        answar: null,
+        normalizedQuestion: '',
+        answar: '',
       }));
     }
   }

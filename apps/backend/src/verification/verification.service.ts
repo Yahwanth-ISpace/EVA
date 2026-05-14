@@ -501,6 +501,13 @@ export class VerificationService {
     return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
   }
 
+  private tryFormatDateString(raw: string): string | null {
+    if (!raw) return null;
+    const parsed = new Date(raw);
+    if (!Number.isFinite(parsed.getTime())) return null;
+    return this.formatDobForSpeech(parsed);
+  }
+
   /**
    * Pre-fetch identity + benefit-question context from Mongo `appointments` (`patientId` = `PatientID`).
    */
@@ -815,16 +822,7 @@ export class VerificationService {
     transcriptToAppend?: string | null,
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
-  ): Promise<{
-    payeeId: string;
-    verificationFields: Array<{
-      question: string;
-      field: string;
-      required: boolean;
-      order: number;
-      value: string | null;
-    }>;
-  }> {
+  ): Promise<any> {
     if (!payeeId) {
       throw new BadRequestException('payeeId is required');
     }
@@ -900,7 +898,7 @@ export class VerificationService {
       );
     const subrinaData = await this.mongoService.getSubrinaAppointments(
       payeeId,
-      appointmentId,
+      appointmentId?.trim() || '',
     );
     if (subrinaData && Array.isArray(subrinaData)) {
       this.mapSubrinaAnswers(verificationFields, subrinaData);
@@ -909,9 +907,6 @@ export class VerificationService {
 
     this.logger.log('Extracted verification appointmentId:', appointmentId);
     this.logger.log('Extracted verificationfields:::: {}', verificationFields);
-    return {
-      payeeId,
-      verificationFields,
-    };
+    return subrinaData;
   }
 }
