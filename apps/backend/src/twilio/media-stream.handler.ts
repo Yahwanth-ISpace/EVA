@@ -2,7 +2,7 @@
  * Media stream handler — Twilio WebSocket orchestration for EVA (STT → LLM → TTS, verification, IVR modes).
  *
  * Supporting modules live in this folder, grouped by concern:
- * - `constants.ts` — buffer/timing tunables and fixed phrases (`CONVERSATION_GREETING`, hold/resume lines, …)
+ * - `constants.ts` — buffer/timing tunables and fixed phrases (`EVA_INTRO_LINE`, hold/resume lines, …)
  * - `speech.ts` — mulaw silence / end-of-turn detection and `streamModeUsesIvrTiming`
  * - `tpa-ivr.ts` — payer IVR phrase detection and DTMF builders
  * - `guardrails.ts` — user/EVA intent, identity Q&A, benefit heuristics, recall/hold/resume
@@ -37,7 +37,7 @@ import { applyVerificationStepsToStreamState } from './media-stream/call-context
 import { loadBenefitFieldOrderIfNeeded } from './media-stream/field-order-load';
 import {
   ANSWER_WINDOW_MS,
-  CONVERSATION_GREETING,
+  EVA_INTRO_LINE,
   EVA_HOLD_ACK,
   EVA_RESUME_ACK,
   FALLBACK_PROCESS_INTERVAL_MS,
@@ -88,8 +88,9 @@ import {
   isHoldPhrase,
   isIntroPurposePhrase,
   isResumePhrase,
+  isSubstantiveTpaOpener,
   isThankYouOrGoodbye,
-  isTpaHandoff,
+  isTpaBenefitQnaHandoff,
   pickPurposeOfCallPhrase,
   transcriptHasValue,
   transcriptIsDate,
@@ -180,6 +181,7 @@ export class MediaStreamHandlerService {
       conversationTranscript: [],
       mode: isTpaIvr ? 'tpa-ivr' : 'eva',
       purposeSaid: false,
+      tpaBenefitQnaOpen: false,
       patientIdentityReadyForBenefits: false,
       evaAwaitingYesAfterDob: false,
       identityAnswersGiven: 0,
@@ -527,7 +529,7 @@ export class MediaStreamHandlerService {
                 ttsMs: ttsHandoff,
                 totalMs: Date.now() - turnStart,
                 tpa: t,
-                eva: CONVERSATION_GREETING,
+              eva: '—',
                 note: '(TPA IVR Part 2 → EVA live agent)',
               });
               state.processing = false;
@@ -970,6 +972,62 @@ export class MediaStreamHandlerService {
           state.processing = false;
           return;
         }
+        // Live TPA speaks first; EVA waits for a substantive opener (or a clear identity
+        // question), then introduces herself — optionally with purpose and/or identity answer
+        // in the same spoken turn when the TPA combined them.
+        if (
+          state.mode === 'eva' &&
+          !state.openingGreetingPlayed &&
+          !state.onHold &&
+          !wasInaudibleTurn &&
+          userSaid.trim().length > 0 &&
+          !state.callEnded &&
+          looksLikeRealResponse(userSaid)
+        ) {
+          const idAskFirst = detectIdentityAsk(userSaid);
+          const idAnsFirst =
+            idAskFirst && state.callContext
+              ? answerIdentityFromContext(idAskFirst, state.callContext)
+              : null;
+          const openOk =
+            isSubstantiveTpaOpener(userSaid) || !!idAnsFirst?.trim();
+          if (openOk) {
+            const alsoPurpose = userAsksPurposeOfCallOrOpening(userSaid);
+            const parts: string[] = [EVA_INTRO_LINE];
+            if (alsoPurpose) {
+              parts.push(pickPurposeOfCallPhrase());
+              state.purposeSaid = true;
+            }
+            if (idAnsFirst?.trim()) {
+              parts.push(idAnsFirst.trim());
+              const isNotOnFile = /\bI\s+do\s+not\s+have\b/i.test(idAnsFirst);
+              if (!isNotOnFile) {
+                state.identityAnswersGiven += 1;
+                state.evaAwaitingYesAfterIdentity = true;
+              }
+            }
+            const toSpeakFirst = parts.join(' ');
+            if (userSaid?.trim())
+              state.conversationTranscript.push('User: ' + userSaid.trim());
+            state.conversationTranscript.push('EVA: ' + toSpeakFirst);
+            const ttsMsIntro = await speak(toSpeakFirst, 'eva_intro_after_tpa');
+            state.openingGreetingPlayed = true;
+            state.consecutiveNoiseOrEmptyTurns = 0;
+            this.logCallTurn(state.callSid, {
+              prepMs,
+              sttMs,
+              llmMs: null,
+              ttsMs: ttsMsIntro,
+              totalMs: Date.now() - turnStart,
+              tpa: userSaid,
+              eva: toSpeakFirst,
+              note: '(EVA intro after live TPA opener)',
+            });
+            state.processing = false;
+            startFallbackTimer();
+            return;
+          }
+        }
         // Inaudible/empty: re-ask the same field only (no AI call) so conversation stays in phase.
         if (wasInaudibleTurn) {
           const repeatPhrase = getRepeatOnlyPrompt();
@@ -1068,12 +1126,16 @@ export class MediaStreamHandlerService {
           state.evaAwaitingYesAfterIdentity = false;
         }
 
-        // 2) TPA explicitly hands off ("go ahead / what do you need / how can I help"):
-        //    permission granted to ask benefit fields, regardless of identity-answer count.
-        if (state.purposeSaid && isTpaHandoff(userSaid)) {
-          state.patientIdentityReadyForBenefits = true;
-          state.evaAwaitingYesAfterDob = false;
-          state.evaAwaitingYesAfterIdentity = false;
+        if (isTpaBenefitQnaHandoff(userSaid)) {
+          state.tpaBenefitQnaOpen = true;
+        } else if (
+          state.patientIdentityReadyForBenefits &&
+          !state.tpaBenefitQnaOpen &&
+          /\b(what is|what's|what are|can you (tell me|provide|share)|give me)\b.*\b(coverage|deductible|copay|coinsurance|out[-\s]?of[-\s]?pocket|maximum|validity|effective date|annual maximum|benefit)\b/i.test(
+            userSaid,
+          )
+        ) {
+          state.tpaBenefitQnaOpen = true;
         }
 
         const recallReply = getRecallReply(
@@ -1154,6 +1216,8 @@ export class MediaStreamHandlerService {
                 state.patientIdentityReadyForBenefits ||
                 state.patientInfo === null,
               purposeStated: state.purposeSaid,
+              tpaBenefitQnaOpen:
+                state.tpaBenefitQnaOpen || state.patientInfo === null,
             },
             state.callContext,
           );
@@ -1526,14 +1590,14 @@ export class MediaStreamHandlerService {
         }
 
         // ---------------------------------------------------------------------------
-        // GUARD: do not let EVA ask for ANY benefit field before identity is cleared.
-        // If the LLM (or a fallback branch) composed something like "Can I get the
-        // group ID?" while patientIdentityReadyForBenefits is still false, swap it
-        // for a neutral ack that keeps the floor with the TPA.
+        // GUARD: do not let EVA ask for ANY benefit field until identity is cleared AND
+        // the TPA has opened benefit Q&A ("what do you want to know about the patient…").
         // ---------------------------------------------------------------------------
+        const benefitCollectionGated =
+          !state.patientIdentityReadyForBenefits || !state.tpaBenefitQnaOpen;
         if (
           state.purposeSaid &&
-          !state.patientIdentityReadyForBenefits &&
+          benefitCollectionGated &&
           !state.allDoneAnnounced &&
           toSpeak &&
           isBenefitFieldAsk(toSpeak, orderedF, state.fieldQuestionByKey) &&
@@ -1541,14 +1605,14 @@ export class MediaStreamHandlerService {
           !identityDirectReply
         ) {
           this.logger.warn(
-            '[MediaStream] LLM asked benefit field before identity cleared — replacing with neutral ack.',
+            '[MediaStream] LLM asked benefit field before identity + benefit gate — replacing with neutral ack.',
           );
-          // If TPA said something meaty (not just "okay"), prefer an inviting line;
-          // otherwise give a minimal ack to let TPA lead verification.
-          toSpeak = isBareAcknowledgement(userSaid)
-            ? 'Of course.'
-            : 'Sure, please go ahead with your verification questions.';
-          // Clear lastAskedField so we don't try to persist a benefit we never really asked.
+          toSpeak =
+            state.patientIdentityReadyForBenefits && !state.tpaBenefitQnaOpen
+              ? "Sounds good. Whenever you're ready, I can go through the benefit details we need for this patient."
+              : isBareAcknowledgement(userSaid)
+                ? 'Of course.'
+                : 'Sure, please go ahead with your verification questions.';
           state.lastAskedField = null;
         }
 
@@ -1563,6 +1627,7 @@ export class MediaStreamHandlerService {
         // ---------------------------------------------------------------------------
         if (
           state.patientIdentityReadyForBenefits &&
+          state.tpaBenefitQnaOpen &&
           !state.allDoneAnnounced &&
           !state.justCompletedAllFields &&
           !allCollected &&
@@ -1842,9 +1907,6 @@ export class MediaStreamHandlerService {
         }
         (async () => {
           try {
-            // Kick off the DB fetch for the full call context IN PARALLEL with the opening
-            // greeting TTS. EVA can greet while the patient/provider/payer data loads — this
-            // way the TPA's first verification question already has the answer cached.
             let contextPromise: Promise<PatientCallContext | null> =
               Promise.resolve(null);
             if (state.patientId) {
@@ -1859,16 +1921,6 @@ export class MediaStreamHandlerService {
                 });
             }
 
-            state.lastSpeakTime = Date.now();
-            state.conversationTranscript.push('EVA: ' + CONVERSATION_GREETING);
-            const greetStart = Date.now();
-            const ttsGreet = await speak(
-              CONVERSATION_GREETING,
-              'opening_greeting',
-            );
-
-            // Resolve context after the greeting starts playing — by the time the TPA
-            // finishes their opener, EVA already has NPI / Tax ID / member ID / names in memory.
             const ctx = await contextPromise;
             if (ctx) {
               state.callContext = ctx;
@@ -1892,7 +1944,6 @@ export class MediaStreamHandlerService {
                   ' — patient details will be unavailable on this call.',
               );
             }
-            // Only use static patient info when there is no patientId (e.g. generic inbound); never when patientId is set but patient missing.
             if (!state.patientInfo && !state.patientId) {
               state.patientInfo = STATIC_PATIENT_INFO;
               state.callContext = STATIC_CALL_CONTEXT;
@@ -1904,20 +1955,13 @@ export class MediaStreamHandlerService {
                 '[MediaStream] Using static patient info (no patientId on stream). Pass patientId (or payeeId) in the stream URL to use real patient details from the database.',
               );
             }
-            this.logCallTurn(state.callSid, {
-              prepMs: 0,
-              sttMs: 0,
-              llmMs: null,
-              ttsMs: ttsGreet,
-              totalMs: Date.now() - greetStart,
-              tpa: '—',
-              eva: CONVERSATION_GREETING,
-              note: '(opening greeting)',
-            });
-            state.openingGreetingPlayed = true;
+            this.logCallEvent(
+              state.callSid,
+              'EVA stream started — listening for live TPA before intro',
+            );
           } catch (e) {
             this.logger.warn(
-              '[MediaStream] Greeting failed',
+              '[MediaStream] Start context load failed',
               (e as Error)?.message,
             );
           }
@@ -2058,11 +2102,11 @@ export class MediaStreamHandlerService {
     state.mode = 'eva';
     const sourceLabel = 'TPA_IVR';
     void pushLiveTracker(
-      `[CALL_EVENT] ${sourceLabel}_LIVE_AGENT — EVA greeting`,
+      `[CALL_EVENT] ${sourceLabel}_LIVE_AGENT — EVA listening (deferred intro)`,
     );
     this.logCallEvent(
       state.callSid,
-      `${sourceLabel} handoff: live agent detected`,
+      `${sourceLabel} handoff: live agent detected; EVA waits for TPA opener`,
     );
 
     let contextPromise: Promise<PatientCallContext | null> =
@@ -2081,12 +2125,7 @@ export class MediaStreamHandlerService {
             });
     }
 
-    state.lastSpeakTime = Date.now();
-    state.conversationTranscript.push('EVA: ' + CONVERSATION_GREETING);
-    const ttsMs = await speak(
-      CONVERSATION_GREETING,
-      'opening_after_tpa_ivr',
-    ).catch(() => 0);
+    state.openingGreetingPlayed = false;
 
     const ctx = await contextPromise;
     if (ctx) {
@@ -2119,9 +2158,7 @@ export class MediaStreamHandlerService {
       );
     }
 
-    state.openingGreetingPlayed = true;
-    void pushLiveTracker(`EVA: ${CONVERSATION_GREETING}`);
-    return ttsMs;
+    return 0;
   }
 
   /** Convert raw mulaw (8kHz mono) file to wav for transcription API */

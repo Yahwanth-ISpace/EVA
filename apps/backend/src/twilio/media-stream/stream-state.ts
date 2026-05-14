@@ -44,6 +44,11 @@ export interface StreamState {
   mode: 'eva' | 'tpa-ivr';
   /** True after we've already said our purpose (e.g. "I need a few benefit details") — avoid repeating it while user is speaking. */
   purposeSaid: boolean;
+  /**
+   * TPA has opened the benefit Q&A segment (e.g. "What would you like to know about the patient?").
+   * Until this is true, EVA must not ask verbatim benefit verification questions.
+   */
+  tpaBenefitQnaOpen: boolean;
   /** Rep confirmed after we gave DOB (handler detects yes/thanks following DOB answer). */
   patientIdentityReadyForBenefits: boolean;
   /** Last EVA reply included patient DOB from DB — next rep line may be confirmation. */
@@ -63,7 +68,7 @@ export interface StreamState {
   allDoneAnnounced: boolean;
   /** Consecutive turns with skip / inaudible / weak audio — for skip-LLM and abort guardrails. */
   consecutiveNoiseOrEmptyTurns: number;
-  /** Set after the Twilio stream plays CONVERSATION_GREETING — used to block repeated intros. */
+  /** Set after EVA's first spoken intro on the live call (deferred until the TPA finishes their opener). */
   openingGreetingPlayed: boolean;
 }
 

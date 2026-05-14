@@ -9,6 +9,56 @@ export function pickPurposeOfCallPhrase(): string {
   return PURPOSE_OF_CALL_LINE_VARIANTS[i] ?? PURPOSE_OF_CALL_LINE_VARIANTS[0];
 }
 
+/** Enough substance that we can assume the live agent (not IVR noise) has spoken — then EVA may give her intro. */
+export function isSubstantiveTpaOpener(userSaid: string): boolean {
+  const t = userSaid.trim();
+  if (t.length < 10) return false;
+  const words = t.split(/\s+/).filter(Boolean).length;
+  if (/\b(how can i help|how may i help|what can i do for you)\b/i.test(t))
+    return true;
+  if (
+    /\b(my name is|thank you for calling|good (morning|afternoon|evening)|i'?ll be (happy|glad) to help|this is \w+\s+(from|with))\b/i.test(
+      t,
+    )
+  )
+    return true;
+  return t.length >= 36 || words >= 6;
+}
+
+/** TPA explicitly moved to "what benefit details do you need about this patient?" — OK to ask verbatim benefit questions (once identity is cleared). */
+export function isTpaBenefitQnaHandoff(userSaid: string): boolean {
+  const t = userSaid.trim().toLowerCase();
+  if (t.length < 12) return false;
+  return (
+    /\bwhat\s+(would you|do you want to)\s+like\s+to\s+know\s+about\s+(the\s+)?(patient|member|subscriber)\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+(do you|would you)\s+(need|want)\s+to\s+know\s+about\s+(the\s+)?(patient|member|this\s+case|their)\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+(benefit|coverage|eligibility)\s+(details|information)\s+(do you|would you|can i)\s+(need|like|get)\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+(details|information)\s+(can i|do you need|would you like)\s+(on|about|for)\s+(the\s+)?(patient|member|benefits)\b/.test(
+      t,
+    ) ||
+    /\b(go ahead|feel free)\s+with\s+your\s+questions\b/.test(t) ||
+    /\bwhat\s+questions\s+did\s+you\s+have\b/.test(t) ||
+    /\b(let me know|tell me)\s+what\s+(you\s+need|information\s+you\s+need)\b/.test(
+      t,
+    ) ||
+    /\bso\s+what\s+(are you|do you)\s+(looking\s+for|calling\s+about|need\s+today)\b/.test(
+      t,
+    ) ||
+    /\banything\s+(else\s+)?(you\s+)?(need|want)\s+(to\s+know\s+)?(on|about)\s+(the\s+)?(patient|benefits|coverage)\b/.test(
+      t,
+    ) ||
+    /\bready\s+when\s+you\s+are\s+for\s+your\s+(benefit|verification)\s+questions\b/.test(
+      t,
+    )
+  );
+}
+
 /** TPA asks why we are calling / purpose / what they can help with in that sense. */
 export function userAsksPurposeOfCallOrOpening(userSaid: string): boolean {
   const t = userSaid.trim().toLowerCase();
@@ -455,6 +505,12 @@ export function userAskedWhoIsCalling(userSaid: string): boolean {
 export function isFullOpeningSelfIntro(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (t.length < 15) return false;
+  if (
+    /(hi|hey|hello),?\s+this\s+is\s+reena\b/.test(t) &&
+    /went\s+dentals/.test(t)
+  ) {
+    return true;
+  }
   // Any greeting-style "Hi / Hey + I'm Reena from Went Dentals" (with or without "how are you")
   if (/(hi|hey|hello),?\s+i'?m\s+reena\s+from\s+went\s+dentals/.test(t)) {
     return true;

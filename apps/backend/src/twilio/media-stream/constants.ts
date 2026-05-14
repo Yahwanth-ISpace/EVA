@@ -41,9 +41,12 @@ export const TPA_IVR_SPANISH_WAIT_MS = Number(
   process.env.TPA_IVR_SPANISH_WAIT_MS || 16000,
 );
 
-/** First thing EVA says: natural, human intro. Do not ask for any field — wait for the user to respond. */
-export const CONVERSATION_GREETING =
-  "Hi, I'm Reena from Went Dentals. How are you doing?";
+/** First EVA line after the live TPA finishes their opener — identity only on request; no patient name/DOB here. */
+export const EVA_INTRO_LINE =
+  "Hi, this is Reena — I'm calling from Went Dentals on behalf of the practice.";
+
+/** @deprecated Use EVA_INTRO_LINE — kept for log labels / backwards compatibility. */
+export const CONVERSATION_GREETING = EVA_INTRO_LINE;
 
 /** One sentence, same intent — rotate so we never sound canned when TPA asks purpose (fallback if LLM mis-hears). */
 export const PURPOSE_OF_CALL_LINE_VARIANTS = [
