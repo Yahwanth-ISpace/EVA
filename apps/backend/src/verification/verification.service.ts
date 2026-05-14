@@ -701,6 +701,7 @@ export class VerificationService {
     const setSubrinaAnswer = (
       target: Record<string, unknown>,
       targetQuestion: unknown,
+      isHistory,
     ) => {
       if (typeof targetQuestion !== 'string') return false;
       const normalizedTargetQuestion = this.normalizeText(targetQuestion);
@@ -711,7 +712,11 @@ export class VerificationService {
           normalizedTargetQuestion.includes(key),
       );
       if (match) {
-        target.answer = match[1];
+        if (isHistory) {
+          target.history.push(match[1]);
+        } else {
+          target.answer = match[1];
+        }
         return true;
       }
       return false;
@@ -723,14 +728,15 @@ export class VerificationService {
         continue;
       }
       const nested = value as Record<string, unknown>;
-      setSubrinaAnswer(nested, nested.question);
+      setSubrinaAnswer(nested, nested.question, false);
     }
 
     const history = Array.isArray(doc.history) ? doc.history : [];
     for (const item of history) {
       if (!item || typeof item !== 'object') continue;
       const historyItem = item as Record<string, unknown>;
-      setSubrinaAnswer(historyItem, historyItem.question);
+      historyItem.history = [];
+      setSubrinaAnswer(historyItem, historyItem.question, true);
     }
   }
 
