@@ -133,26 +133,41 @@ export class MongoService implements OnModuleDestroy {
     return doc;
   }
 
-  saveSubrinaDebugData(
+  async saveSubrinaDebugData(
     payeeId: string,
     appointmentId: string | null,
     subrinaData: Document | null,
   ) {
-    this.subrinaResponseCollection()
-      .then((col) =>
-        col.insertOne({
-          subrinaData,
-          savedAt: new Date(),
-        }),
-      )
-      .then((result) =>
+    try {
+      const col = await this.subrinaResponseCollection();
+
+      // Build query to find existing document
+      const query: Document = { PatientID: payeeId.trim() };
+      if (appointmentId?.trim()) {
+        query.AppointmentID = appointmentId.trim();
+      }
+
+      // Check if document already exists and delete to avoid duplicates
+      const existingDoc = await col.findOne(query);
+      if (existingDoc) {
+        await col.deleteOne({ _id: existingDoc._id });
         this.logger.log(
-          `Saved Subrina debug data to MongoDB: ${result.insertedId}`,
-        ),
-      )
-      .catch((err) =>
-        this.logger.error('Error saving Subrina debug data:', err),
+          `Deleted existing Subrina debug data: ${existingDoc._id}`,
+        );
+      }
+
+      // Insert new document
+      const result = await col.insertOne({
+        subrinaData,
+        savedAt: new Date(),
+      });
+
+      this.logger.log(
+        `Saved Subrina debug data to MongoDB: ${result.insertedId}`,
       );
+    } catch (err) {
+      this.logger.error('Error saving Subrina debug data:', err);
+    }
   }
 
   async getDb(): Promise<Db> {
