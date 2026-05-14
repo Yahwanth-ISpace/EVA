@@ -144,9 +144,11 @@ export class MongoService implements OnModuleDestroy {
       // Build query to find existing document
       const query: Document = { PatientID: payeeId.trim() };
       if (appointmentId?.trim()) {
-        query.AppointmentID = appointmentId.trim();
+        query.AppointmentID = Number(appointmentId.trim());
       }
-
+      this.logger.log(
+        'MongoDB query for saving Subrina debug data: ' + JSON.stringify(query),
+      );
       // Delete existing documents for this patient/appointment to ensure a fresh record
       await col.deleteMany(query);
 
