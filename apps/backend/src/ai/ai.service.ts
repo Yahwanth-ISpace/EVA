@@ -1215,7 +1215,7 @@ Respond with ONLY a JSON object. No markdown. Format:
     Array<{
       normalizedQuestion: string;
       question: string;
-      answar: string;
+      answar: string | string[];
     }>
   > {
     if (!verificationFields || verificationFields.length === 0) {
@@ -1239,9 +1239,9 @@ INSTRUCTIONS:
 3. Return a JSON array of objects with exactly two keys: "question" and "answar".
 4. Preserve the question text exactly as EVA spoke it in the transcript.
 5. For the USER answer (answar), normalize it to a clean value:
-   - Convert spoken numbers to digits: "twenty dollars" → "$20", "one hundred" → "100", "fourteen" → "14"
+   - Convert spoken numbers to digits: "twenty dollars" → "20", "one hundred" → "100", "fourteen" → "14"
    - Format dates properly: "May first twenty twenty six" → "May 1, 2026", "February twenty first two thousand twenty nine" → "February 21, 2029"
-   - Keep percentages as is or convert: "eighty percent" → "80%"
+   - Keep percentages as is or convert: "eighty percent" → "80", "twenty five %" → "25"
    - Remove filler words and normalize: "Uh, it is, uh, two forty-four" → "244"
    - For text answers, keep as clean text without extra words.
 6. Do NOT include any field definitions, metadata, markdown, code fences, or extra text.
@@ -1253,7 +1253,7 @@ EXAMPLE OUTPUT:
   { "question": "What is the insurance group name?", "answar": "244" },
   { "question": "What is the insurance group number?", "answar": "1717" },
   { "question": "What is the patient's date of birth?", "answar": "March 26, 1984" },
-  { "question": "What is the basic coverage?", "answar": "20%" }
+  { "question": "What is the basic coverage?", "answar": "20" }
 ]`;
 
       const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
@@ -1292,10 +1292,17 @@ EXAMPLE OUTPUT:
         );
 
       const questionAnswerPairs = hasQuestionAnswerPairs
-        ? parsedArray.map((item) => ({
-            question: String((item as { question: string }).question),
-            answar: String((item as { answar: string }).answar),
-          }))
+        ? parsedArray.map((item) => {
+            const raw = String((item as { answar: string }).answar);
+            // Split by " and " if it contains multiple values (e.g., dates)
+            const answar = raw.includes(' and ')
+              ? raw.split(/\s+and\s+/i).map((s) => s.trim())
+              : raw;
+            return {
+              question: String((item as { question: string }).question),
+              answar,
+            };
+          })
         : [];
 
       const parsedRecords = parsedArray.filter(
