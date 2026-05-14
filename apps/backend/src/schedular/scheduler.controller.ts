@@ -2,7 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { SchedulerService } from './scheduler.service';
 import * as appointmentData from './sample.json';
-import { AppointmentDetailsDto } from 'src/appointment/dto/appointment-details.dto';
+// import { AppointmentDetailsDto } from 'src/appointment/dto/appointment-details.dto';
 
 @Controller('scheduler')
 export class SchedulerController {
@@ -15,7 +15,8 @@ export class SchedulerController {
     description: 'Returns the sample.json file content',
   })
   getSampleData(): Record<string, any> {
-    return appointmentData;
+    const appointment = this.schedulerService.getSampleData();
+    return appointment;
   }
 
   @Get('appointment')
