@@ -452,7 +452,10 @@ export class VerificationService {
     dobFormatted: string | null;
     ssn: string | null;
   } | null> {
-    const doc = await this.mongoService.findAppointmentDocument(patientId, null);
+    const doc = await this.mongoService.findAppointmentDocument(
+      patientId,
+      null,
+    );
     if (!doc) return null;
     const fn = String(doc.Patient_FirstName ?? '');
     const ln = String(doc.Patient_LastName ?? '');
@@ -464,7 +467,10 @@ export class VerificationService {
       fullName: `${fn} ${ln}`.trim(),
       dob,
       dobFormatted,
-      ssn: doc.SSN != null && String(doc.SSN).trim() !== '' ? String(doc.SSN) : null,
+      ssn:
+        doc.SSN != null && String(doc.SSN).trim() !== ''
+          ? String(doc.SSN)
+          : null,
     };
   }
 
@@ -493,6 +499,13 @@ export class VerificationService {
       'December',
     ];
     return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+  }
+
+  private tryFormatDateString(raw: string): string | null {
+    if (!raw) return null;
+    const parsed = new Date(raw);
+    if (!Number.isFinite(parsed.getTime())) return null;
+    return this.formatDobForSpeech(parsed);
   }
 
   /**
@@ -565,10 +578,7 @@ export class VerificationService {
       doc.SubscriberID != null && String(doc.SubscriberID).trim() !== ''
         ? String(doc.SubscriberID).trim()
         : null;
-    const memberId =
-      subscriberId ||
-      process.env.EVA_MEMBER_ID?.trim() ||
-      null;
+    const memberId = subscriberId || process.env.EVA_MEMBER_ID?.trim() || null;
 
     const sf = String(doc.Insured_FirstName ?? '').trim();
     const sl = String(doc.Insured_LastName ?? '').trim();
@@ -656,11 +666,78 @@ export class VerificationService {
     return steps;
   }
 
-  private tryFormatDateString(raw: string): string | null {
-    if (!raw) return null;
-    const d = new Date(raw);
-    if (!Number.isFinite(d.getTime())) return null;
-    return this.formatDobForSpeech(d);
+  private normalizeText(value: string): string {
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  private mapSubrinaAnswers(
+    verificationFields: Array<Record<string, unknown>>,
+    subrinaData: any,
+  ): void {
+    if (
+      !subrinaData ||
+      typeof subrinaData !== 'object' ||
+      Array.isArray(subrinaData)
+    ) {
+      return;
+    }
+
+    // const doc = subrinaData as Record<string, unknown>;
+    const verificationByQuestion = new Map<string, string>();
+    for (const field of verificationFields) {
+      const question = field.question;
+      const answer = field.answar ?? field.answer ?? field.value;
+      if (typeof question === 'string' && answer != null) {
+        verificationByQuestion.set(
+          this.normalizeText(question),
+          String(answer).trim(),
+        );
+      }
+    }
+
+    const setSubrinaAnswer = (
+      target: Record<string, any>,
+      targetQuestion: any,
+      isHistory,
+    ) => {
+      if (typeof targetQuestion !== 'string') return false;
+      const normalizedTargetQuestion = this.normalizeText(targetQuestion);
+      const match = [...verificationByQuestion.entries()].find(
+        ([key]) =>
+          key === normalizedTargetQuestion ||
+          key.includes(normalizedTargetQuestion) ||
+          normalizedTargetQuestion.includes(key),
+      );
+      if (match) {
+        if (isHistory) {
+          target.history.push(match[1]);
+        } else {
+          target.answer = match[1];
+        }
+        return true;
+      }
+      return false;
+    };
+
+    const doc = subrinaData as Record<string, any>;
+    for (const value of Object.values(doc)) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        continue;
+      }
+      const nested = value as Record<string, any>;
+      setSubrinaAnswer(nested, nested.question, false);
+    }
+
+    const history = Array.isArray(doc.history) ? doc.history : [];
+    for (const item of history) {
+      if (!item || typeof item !== 'object') continue;
+      const historyItem = item as Record<string, any>;
+      historyItem.history = [];
+      setSubrinaAnswer(historyItem, historyItem.question, true);
+    }
   }
 
   /**
@@ -756,16 +833,7 @@ export class VerificationService {
     transcriptToAppend?: string | null,
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
-  ): Promise<{
-    payeeId: string;
-    verificationFields: Array<{
-      question: string;
-      field: string;
-      required: boolean;
-      order: number;
-      value: string | null;
-    }>;
-  }> {
+  ): Promise<any> {
     if (!payeeId) {
       throw new BadRequestException('payeeId is required');
     }
@@ -785,10 +853,7 @@ export class VerificationService {
       payeeId,
     );
     this.logger.log('Transcript to append: {}', transcriptToAppend);
-    this.logger.log(
-      'Verification requirement ID: {}',
-      verificationRequirementId,
-    );
+
     this.logger.log('Appointment ID: {}', appointmentId);
     this.logger.log('Extracted data: {}', extracted);
     // If verification requirement is provided, get the fields from it
@@ -834,16 +899,27 @@ export class VerificationService {
     }
 
     // Use Gemini to extract the values from the transcript
-    const verificationFields =
+    let verificationFields =
       await this.aiService.extractVerificationFieldsFromTranscript(
         transcriptToAppend,
         fieldsToExtract,
       );
-    this.logger.log('Extracted verification appointmentId:', appointmentId);
-    this.logger.log('Extracted verificationfields:::: {}', verificationFields);
-    return {
+    const subrinaData = await this.mongoService.getSubrinaAppointments(
       payeeId,
-      verificationFields,
-    };
+      appointmentId?.trim() || '',
+    );
+    if (subrinaData) {
+      this.mapSubrinaAnswers(verificationFields, subrinaData);
+    }
+    // this.logger.log(subrinaData);
+
+    //save subrinaData to mongo collection for debugging
+    await this.mongoService.saveSubrinaDebugData(
+      payeeId,
+      appointmentId?.trim() || null,
+      subrinaData,
+    );
+
+    return subrinaData;
   }
 }

@@ -3,6 +3,8 @@ import { Collection, Document, MongoClient, Db } from 'mongodb';
 
 /** Mongo collection that holds Sabrina / scheduler appointment + patient + payer + office + provider denormalized documents. */
 export const DEFAULT_APPOINTMENTS_COLLECTION = 'appointments';
+export const SUBRINA_APPOINTMENTS_COLLECTION = 'subrina_appointments';
+export const SUBRINA_RESPONSE_COLLECTION = 'subrina_response';
 
 @Injectable()
 export class MongoService implements OnModuleDestroy {
@@ -14,10 +16,29 @@ export class MongoService implements OnModuleDestroy {
     const name = process.env.MONGO_APPOINTMENTS_COLLECTION?.trim();
     return name || DEFAULT_APPOINTMENTS_COLLECTION;
   }
+  getSubrinaAppointmentsCollectionName(): string {
+    const name = process.env.MONGO_SUBRINA_APPOINTMENTS_COLLECTION?.trim();
+    return name || SUBRINA_APPOINTMENTS_COLLECTION;
+  }
+
+  getSubrinaResponseCollectionName(): string {
+    const name = process.env.MONGO_SUBRINA_RESPONSE_COLLECTION?.trim();
+    return name || SUBRINA_RESPONSE_COLLECTION;
+  }
 
   async appointmentsCollection(): Promise<Collection<Document>> {
     const db = await this.getDb();
     return db.collection(this.getAppointmentsCollectionName());
+  }
+
+  async subrinaAppointmentsCollection(): Promise<Collection<Document>> {
+    const db = await this.getDb();
+    return db.collection(this.getSubrinaAppointmentsCollectionName());
+  }
+
+  async subrinaResponseCollection(): Promise<Collection<Document>> {
+    const db = await this.getDb();
+    return db.collection(this.getSubrinaResponseCollectionName());
   }
 
   /** Match either string or numeric `AppointmentID` stored in Mongo. */
@@ -90,6 +111,63 @@ export class MongoService implements OnModuleDestroy {
       .find({})
       .sort({ AppointmentDate: 1, savedAt: 1 } as Document)
       .toArray();
+  }
+
+  async getSubrinaAppointments(
+    payeeId: string,
+    appointmentId: string,
+  ): Promise<Document | null> {
+    const col = await this.subrinaAppointmentsCollection();
+    const aid = appointmentId.trim();
+    const pid = payeeId.trim();
+    if (!aid || !pid) return null;
+    const doc = await col.findOne(
+      {
+        ...this.appointmentIdQuery(aid),
+        PatientID: pid,
+      },
+      {
+        sort: { AppointmentDate: -1, savedAt: -1 } as Document,
+      },
+    );
+    return doc;
+  }
+
+  async saveSubrinaDebugData(
+    payeeId: string,
+    appointmentId: string | null,
+    subrinaData: Document | null,
+  ) {
+    try {
+      const col = await this.subrinaResponseCollection();
+
+      // Build query to find existing document
+      const query: Document = { PatientID: payeeId.trim() };
+      if (appointmentId?.trim()) {
+        query.AppointmentID = appointmentId.trim();
+      }
+
+      // Check if document already exists and delete to avoid duplicates
+      const existingDoc = await col.findOne(query);
+      if (existingDoc) {
+        await col.deleteOne({ _id: existingDoc._id });
+        this.logger.log(
+          `Deleted existing Subrina debug data: ${existingDoc._id}`,
+        );
+      }
+
+      // Insert new document
+      const result = await col.insertOne({
+        ...subrinaData,
+        createdOn: new Date(),
+      });
+
+      this.logger.log(
+        `Saved Subrina debug data to MongoDB: ${result.insertedId}`,
+      );
+    } catch (err) {
+      this.logger.error('Error saving Subrina debug data:', err);
+    }
   }
 
   async getDb(): Promise<Db> {

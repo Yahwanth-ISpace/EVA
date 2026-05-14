@@ -200,10 +200,7 @@ ${patientBlock}
     if (!field) return '';
     const fromPayload = fieldQ[field]?.trim();
     if (fromPayload) return fromPayload;
-    return (
-      AiService.LEGACY_VERBATIM_BENEFIT_QUESTIONS[field] ??
-      String(field)
-    );
+    return AiService.LEGACY_VERBATIM_BENEFIT_QUESTIONS[field] ?? String(field);
   }
 
   private hasValue(v: string | null | undefined): boolean {
@@ -420,7 +417,10 @@ INTERNAL CALL STATE (never read aloud verbatim):
     const numFields = fields.length;
     const fieldQ = this.fieldQuestionMapFromContext(callContext);
     const firstFieldName = nextFieldToAsk ?? fields[0];
-    const firstFieldQuestion = this.verbatimBenefitQuestion(firstFieldName, fieldQ);
+    const firstFieldQuestion = this.verbatimBenefitQuestion(
+      firstFieldName,
+      fieldQ,
+    );
     const nextFieldQuestion = nextFieldToAsk
       ? this.verbatimBenefitQuestion(nextFieldToAsk, fieldQ)
       : '';
@@ -1187,12 +1187,13 @@ Respond with ONLY a JSON object. No markdown. Format:
   }
 
   /**
-   * Extract verification fields from a transcript by matching fields mentioned in EVA questions to user responses.
-   * Uses Gemini to parse the transcript and extract values based on verification field definitions.
+   * Extract verification fields from a transcript by matching EVA questions to USER responses.
+   * Uses Gemini to parse the transcript and return a transcript-only list of question/answar pairs.
+   * If the model returns detailed field values, those are still supported as a fallback.
    *
    * @param transcript The full transcript with EVA and User dialog
    * @param verificationFields Array of field definitions with questions
-   * @returns Structured JSON with extracted values
+   * @returns Array of question/answar pairs or field extraction results
    */
   public async extractVerificationFieldsFromTranscript(
     transcript: string,
@@ -1204,11 +1205,9 @@ Respond with ONLY a JSON object. No markdown. Format:
     }>,
   ): Promise<
     Array<{
+      normalizedQuestion: string;
       question: string;
-      field: string;
-      required: boolean;
-      order: number;
-      value: string | null;
+      answar: string;
     }>
   > {
     if (!verificationFields || verificationFields.length === 0) {
@@ -1216,45 +1215,37 @@ Respond with ONLY a JSON object. No markdown. Format:
     }
 
     try {
-      const fieldDefinitions = verificationFields
-        .map((f, i) => `${i + 1}. Field: "${f.field}"`)
-        .join('\n');
-
       const prompt = `You are analyzing a call transcript between EVA (from a dental practice) and a USER (from an insurance company).
 
-TASK: For each field, find if EVA asked a question that contains/mentions that field, then extract the corresponding answer from the USER. Also extract the actual EVA question text.
-
-FIELDS TO EXTRACT:
-${fieldDefinitions}
+TASK: Extract the question text EVA asked and the USER answer that follows for each dialog turn.
+- Use ONLY the transcript to determine the matching question and answer.
+- Do NOT search the fieldDefinitions for answer content or validate answers against them.
+- Do NOT invent any new questions or answers.
 
 TRANSCRIPT:
 ${transcript}
 
 INSTRUCTIONS:
-1. For each field name, search the transcript to find when EVA mentions or asks about that field
-2. Extract the EXACT question text that EVA asked (from the transcript) for that field
-3. Once you find EVA's question about that field, locate the USER's response immediately after
-4. Extract ONLY the value from USER's answer - CRITICAL: Convert all text numbers to numeric format:
-   - "Twenty dollars" → "$20" or "20"
-   - "Two thousand four hundred" → "2400"
-   - "Eighty percent" → "80%"
-   - Remove all English word representations and convert to numbers/symbols
-5. Format values appropriately:
-   - Money/amounts: Use $ prefix or number only (e.g., "$50", "50")
-   - Percentages: Use % suffix (e.g., "80%", "50%")
-   - Numbers: Plain digits (e.g., "2400", "123")
-   - Dates: Keep date format (e.g., "February 20, 2027", "2/20/2027")
-6. If a field is mentioned multiple times, use the FIRST occurrence
-7. If the field is not mentioned or the answer is not found, set value to null and question to null
-8. Return ONLY valid JSON (no markdown, no code blocks)
+1. Identify every EVA turn that is a question or request for information.
+2. For each EVA question, capture the USER response immediately after it.
+3. Return a JSON array of objects with exactly two keys: "question" and "answar".
+4. Preserve the question text exactly as EVA spoke it in the transcript.
+5. For the USER answer (answar), normalize it to a clean value:
+   - Convert spoken numbers to digits: "twenty dollars" → "$20", "one hundred" → "100", "fourteen" → "14"
+   - Format dates properly: "May first twenty twenty six" → "May 1, 2026", "February twenty first two thousand twenty nine" → "February 21, 2029"
+   - Keep percentages as is or convert: "eighty percent" → "80%"
+   - Remove filler words and normalize: "Uh, it is, uh, two forty-four" → "244"
+   - For text answers, keep as clean text without extra words.
+6. Do NOT include any field definitions, metadata, markdown, code fences, or extra text.
+7. If a USER response is missing after an EVA question, omit that pair.
+8. Return valid JSON only.
 
-Return JSON in this exact format:
+EXAMPLE OUTPUT:
 [
-  { "question": "Can I get the patent ID?", "field": "patentId", "required": true, "order": 1, "value": "2400" },
-  { "question": "Can I get the deductible?", "field": "deductible", "required": true, "order": 2, "value": "$20" },
-  { "question": "May I have the copay?", "field": "copay", "required": true, "order": 3, "value": "$30" },
-  { "question": "Can you provide the validity?", "field": "validity", "required": true, "order": 4, "value": "February 20, 2027" },
-  { "question": "May I have the maxBenefit?", "field": "maxBenefit", "required": true, "order": 5, "value": "80%" }
+  { "question": "What is the insurance group name?", "answar": "244" },
+  { "question": "What is the insurance group number?", "answar": "1717" },
+  { "question": "What is the patient's date of birth?", "answar": "March 26, 1984" },
+  { "question": "What is the basic coverage?", "answar": "20%" }
 ]`;
 
       const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
@@ -1270,7 +1261,7 @@ Return JSON in this exact format:
         jsonString = jsonString.replace(/```json|```/gi, '').trim();
       }
 
-      let parsed: any[] = [];
+      let parsed: unknown = [];
       try {
         parsed = JSON.parse(jsonString);
       } catch (parseErr) {
@@ -1281,38 +1272,52 @@ Return JSON in this exact format:
         parsed = [];
       }
 
-      // Ensure all fields are present and properly formatted
-      const result_array: Array<{
-        question: string;
-        field: string;
-        required: boolean;
-        order: number;
-        value: string | null;
-      }> = [];
-      for (const field of verificationFields) {
-        const found = parsed.find((p) => p.field === field.field);
-        result_array.push({
-          question: found?.question || field.question,
-          field: field.field,
-          required: field.required,
-          order: field.order,
-          value: found?.value ?? null,
-        });
-      }
-      this.logger.log('The final response is: {}', result_array);
-      return result_array;
+      const parsedArray = Array.isArray(parsed) ? parsed : [];
+      const hasQuestionAnswerPairs =
+        parsedArray.length > 0 &&
+        parsedArray.every(
+          (item) =>
+            typeof item === 'object' &&
+            item !== null &&
+            typeof (item as { question?: unknown }).question === 'string' &&
+            typeof (item as { answar?: unknown }).answar === 'string',
+        );
+
+      const questionAnswerPairs = hasQuestionAnswerPairs
+        ? parsedArray.map((item) => ({
+            question: String((item as { question: string }).question),
+            answar: String((item as { answar: string }).answar),
+          }))
+        : [];
+
+      const parsedRecords = parsedArray.filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === 'object' && item !== null,
+      );
+
+      const normalizeText = (value: string) =>
+        value
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+
+      const normalizedPairs = questionAnswerPairs.map((pair) => ({
+        ...pair,
+        normalizedQuestion: normalizeText(pair.question),
+      }));
+
+      this.logger.log('normalized pairs:::::: {}', normalizedPairs);
+      return normalizedPairs;
     } catch (err) {
       this.logger.error(
         '❌ Error extracting verification fields from transcript:',
         err,
       );
-      // Return array with null values
+      // Return array with empty answers on failure
       return verificationFields.map((f) => ({
         question: f.question,
-        field: f.field,
-        required: f.required,
-        order: f.order,
-        value: null,
+        normalizedQuestion: '',
+        answar: '',
       }));
     }
   }
