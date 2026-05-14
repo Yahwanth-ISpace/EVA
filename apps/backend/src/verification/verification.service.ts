@@ -675,12 +675,17 @@ export class VerificationService {
 
   private mapSubrinaAnswers(
     verificationFields: Array<Record<string, unknown>>,
-    subrinaData: unknown[],
+    subrinaData: any,
   ): void {
-    if (!Array.isArray(subrinaData) || subrinaData.length === 0) {
+    if (
+      !subrinaData ||
+      typeof subrinaData !== 'object' ||
+      Array.isArray(subrinaData)
+    ) {
       return;
     }
 
+    // const doc = subrinaData as Record<string, unknown>;
     const verificationByQuestion = new Map<string, string>();
     for (const field of verificationFields) {
       const question = field.question;
@@ -712,7 +717,7 @@ export class VerificationService {
       return false;
     };
 
-    const doc = subrinaData[0] as Record<string, unknown>;
+    const doc = subrinaData as Record<string, any>;
     for (const value of Object.values(doc)) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) {
         continue;
@@ -842,10 +847,7 @@ export class VerificationService {
       payeeId,
     );
     this.logger.log('Transcript to append: {}', transcriptToAppend);
-    this.logger.log(
-      'Verification requirement ID: {}',
-      verificationRequirementId,
-    );
+
     this.logger.log('Appointment ID: {}', appointmentId);
     this.logger.log('Extracted data: {}', extracted);
     // If verification requirement is provided, get the fields from it
@@ -900,13 +902,18 @@ export class VerificationService {
       payeeId,
       appointmentId?.trim() || '',
     );
-    if (subrinaData && Array.isArray(subrinaData)) {
+    if (subrinaData) {
       this.mapSubrinaAnswers(verificationFields, subrinaData);
     }
-    this.logger.log(subrinaData);
+    // this.logger.log(subrinaData);
 
-    this.logger.log('Extracted verification appointmentId:', appointmentId);
-    this.logger.log('Extracted verificationfields:::: {}', verificationFields);
+    //save subrinaData to mongo collection for debugging
+    await this.mongoService.saveSubrinaDebugData(
+      payeeId,
+      appointmentId?.trim() || null,
+      subrinaData,
+    );
+
     return subrinaData;
   }
 }

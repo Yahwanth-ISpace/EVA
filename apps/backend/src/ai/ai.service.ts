@@ -1308,44 +1308,6 @@ EXAMPLE OUTPUT:
 
       this.logger.log('normalized pairs:::::: {}', normalizedPairs);
       return normalizedPairs;
-      // Ensure all fields are present and properly formatted
-      // const result_array: Array<{
-      //   question: string;
-      //   field: string;
-      //   required: boolean;
-      //   order: number;
-      //   value: string | null;
-      // }> = [];
-      // for (const field of verificationFields) {
-      //   const normalizedFieldQuestion = normalizeText(
-      //     field.question || field.field,
-      //   );
-      //   const foundPair = normalizedPairs.find(
-      //     (pair) =>
-      //       pair.normalizedQuestion.includes(normalizedFieldQuestion) ||
-      //       normalizeText(field.field).includes(pair.normalizedQuestion),
-      //   );
-
-      //   const found = parsedRecords.find(
-      //     (p) => typeof p.field === 'string' && p.field === field.field,
-      //   );
-
-      //   result_array.push({
-      //     question:
-      //       foundPair?.question ||
-      //       (typeof found?.question === 'string'
-      //         ? found.question
-      //         : field.question),
-      //     field: field.field,
-      //     required: field.required,
-      //     order: field.order,
-      //     value:
-      //       foundPair?.answar ??
-      //       (typeof found?.value === 'string' ? found.value : null),
-      //   });
-      // }
-      // this.logger.log('The final response is: {}', result_array);
-      // return result_array;
     } catch (err) {
       this.logger.error(
         '❌ Error extracting verification fields from transcript:',
