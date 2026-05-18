@@ -135,21 +135,25 @@ export class SchedulerService {
     appointmentData: Record<string, any>,
   ) {
     const db = await this.mongoService.getDb();
-    const collection = db.collection('sabrina_appointments');
+    const collection = db.collection(
+      this.mongoService.getSubrinaAppointmentsCollectionName(),
+    );
 
-    const appointmentId = appointmentData?.AppointmentID;
-    const patientId = appointmentData?.PatientID;
+    const appointmentId = appointmentData?.AppointmentID as
+      | string
+      | number
+      | undefined;
+    const patientId = appointmentData?.PatientID as string | undefined;
     if (appointmentId != null && patientId != null) {
-      const existing = await collection.findOne({
-        AppointmentID: appointmentId,
+      const query = {
         PatientID: patientId,
-      });
+        AppointmentID: Number(appointmentId),
+      };
+      const existing = await collection.findOne(query);
 
       if (existing) {
-        this.logger.log(
-          `Appointment data already exists in MongoDB for AppointmentID=${appointmentId}, PatientID=${patientId}`,
-        );
-        return existing;
+        // Delete existing documents for this patient/appointment to ensure a fresh record
+        await collection.deleteMany(query);
       }
     }
 
@@ -170,19 +174,21 @@ export class SchedulerService {
   ) {
     const collection = await this.mongoService.appointmentsCollection();
 
-    const appointmentId = appointmentData?.AppointmentID;
-    const patientId = appointmentData?.PatientID;
+    const appointmentId = appointmentData?.AppointmentID as
+      | string
+      | number
+      | undefined;
+    const patientId = appointmentData?.PatientID as string | undefined;
     if (appointmentId != null && patientId != null) {
-      const existing = await collection.findOne({
-        AppointmentID: appointmentId,
+      const query = {
         PatientID: patientId,
-      });
+        AppointmentID: Number(appointmentId),
+      };
+      const existing = await collection.findOne(query);
 
       if (existing) {
-        this.logger.log(
-          `Appointment data already exists in MongoDB for AppointmentID=${appointmentId}, PatientID=${patientId}`,
-        );
-        return existing;
+        // Delete existing documents for this patient/appointment to ensure a fresh record
+        await collection.deleteMany(query);
       }
     }
 
