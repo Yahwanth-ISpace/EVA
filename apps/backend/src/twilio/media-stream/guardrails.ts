@@ -2,11 +2,10 @@
  * Conversation guardrails: intent detection, identity Q&A helpers, benefit-field heuristics, hold/resume.
  */
 import type { PatientCallContext } from '../../verification/verification.service';
-import { PURPOSE_OF_CALL_LINE_VARIANTS } from './constants';
+import { EVA_SIMPLE_PURPOSE_FOR_OPENING } from './constants';
 
 export function pickPurposeOfCallPhrase(): string {
-  const i = Math.floor(Math.random() * PURPOSE_OF_CALL_LINE_VARIANTS.length);
-  return PURPOSE_OF_CALL_LINE_VARIANTS[i] ?? PURPOSE_OF_CALL_LINE_VARIANTS[0];
+  return EVA_SIMPLE_PURPOSE_FOR_OPENING;
 }
 
 /** Enough substance that we can assume the live agent (not IVR noise) has spoken — then EVA may give her intro. */
@@ -28,18 +27,18 @@ export function isSubstantiveTpaOpener(userSaid: string): boolean {
 /** TPA explicitly moved to "what benefit details do you need about this patient?" — OK to ask verbatim benefit questions (once identity is cleared). */
 export function isTpaBenefitQnaHandoff(userSaid: string): boolean {
   const t = userSaid.trim().toLowerCase();
-  if (t.length < 12) return false;
+  if (t.length < 8) return false;
   return (
     /\bwhat\s+(would you|do you want to)\s+like\s+to\s+know\s+about\s+(the\s+)?(patient|member|subscriber)\b/.test(
       t,
     ) ||
-    /\bwhat\s+(do you|would you)\s+(need|want)\s+to\s+know\s+about\s+(the\s+)?(patient|member|this\s+case|their)\b/.test(
+    /\bwhat\s+(do you|would you)\s+(need|want)\s+to\s+know\s+about\s+(the\s+)?(patient|member|this\s+case|their|othe)\b/.test(
       t,
     ) ||
     /\bwhat\s+(benefit|coverage|eligibility)\s+(details|information)\s+(do you|would you|can i)\s+(need|like|get)\b/.test(
       t,
     ) ||
-    /\bwhat\s+(details|information)\s+(can i|do you need|would you like)\s+(on|about|for)\s+(the\s+)?(patient|member|benefits)\b/.test(
+    /\bwhat\s+(details|information)\s+(can i|do you need|would you like)\s+(on|about|for)\s+(the\s+)?(patient|member|benefits?)\b/.test(
       t,
     ) ||
     /\b(go ahead|feel free)\s+with\s+your\s+questions\b/.test(t) ||
@@ -50,7 +49,7 @@ export function isTpaBenefitQnaHandoff(userSaid: string): boolean {
     /\bso\s+what\s+(are you|do you)\s+(looking\s+for|calling\s+about|need\s+today)\b/.test(
       t,
     ) ||
-    /\banything\s+(else\s+)?(you\s+)?(need|want)\s+(to\s+know\s+)?(on|about)\s+(the\s+)?(patient|benefits|coverage)\b/.test(
+    /\banything\s+(else\s+)?(you\s+)?(need|want)\s+(to\s+know\s+)?(on|about)\s+(the\s+)?(patient|benefits?|coverage)\b/.test(
       t,
     ) ||
     /\bready\s+when\s+you\s+are\s+for\s+your\s+(benefit|verification)\s+questions\b/.test(
@@ -59,11 +58,32 @@ export function isTpaBenefitQnaHandoff(userSaid: string): boolean {
     /\bokay,?\s+so\s+(now\s+)?what\s+(kind\s+of\s+)?(benefit|benefits)\b/i.test(
       t,
     ) ||
-    /\bnow,?\s+what\s+(benefit|benefits|details|information)\b/i.test(t) ||
-    /\bwhat\s+(kind\s+of\s+)?benefit\s+details\b.*\b(do you|you)\s+need\b/i.test(
+    /\b(okay|ok),?\s+so\b[\s\S]{0,60}\bwhat\s+do\s+you\s+want\s+to\s+know\b/.test(
       t,
     ) ||
-    /\b(regarding|about)\s+(the\s+)?(patient|member|subscriber)\b.*\b(what|which|need)\b.*\b(benefit|details|information|fields)\b/i.test(
+    /\bnow,?\s+what\s+(benefit|benefits|details|information)\b/.test(t) ||
+    /\bwhat\s+(kind\s+of\s+)?benefit\s+details\b[\s\S]{0,50}\b(do you|you)\s+need\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+are\s+the\s+benefit\s+details\b[\s\S]{0,60}\b(you\s+)?need\b[\s\S]{0,40}\b(regarding|about|for)\b[\s\S]{0,30}\b(the\s+)?patient\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+are\s+the\s+things\b[\s\S]{0,80}\b(you\s+)?(want\s+to\s+)?know\b[\s\S]{0,50}\b(about|for)\b[\s\S]{0,30}\b(the\s+)?patient\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+do\s+you\s+want\s+to\s+know\b[\s\S]{0,50}\b(about|for)\b[\s\S]{0,30}\b(the\s+)?(patient|benefits?)\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+are\s+the\s+fields\b[\s\S]{0,80}\b(you\s+)?(want|need)\s+to\s+collect\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+(fields|information)\s+(do you|would you)\s+(want|need)\s+to\s+(collect|gather|verify)\b/.test(
+      t,
+    ) ||
+    /\b(regarding|about)\s+(the\s+)?(patient|member|subscriber)\b[\s\S]{0,80}\b(what|which)\b[\s\S]{0,40}\b(benefit|benefits|details|information|fields)\b/.test(
+      t,
+    ) ||
+    /\b(what|which)\b[\s\S]{0,40}\b(benefit|benefits|details|fields)\b[\s\S]{0,60}\b(regarding|about)\s+(the\s+)?(patient|member)\b/.test(
       t,
     )
   );
@@ -384,7 +404,7 @@ export function answerIdentityFromContext(
       return ctx.memberId ? `The member ID is ${ctx.memberId}.` : notOnFile;
     case 'patient_dob':
       return ctx.patient.dobFormatted
-        ? `The patient's date of birth is ${ctx.patient.dobFormatted}. Does that match your records?`
+        ? `The patient's date of birth is ${ctx.patient.dobFormatted}.`
         : notOnFile;
     case 'patient_first_name':
       return ctx.patient.firstName
@@ -421,6 +441,193 @@ export function answerIdentityFromContext(
     default:
       return null;
   }
+}
+
+/** NATO phonetic words for letter-by-letter name spelling on insurance verification calls. */
+const NATO_PHONETIC: Record<string, string> = {
+  a: 'Alpha',
+  b: 'Bravo',
+  c: 'Charlie',
+  d: 'Delta',
+  e: 'Echo',
+  f: 'Foxtrot',
+  g: 'Golf',
+  h: 'Hotel',
+  i: 'India',
+  j: 'Juliet',
+  k: 'Kilo',
+  l: 'Lima',
+  m: 'Mike',
+  n: 'November',
+  o: 'Oscar',
+  p: 'Papa',
+  q: 'Quebec',
+  r: 'Romeo',
+  s: 'Sierra',
+  t: 'Tango',
+  u: 'Uniform',
+  v: 'Victor',
+  w: 'Whiskey',
+  x: 'X-ray',
+  y: 'Yankee',
+  z: 'Zulu',
+};
+
+/** Spell text letter-by-letter using NATO phonetics (e.g. "J as in Juliet, O as in Oscar"). */
+export function spellTextPhonetically(text: string): string {
+  const parts: string[] = [];
+  for (const char of text.trim()) {
+    if (char === ' ') {
+      parts.push('space');
+      continue;
+    }
+    if (char === '-') {
+      parts.push('hyphen');
+      continue;
+    }
+    if (char === "'") {
+      parts.push('apostrophe');
+      continue;
+    }
+    const lower = char.toLowerCase();
+    const word = NATO_PHONETIC[lower];
+    if (word) {
+      parts.push(`${char.toUpperCase()} as in ${word}`);
+    }
+  }
+  return parts.join(', ');
+}
+
+export type SpellNameTarget =
+  | 'patient_first'
+  | 'patient_last'
+  | 'patient_full'
+  | 'subscriber_first'
+  | 'subscriber_last'
+  | 'subscriber_full';
+
+/** TPA wants the name spelled out (often right after EVA gave the plain name). */
+export function detectSpellNameRequest(userSaid: string): SpellNameTarget | null {
+  const t = userSaid.trim().toLowerCase();
+  if (t.length < 3) return null;
+
+  const spellIntent =
+    /\b(spell|spelling|spelled)\b/.test(t) ||
+    /\bspell\s+(it|that|this|the\s+name|out)\b/.test(t) ||
+    /\b(can|could|would)\s+you\s+spell\b/.test(t) ||
+    /\bplease\s+spell\b/.test(t) ||
+    /\blet'?s?\s+spell\b/.test(t) ||
+    /\bletter[\s-]by[\s-]letter\b/.test(t) ||
+    /\bphonetic(ally)?\b/.test(t) ||
+    /\bhow\s+do\s+you\s+spell\b/.test(t);
+
+  if (!spellIntent) return null;
+
+  // Not a patient/subscriber name spell request (e.g. member ID, NPI).
+  if (
+    /\b(member\s*id|npi|tax\s*id|ein|tin|dob|date\s+of\s+birth|birthday)\b/.test(
+      t,
+    ) &&
+    !/\b(patient|subscriber|first\s+name|last\s+name|full\s+name|spell\s+(it|that|the\s+name))\b/.test(
+      t,
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    /\bsubscriber'?s?\s+first\s+name\b/.test(t) ||
+    (/\bfirst\s+name\b/.test(t) && /\bsubscriber\b/.test(t))
+  ) {
+    return 'subscriber_first';
+  }
+  if (
+    /\bsubscriber'?s?\s+last\s+name\b/.test(t) ||
+    (/\blast\s+name\b/.test(t) && /\bsubscriber\b/.test(t))
+  ) {
+    return 'subscriber_last';
+  }
+  if (
+    /\b(subscriber'?s?\s+(full\s+)?name|name\s+of\s+(the\s+)?subscriber)\b/.test(
+      t,
+    ) ||
+    (/\bsubscriber\b/.test(t) && /\bname\b/.test(t))
+  ) {
+    return 'subscriber_full';
+  }
+
+  if (/\bpatient'?s?\s+first\s+name\b/.test(t)) return 'patient_first';
+  if (/\bpatient'?s?\s+last\s+name\b/.test(t)) return 'patient_last';
+  if (
+    /\b(patient'?s?\s+(full\s+)?name|name\s+of\s+(the\s+)?patient)\b/.test(t)
+  ) {
+    return 'patient_full';
+  }
+  if (/\blast\s+name\b/.test(t)) return 'patient_last';
+  if (/\bfirst\s+name\b/.test(t)) return 'patient_first';
+
+  return 'patient_full';
+}
+
+export function answerSpellNameFromContext(
+  target: SpellNameTarget,
+  ctx: PatientCallContext | null,
+): string | null {
+  if (!ctx) return null;
+  const notOnFile =
+    'I am sorry, I do not have that on my end. Is there anything else I can share so we can continue?';
+
+  let name: string | null = null;
+  let label: string;
+  switch (target) {
+    case 'patient_first':
+      name = ctx.patient.firstName;
+      label = "The patient's first name is spelled";
+      break;
+    case 'patient_last':
+      name = ctx.patient.lastName;
+      label = "The patient's last name is spelled";
+      break;
+    case 'patient_full':
+      name = ctx.patient.fullName;
+      label = "The patient's name is spelled";
+      break;
+    case 'subscriber_first':
+      name = ctx.subscriber.firstName;
+      label = "The subscriber's first name is spelled";
+      break;
+    case 'subscriber_last':
+      name = ctx.subscriber.lastName;
+      label = "The subscriber's last name is spelled";
+      break;
+    case 'subscriber_full':
+      name = ctx.subscriber.fullName;
+      label = "The subscriber's name is spelled";
+      break;
+    default:
+      return null;
+  }
+
+  const trimmed = name?.trim();
+  if (!trimmed) return notOnFile;
+  return `${label}: ${spellTextPhonetically(trimmed)}.`;
+}
+
+/** Identity or phonetic spell reply from cached context (spell takes priority over plain name). */
+export function resolveIdentityDirectReply(
+  userSaid: string,
+  ctx: PatientCallContext | null,
+): string | null {
+  if (!ctx) return null;
+  const spellAsk = detectSpellNameRequest(userSaid);
+  if (spellAsk) {
+    return answerSpellNameFromContext(spellAsk, ctx);
+  }
+  const identityAsk = detectIdentityAsk(userSaid);
+  if (identityAsk) {
+    return answerIdentityFromContext(identityAsk, ctx);
+  }
+  return null;
 }
 
 /** Bare acknowledgement — "okay", "alright", "sure", "got it" — with no actual question or content.
