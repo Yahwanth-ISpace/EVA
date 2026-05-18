@@ -78,8 +78,8 @@ import {
   tpaIvrSoundsLikeSurveyStayOnLine,
 } from './media-stream/tpa-ivr';
 import {
-  answerIdentityFromContext,
   detectIdentityAsk,
+  resolveIdentityDirectReply,
   extractValueForField,
   getFirstMissingField,
   getRecallReply,
@@ -185,10 +185,9 @@ export class MediaStreamHandlerService {
       purposeSaid: false,
       tpaBenefitQnaOpen: false,
       patientIdentityReadyForBenefits: false,
-      evaAwaitingYesAfterDob: false,
       postDobSilenceNudgePlayed: false,
+      firstBenefitSoINeedPrefixUsed: false,
       identityAnswersGiven: 0,
-      evaAwaitingYesAfterIdentity: false,
       justCompletedAllFields: false,
       allDoneAnnounced: false,
       consecutiveNoiseOrEmptyTurns: 0,
@@ -361,8 +360,26 @@ export class MediaStreamHandlerService {
       let sttMs = 0;
       let llmMs: number | null = null;
 
-      const qField = (field: string) =>
-        verbatimBenefitQuestion(field, state.fieldQuestionByKey);
+      const qField = (field: string) => {
+        const q = verbatimBenefitQuestion(field, state.fieldQuestionByKey);
+        const ordered =
+          state.orderedFields.length > 0
+            ? state.orderedFields
+            : ['coverage', 'deductible', 'copay', 'validity'];
+        const firstMissing = getFirstMissingField(state.extractedData, ordered);
+        if (
+          state.tpaBenefitQnaOpen &&
+          firstMissing &&
+          field === firstMissing &&
+          !state.firstBenefitSoINeedPrefixUsed
+        ) {
+          state.firstBenefitSoINeedPrefixUsed = true;
+          const t = q.trim();
+          const lead = /^[a-z]/.test(t) ? t : t.charAt(0).toLowerCase() + t.slice(1);
+          return `I would need ${lead}`;
+        }
+        return q;
+      };
 
       const ensurePatientCallContext = async () => {
         if (state.callContext || !state.patientId?.trim()) return;
@@ -444,6 +461,19 @@ export class MediaStreamHandlerService {
           /^(\s*thank\s+you\s*\.?\s*|\s*thanks\s*\.?\s*)\s*$/i.test(userSaid);
         if (thankYouOnly && combined.length >= MIN_BYTES_BEFORE_REPEAT) {
           userSaid = '';
+        }
+
+        // Open benefit Q&A as soon as the TPA invites it — must run before the LLM so hints see tpaBenefitQnaOpen.
+        let benefitQnaHandoffThisTurn = false;
+        if (state.mode === 'eva') {
+          if (isTpaBenefitQnaHandoff(userSaid)) {
+            benefitQnaHandoffThisTurn = true;
+            if (!state.tpaBenefitQnaOpen) {
+              state.tpaBenefitQnaOpen = true;
+              state.postDobSilenceNudgePlayed = true;
+            }
+            state.patientIdentityReadyForBenefits = true;
+          }
         }
 
         // --- TPA IVR Part 1: payer IVR script (listen → speech/DTMF) → Part 2: live TPA intro → EVA ---
@@ -987,11 +1017,9 @@ export class MediaStreamHandlerService {
           !state.callEnded &&
           looksLikeRealResponse(userSaid)
         ) {
-          const idAskFirst = detectIdentityAsk(userSaid);
-          const idAnsFirst =
-            idAskFirst && state.callContext
-              ? answerIdentityFromContext(idAskFirst, state.callContext)
-              : null;
+          const idAnsFirst = state.callContext
+            ? resolveIdentityDirectReply(userSaid, state.callContext)
+            : null;
           const openOk =
             isSubstantiveTpaOpener(userSaid) || !!idAnsFirst?.trim();
           if (openOk) {
@@ -1006,7 +1034,7 @@ export class MediaStreamHandlerService {
               const isNotOnFile = /\bI\s+do\s+not\s+have\b/i.test(idAnsFirst);
               if (!isNotOnFile) {
                 state.identityAnswersGiven += 1;
-                state.evaAwaitingYesAfterIdentity = true;
+                state.patientIdentityReadyForBenefits = true;
               }
             }
             const toSpeakFirst = parts.join(' ');
@@ -1036,9 +1064,7 @@ export class MediaStreamHandlerService {
           const quietMs =
             state.lastSpeakTime > 0 ? Date.now() - state.lastSpeakTime : 0;
           const awaitingBenefitTopicOrDobAck =
-            state.evaAwaitingYesAfterDob ||
-            (state.patientIdentityReadyForBenefits &&
-              !state.tpaBenefitQnaOpen);
+            state.patientIdentityReadyForBenefits && !state.tpaBenefitQnaOpen;
           if (
             state.mode === 'eva' &&
             awaitingBenefitTopicOrDobAck &&
@@ -1145,32 +1171,9 @@ export class MediaStreamHandlerService {
           ? state.orderedFields
           : ['coverage', 'deductible', 'copay', 'validity'];
 
-        // --------------------------------------------------------------------
-        // Identity-phase progression (Phase 2 → Phase 3 transition tracking)
-        // --------------------------------------------------------------------
-        // 1) TPA confirms after ANY identity answer we gave (not just DOB):
-        //    flip `patientIdentityReadyForBenefits` so EVA can start Phase 3.
-        const tpaConfirmed =
-          /^(yes|yeah|yep|correct|that'?s\s+right|right|ok|okay|alright|sure|thank\s+you|thanks|go\s+ahead|got\s+it)/i.test(
-            userSaid.trim(),
-          );
         if (
-          (state.evaAwaitingYesAfterDob || state.evaAwaitingYesAfterIdentity) &&
-          tpaConfirmed &&
-          state.identityAnswersGiven >= 1
-        ) {
-          state.patientIdentityReadyForBenefits = true;
-          state.evaAwaitingYesAfterDob = false;
-          state.evaAwaitingYesAfterIdentity = false;
-          state.postDobSilenceNudgePlayed = false;
-        }
-
-        if (isTpaBenefitQnaHandoff(userSaid)) {
-          state.tpaBenefitQnaOpen = true;
-          state.postDobSilenceNudgePlayed = true;
-        } else if (
-          state.patientIdentityReadyForBenefits &&
           !state.tpaBenefitQnaOpen &&
+          state.patientIdentityReadyForBenefits &&
           /\b(what is|what's|what are|can you (tell me|provide|share)|give me)\b.*\b(coverage|deductible|copay|coinsurance|out[-\s]?of[-\s]?pocket|maximum|validity|effective date|annual maximum|benefit)\b/i.test(
             userSaid,
           )
@@ -1191,8 +1194,8 @@ export class MediaStreamHandlerService {
         // what keeps EVA fast AND prevents the LLM from drifting to "I am calling to verify..."
         const identityAsk = detectIdentityAsk(userSaid);
         const identityDirectReply =
-          identityAsk && !recallReply
-            ? answerIdentityFromContext(identityAsk, state.callContext)
+          !recallReply && state.callContext
+            ? resolveIdentityDirectReply(userSaid, state.callContext)
             : null;
 
         let nextMessage = '';
@@ -1237,7 +1240,7 @@ export class MediaStreamHandlerService {
           );
           if (!isNotOnFile) {
             state.identityAnswersGiven += 1;
-            state.evaAwaitingYesAfterIdentity = true;
+            state.patientIdentityReadyForBenefits = true;
           }
         } else if (earlyAckAfterPurpose) {
           nextMessage = 'Of course.';
@@ -1480,16 +1483,7 @@ export class MediaStreamHandlerService {
         }
         // Recall: answer from stored extractedData so we always give the correct value (e.g. "what is the deductible provided?")
         if (recallReply) {
-          const confirmPhrases = [
-            'Is it okay?',
-            'Is that all you have?',
-            'Are we good?',
-            'Are we clear?',
-          ];
-          toSpeak =
-            recallReply +
-            ' ' +
-            confirmPhrases[Math.floor(Math.random() * confirmPhrases.length)];
+          toSpeak = recallReply;
         }
         const isGenericFallback = /^(what else|is there anything else)/i.test(
           toSpeak,
@@ -1501,9 +1495,8 @@ export class MediaStreamHandlerService {
         // Never say "I didn't catch you" when user clearly said something (e.g. "how can I help", "it is 80$") — keep conversation in sync.
         if (looksLikeRealResponse(userSaid) && soundsLikeRepeat) {
           // Identity question has highest priority — answer from cheat-sheet, skip all else.
-          const idAskHere = detectIdentityAsk(userSaid);
-          const idAnswerHere = idAskHere
-            ? answerIdentityFromContext(idAskHere, state.callContext)
+          const idAnswerHere = state.callContext
+            ? resolveIdentityDirectReply(userSaid, state.callContext)
             : null;
           if (idAnswerHere) {
             toSpeak = idAnswerHere;
@@ -1611,10 +1604,9 @@ export class MediaStreamHandlerService {
           // Replace with the most useful concrete answer we can give right now —
           // prefer a direct identity answer if the TPA asked one, otherwise ask
           // for the next missing benefit field (or a neutral repeat as last resort).
-          const identityFallback =
-            identityAsk && state.callContext
-              ? answerIdentityFromContext(identityAsk, state.callContext)
-              : null;
+          const identityFallback = state.callContext
+            ? resolveIdentityDirectReply(userSaid, state.callContext)
+            : null;
           if (identityFallback) {
             toSpeak = identityFallback;
           } else if (state.purposeSaid) {
@@ -1795,22 +1787,20 @@ export class MediaStreamHandlerService {
         } else {
           toSpeak = (toSpeak ?? '').trim();
         }
+        // TPA opened benefit Q&A ("what fields do you need…") → ask first missing benefit with "I would need …" once.
         if (
-          state.patientInfo?.dobFormatted &&
-          toSpeak.includes(state.patientInfo.dobFormatted)
+          benefitQnaHandoffThisTurn &&
+          state.tpaBenefitQnaOpen &&
+          state.patientIdentityReadyForBenefits &&
+          !state.allDoneAnnounced &&
+          !allCollected
         ) {
-          state.evaAwaitingYesAfterDob = true;
-          state.evaAwaitingYesAfterIdentity = true;
-          state.postDobSilenceNudgePlayed = false;
-        }
-        // Generalised: any time EVA's reply just delivered a cached identity value,
-        // expect the TPA's confirmation on the next turn. This lets the Phase 2 → Phase 3
-        // transition fire after e.g. member ID confirmation, not just DOB.
-        if (identityDirectReply && toSpeak === identityDirectReply) {
-          const isNotOnFile = /\bI\s+do\s+not\s+have\b/i.test(
-            identityDirectReply,
-          );
-          if (!isNotOnFile) state.evaAwaitingYesAfterIdentity = true;
+          const miss =
+            getFirstMissingField(state.extractedData, orderedF) ?? orderedF[0];
+          if (miss) {
+            toSpeak = qField(miss);
+            state.lastAskedField = miss;
+          }
         }
         // In-memory transcript updates (sync): needed for verification save on stop.
         const userLineForLog =

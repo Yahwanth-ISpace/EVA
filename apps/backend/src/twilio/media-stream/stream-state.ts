@@ -49,20 +49,14 @@ export interface StreamState {
    * Until this is true, EVA must not ask verbatim benefit verification questions.
    */
   tpaBenefitQnaOpen: boolean;
-  /** Rep confirmed after we gave DOB (handler detects yes/thanks following DOB answer). */
+  /** Identity verification far enough along to allow benefit collection once TPA opens benefit Q&A. */
   patientIdentityReadyForBenefits: boolean;
-  /** Last EVA reply included patient DOB from DB — next rep line may be confirmation. */
-  evaAwaitingYesAfterDob: boolean;
-  /** One-time gentle line after very long silence while awaiting DOB acknowledgement or TPA benefit-topic handoff. */
+  /** One-time gentle line after very long silence while waiting for TPA benefit-topic handoff. */
   postDobSilenceNudgePlayed: boolean;
-  /** Count of TPA-led identity questions we have answered from the cache. Used to gate
-   *  the handoff from identity phase to benefit phase — we require the TPA to actually
-   *  perform verification before EVA starts asking for coverage / deductible / copay / validity. */
+  /** True after "I would need …" prefixes the first missing benefit question (one time per call). */
+  firstBenefitSoINeedPrefixUsed: boolean;
+  /** Count of TPA-led identity questions we have answered from the cache. */
   identityAnswersGiven: number;
-  /** After any identity answer we expect the TPA to either (a) ask the next identity item,
-   *  (b) confirm, or (c) signal they are done ("go ahead / what do you need"). This flag
-   *  generalises `evaAwaitingYesAfterDob` to every identity answer. */
-  evaAwaitingYesAfterIdentity: boolean;
   /** True on the turn we completed the last benefit field — triggers the "That's all I have"
    *  intermediate line. Next TPA turn will typically be a thank-you / goodbye; then we close. */
   justCompletedAllFields: boolean;

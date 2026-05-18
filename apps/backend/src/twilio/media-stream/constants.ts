@@ -48,15 +48,18 @@ export const EVA_INTRO_LINE =
 /** @deprecated Use EVA_INTRO_LINE — kept for log labels / backwards compatibility. */
 export const CONVERSATION_GREETING = EVA_INTRO_LINE;
 
-/** One sentence, same intent — rotate so we never sound canned when TPA asks purpose (fallback if LLM mis-hears). */
+/**
+ * Single line when the TPA asks how they can help — no coverage/deductible list here.
+ * Voice path uses this (see `pickPurposeOfCallPhrase` in guardrails.ts).
+ */
+export const EVA_SIMPLE_PURPOSE_FOR_OPENING =
+  'I need a few benefit details of a patient.';
+
+/** Optional extra phrasing (e.g. tests); voice uses `EVA_SIMPLE_PURPOSE_FOR_OPENING` only. */
 export const PURPOSE_OF_CALL_LINE_VARIANTS = [
-  'I need a few benefit details for a patient.',
-  "I'm calling to collect insurance benefit information for one of our patients.",
-  'Our office needs to verify a few benefit details for a patient.',
-  "I'm reaching out to confirm coverage and related benefit information for a patient.",
+  EVA_SIMPLE_PURPOSE_FOR_OPENING,
   'I want to verify benefit details of the patient I have.',
-  "I'm following up to get benefit details we need for a patient's visit.",
-  'The call is about gathering benefit verification for a patient appointment.',
+  'Our office needs to verify a few benefit details for a patient.',
 ] as const;
 
 export const EVA_HOLD_ACK = "Sure, I'll hold. Take your time.";
