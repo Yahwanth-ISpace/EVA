@@ -37,7 +37,11 @@ import { applyVerificationStepsToStreamState } from './media-stream/call-context
 import { loadBenefitFieldOrderIfNeeded } from './media-stream/field-order-load';
 import {
   ANSWER_WINDOW_MS,
-  EVA_INTRO_LINE,
+  EVA_ABORT_CALL_ON_NOISE,
+  EVA_HOW_ARE_YOU_REPLY,
+  EVA_PRE_SPEAK_DELAY_MS,
+  EVA_TTS_CHUNK_PACE_MS,
+  EVA_INTRO_IDENTITY_LINE,
   EVA_HOLD_ACK,
   EVA_POST_DOB_SILENCE_NUDGE,
   EVA_RESUME_ACK,
@@ -90,8 +94,12 @@ import {
   isHoldPhrase,
   isIntroPurposePhrase,
   isResumePhrase,
+  composeEvaDeferredIntroReply,
+  composeEvaOpeningReply,
   isSubstantiveTpaOpener,
+  isTpaLiveOpener,
   isThankYouOrGoodbye,
+  tpaAskedHowAreYou,
   isTpaBenefitQnaHandoff,
   pickPurposeOfCallPhrase,
   transcriptHasValue,
@@ -192,6 +200,8 @@ export class MediaStreamHandlerService {
       allDoneAnnounced: false,
       consecutiveNoiseOrEmptyTurns: 0,
       openingGreetingPlayed: false,
+      evaSocialGreetDone: false,
+      evaIntroIdentitySaid: false,
     };
 
     const send = (obj: object) => {
@@ -210,7 +220,11 @@ export class MediaStreamHandlerService {
       }
     };
 
+    const sleepMs = (ms: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, ms));
+
     const playAudio = async (mulawBuffer: Buffer) => {
+      const paceMs = EVA_TTS_CHUNK_PACE_MS;
       for (let i = 0; i < mulawBuffer.length; i += OUTBOUND_CHUNK_BYTES) {
         const chunk = mulawBuffer.subarray(i, i + OUTBOUND_CHUNK_BYTES);
         send({
@@ -218,6 +232,9 @@ export class MediaStreamHandlerService {
           streamSid: state.streamSid,
           media: { payload: chunk.toString('base64') },
         });
+        if (paceMs > 0 && i + OUTBOUND_CHUNK_BYTES < mulawBuffer.length) {
+          await sleepMs(paceMs);
+        }
       }
     };
 
@@ -226,6 +243,9 @@ export class MediaStreamHandlerService {
       if (!text?.trim()) return 0;
       const ttsStart = Date.now();
       try {
+        if (EVA_PRE_SPEAK_DELAY_MS > 0) {
+          await sleepMs(EVA_PRE_SPEAK_DELAY_MS);
+        }
         try {
           for await (const mulawChunk of this.elevenLabsAudioStack.synthesizeStream(
             text,
@@ -991,7 +1011,7 @@ export class MediaStreamHandlerService {
           effectiveTranscript === 'User did not respond or was inaudible.';
 
         if (skipRepeatForShortAudio) {
-          state.consecutiveNoiseOrEmptyTurns += 1;
+          // Line noise / ring / clip — do not count toward disconnect; wait for more audio.
           this.logCallTurn(state.callSid, {
             prepMs,
             sttMs,
@@ -1005,12 +1025,10 @@ export class MediaStreamHandlerService {
           state.processing = false;
           return;
         }
-        // Live TPA speaks first; EVA waits for a substantive opener (or a clear identity
-        // question), then introduces herself — optionally with purpose and/or identity answer
-        // in the same spoken turn when the TPA combined them.
+        // Live TPA speaks first: social greet → wait; how-are-you + rep intro → "I'm doing great" then "I'm Reena…";
+        // substantive opener → full intro when appropriate.
         if (
           state.mode === 'eva' &&
-          !state.openingGreetingPlayed &&
           !state.onHold &&
           !wasInaudibleTurn &&
           userSaid.trim().length > 0 &&
@@ -1020,43 +1038,98 @@ export class MediaStreamHandlerService {
           const idAnsFirst = state.callContext
             ? resolveIdentityDirectReply(userSaid, state.callContext)
             : null;
-          const openOk =
-            isSubstantiveTpaOpener(userSaid) || !!idAnsFirst?.trim();
-          if (openOk) {
+
+          if (
+            state.evaSocialGreetDone &&
+            !state.evaIntroIdentitySaid &&
+            (isTpaLiveOpener(userSaid) ||
+              !!idAnsFirst?.trim() ||
+              isBareAcknowledgement(userSaid))
+          ) {
             const alsoPurpose = userAsksPurposeOfCallOrOpening(userSaid);
-            const parts: string[] = [EVA_INTRO_LINE];
-            if (alsoPurpose) {
-              parts.push(pickPurposeOfCallPhrase());
-              state.purposeSaid = true;
-            }
+            const deferred = composeEvaDeferredIntroReply({
+              alsoPurpose,
+              identityAnswer: idAnsFirst,
+            });
+            const toSpeakDeferred = deferred.text;
+            if (userSaid?.trim())
+              state.conversationTranscript.push('User: ' + userSaid.trim());
+            state.conversationTranscript.push('EVA: ' + toSpeakDeferred);
+            const ttsMsDeferred = await speak(
+              toSpeakDeferred,
+              'eva_intro_after_social_greet',
+            );
+            state.evaIntroIdentitySaid = true;
+            state.openingGreetingPlayed = true;
+            state.evaSocialGreetDone = false;
+            if (deferred.purposeSaid) state.purposeSaid = true;
             if (idAnsFirst?.trim()) {
-              parts.push(idAnsFirst.trim());
               const isNotOnFile = /\bI\s+do\s+not\s+have\b/i.test(idAnsFirst);
               if (!isNotOnFile) {
                 state.identityAnswersGiven += 1;
                 state.patientIdentityReadyForBenefits = true;
               }
             }
-            const toSpeakFirst = parts.join(' ');
-            if (userSaid?.trim())
-              state.conversationTranscript.push('User: ' + userSaid.trim());
-            state.conversationTranscript.push('EVA: ' + toSpeakFirst);
-            const ttsMsIntro = await speak(toSpeakFirst, 'eva_intro_after_tpa');
-            state.openingGreetingPlayed = true;
             state.consecutiveNoiseOrEmptyTurns = 0;
             this.logCallTurn(state.callSid, {
               prepMs,
               sttMs,
               llmMs: null,
-              ttsMs: ttsMsIntro,
+              ttsMs: ttsMsDeferred,
               totalMs: Date.now() - turnStart,
               tpa: userSaid,
-              eva: toSpeakFirst,
-              note: '(EVA intro after live TPA opener)',
+              eva: toSpeakDeferred,
+              note: '(EVA identity intro after social greet)',
             });
             state.processing = false;
             startFallbackTimer();
             return;
+          }
+
+          if (!state.openingGreetingPlayed) {
+            const openOk = isTpaLiveOpener(userSaid) || !!idAnsFirst?.trim();
+            if (openOk) {
+              const alsoPurpose = userAsksPurposeOfCallOrOpening(userSaid);
+              const opening = composeEvaOpeningReply(userSaid, { alsoPurpose });
+              let toSpeakFirst = opening.text;
+              if (idAnsFirst?.trim() && !tpaAskedHowAreYou(userSaid)) {
+                toSpeakFirst = `${toSpeakFirst} ${idAnsFirst.trim()}`.trim();
+              }
+              if (userSaid?.trim())
+                state.conversationTranscript.push('User: ' + userSaid.trim());
+              state.conversationTranscript.push('EVA: ' + toSpeakFirst);
+              const ttsMsIntro = await speak(toSpeakFirst, 'eva_intro_after_tpa');
+              if (opening.socialGreetOnly) {
+                state.evaSocialGreetDone = true;
+              } else {
+                state.openingGreetingPlayed = true;
+                state.evaIntroIdentitySaid = opening.introIdentitySaid;
+              }
+              if (opening.purposeSaid) state.purposeSaid = true;
+              if (idAnsFirst?.trim()) {
+                const isNotOnFile = /\bI\s+do\s+not\s+have\b/i.test(idAnsFirst);
+                if (!isNotOnFile) {
+                  state.identityAnswersGiven += 1;
+                  state.patientIdentityReadyForBenefits = true;
+                }
+              }
+              state.consecutiveNoiseOrEmptyTurns = 0;
+              this.logCallTurn(state.callSid, {
+                prepMs,
+                sttMs,
+                llmMs: null,
+                ttsMs: ttsMsIntro,
+                totalMs: Date.now() - turnStart,
+                tpa: userSaid,
+                eva: toSpeakFirst,
+                note: opening.socialGreetOnly
+                  ? '(EVA social greet — intro on next rep turn)'
+                  : '(EVA intro after live TPA opener)',
+              });
+              state.processing = false;
+              startFallbackTimer();
+              return;
+            }
           }
         }
         // Inaudible/empty: re-ask the same field only (no AI call) so conversation stays in phase.
@@ -1134,8 +1207,9 @@ export class MediaStreamHandlerService {
         }
 
         if (
+          EVA_ABORT_CALL_ON_NOISE &&
           state.consecutiveNoiseOrEmptyTurns >=
-          MAX_NOISE_TURNS_BEFORE_ABORT_CALL
+            MAX_NOISE_TURNS_BEFORE_ABORT_CALL
         ) {
           const abortMsg =
             'I am sorry, I am having trouble hearing you clearly. I will disconnect so you can try again.';
@@ -1165,6 +1239,14 @@ export class MediaStreamHandlerService {
                 ),
               );
           return;
+        }
+        if (
+          state.consecutiveNoiseOrEmptyTurns >=
+          MAX_NOISE_TURNS_BEFORE_ABORT_CALL
+        ) {
+          state.consecutiveNoiseOrEmptyTurns = Math.floor(
+            MAX_NOISE_TURNS_BEFORE_SKIP_LLM,
+          );
         }
 
         const orderedF = state.orderedFields.length
@@ -1416,7 +1498,7 @@ export class MediaStreamHandlerService {
           state.allDoneAnnounced &&
           allCollected &&
           userSaid &&
-          /^(you'?re\s+welcome|welcome|thank\s+you|thanks|yes|yeah|yep|sure|ok|okay|alright|bye|goodbye|have\s+a\s+(good|great|wonderful|nice)\s+(day|one))/i.test(
+          /^(you'?re\s+welcome|welcome|thank\s+you|thanks|bye|goodbye|have\s+a\s+(good|great|wonderful|nice)\s+(day|one)|that'?s\s+all|nothing\s+else)/i.test(
             userSaid.trim(),
           )
         ) {
@@ -1511,16 +1593,18 @@ export class MediaStreamHandlerService {
             // They asked purpose again — brief one-liner, no intro.
             toSpeak =
               'As I mentioned, we just need a few patient benefit details from your end.';
+          } else if (tpaAskedHowAreYou(userSaid)) {
+            if (!state.evaIntroIdentitySaid) {
+              toSpeak = `${EVA_HOW_ARE_YOU_REPLY} ${EVA_INTRO_IDENTITY_LINE}`.trim();
+              state.evaIntroIdentitySaid = true;
+              state.openingGreetingPlayed = true;
+            } else {
+              toSpeak = EVA_HOW_ARE_YOU_REPLY;
+            }
           } else if (
             /how are you|doing good|doing great/i.test(userSaid.trim())
           ) {
-            if (!state.purposeSaid) {
-              toSpeak = pickPurposeOfCallPhrase();
-              state.purposeSaid = true;
-            } else {
-              // Social pleasantry mid-call — brief, non-purpose reply.
-              toSpeak = "I'm doing well, thank you.";
-            }
+            toSpeak = EVA_HOW_ARE_YOU_REPLY;
           } else if (transcriptHasValue(userSaid) && state.lastAskedField) {
             const corrected = extractValueForField(
               userSaid,
@@ -1669,9 +1753,7 @@ export class MediaStreamHandlerService {
             startFallbackTimer();
             return;
           }
-          toSpeak = isBareAcknowledgement(userSaid)
-            ? 'Of course.'
-            : 'Sure, please go ahead with your verification questions.';
+          toSpeak = 'Of course.';
         }
 
         // ---------------------------------------------------------------------------
@@ -2183,6 +2265,8 @@ export class MediaStreamHandlerService {
     }
 
     state.openingGreetingPlayed = false;
+    state.evaSocialGreetDone = false;
+    state.evaIntroIdentitySaid = false;
 
     const ctx = await contextPromise;
     if (ctx) {

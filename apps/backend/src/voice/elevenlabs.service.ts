@@ -15,6 +15,26 @@ export class ElevenLabsService {
     process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2';
   private readonly languageCode =
     process.env.ELEVENLABS_LANGUAGE_CODE?.trim() || 'en';
+  /** 0.7–1.2 typical; below 1.0 = slower, more natural phone pace. */
+  private readonly speechSpeed = Number(
+    process.env.ELEVENLABS_SPEECH_SPEED || process.env.EVA_TTS_SPEED || 0.92,
+  );
+  private readonly optimizeStreamingLatency = Number(
+    process.env.ELEVENLABS_OPTIMIZE_LATENCY || 2,
+  );
+
+  private voiceSettings() {
+    const speed = Number.isFinite(this.speechSpeed)
+      ? Math.min(1.15, Math.max(0.75, this.speechSpeed))
+      : 0.92;
+    return {
+      stability: 0.48,
+      similarity_boost: 0.78,
+      style: 0.12,
+      use_speaker_boost: true,
+      speed,
+    };
+  }
 
   constructor() {
     if (!this.apiKey) {
@@ -50,13 +70,8 @@ export class ElevenLabsService {
         ...(this.modelId.includes('multilingual')
           ? { language_code: this.languageCode }
           : {}),
-        voice_settings: {
-          stability: 0.35,
-          similarity_boost: 0.8,
-          style: 0.2,
-          use_speaker_boost: true,
-        },
-        optimize_streaming_latency: 4,
+        voice_settings: this.voiceSettings(),
+        optimize_streaming_latency: this.optimizeStreamingLatency,
       },
       {
         headers: {
@@ -91,13 +106,8 @@ export class ElevenLabsService {
         ...(this.modelId.includes('multilingual')
           ? { language_code: this.languageCode }
           : {}),
-        voice_settings: {
-          stability: 0.35,
-          similarity_boost: 0.8,
-          style: 0.2,
-          use_speaker_boost: true,
-        },
-        optimize_streaming_latency: 4,
+        voice_settings: this.voiceSettings(),
+        optimize_streaming_latency: this.optimizeStreamingLatency,
       },
       {
         headers: {
