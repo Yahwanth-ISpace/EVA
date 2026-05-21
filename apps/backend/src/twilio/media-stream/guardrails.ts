@@ -2,7 +2,13 @@
  * Conversation guardrails: intent detection, identity Q&A helpers, benefit-field heuristics, hold/resume.
  */
 import type { PatientCallContext } from '../../verification/verification.service';
-import { EVA_SIMPLE_PURPOSE_FOR_OPENING } from './constants';
+import {
+  EVA_HOW_ARE_YOU_REPLY,
+  EVA_INTRO_IDENTITY_LINE,
+  EVA_INTRO_LINE,
+  EVA_SIMPLE_PURPOSE_FOR_OPENING,
+  EVA_SOCIAL_GREETING_REPLY,
+} from './constants';
 
 export function pickPurposeOfCallPhrase(): string {
   return EVA_SIMPLE_PURPOSE_FOR_OPENING;
@@ -22,6 +28,105 @@ export function isSubstantiveTpaOpener(userSaid: string): boolean {
   )
     return true;
   return t.length >= 36 || words >= 6;
+}
+
+/** TPA asked how EVA is doing (often with their own name/office intro in the same turn). */
+export function tpaAskedHowAreYou(userSaid: string): boolean {
+  const t = userSaid.trim().toLowerCase();
+  if (t.length < 8) return false;
+  return (
+    /\bhow\s+are\s+you\b/.test(t) ||
+    /\bhow(?:'s|\s+is)\s+(?:your\s+)?day\b/.test(t) ||
+    /\bhow\s+(?:are\s+)?you\s+doing\b/.test(t) ||
+    /\bhow\s+do\s+you\s+do\b/.test(t)
+  );
+}
+
+/** Short hi / hello / good morning only — EVA says she is doing great and waits for the rep's next line. */
+export function isTpaSocialGreetingOnly(userSaid: string): boolean {
+  const t = userSaid.trim();
+  if (t.length < 2) return false;
+  if (tpaAskedHowAreYou(userSaid)) return false;
+  if (userAsksPurposeOfCallOrOpening(userSaid)) return false;
+  if (/\b(how can i help|how may i help|what can i do for you)\b/i.test(t)) {
+    return false;
+  }
+  if (detectIdentityAsk(userSaid)) return false;
+  if (isSubstantiveTpaOpener(userSaid) && t.length >= 28) return false;
+  const words = t.split(/\s+/).filter(Boolean).length;
+  if (words > 14) return false;
+  return (
+    /^(hi|hello|hey|good\s+(morning|afternoon|evening))\b/i.test(t) ||
+    /\b(thank\s+you\s+for\s+calling|thanks\s+for\s+calling)\b/i.test(t) ||
+    (/^(hi|hello|hey)\b/i.test(t) && words <= 6)
+  );
+}
+
+/** Live rep spoke first — greeting, how-are-you, or substantive opener; EVA should reply (not stay silent). */
+export function isTpaLiveOpener(userSaid: string): boolean {
+  return (
+    isSubstantiveTpaOpener(userSaid) ||
+    isTpaSocialGreetingOnly(userSaid) ||
+    tpaAskedHowAreYou(userSaid)
+  );
+}
+
+export type EvaOpeningCompose = {
+  text: string;
+  /** EVA replied to hi/hello only — "I'm Reena…" comes on the rep's next turn. */
+  socialGreetOnly: boolean;
+  introIdentitySaid: boolean;
+  purposeSaid: boolean;
+};
+
+/** First EVA spoken turn after the TPA opens the live call. */
+export function composeEvaOpeningReply(
+  userSaid: string,
+  opts: { alsoPurpose: boolean },
+): EvaOpeningCompose {
+  const alsoPurpose = opts.alsoPurpose;
+  if (tpaAskedHowAreYou(userSaid)) {
+    const parts = [EVA_HOW_ARE_YOU_REPLY, EVA_INTRO_IDENTITY_LINE];
+    if (alsoPurpose) parts.push(pickPurposeOfCallPhrase());
+    return {
+      text: parts.join(' '),
+      socialGreetOnly: false,
+      introIdentitySaid: true,
+      purposeSaid: alsoPurpose,
+    };
+  }
+  if (isTpaSocialGreetingOnly(userSaid)) {
+    return {
+      text: EVA_SOCIAL_GREETING_REPLY,
+      socialGreetOnly: true,
+      introIdentitySaid: false,
+      purposeSaid: false,
+    };
+  }
+  const parts: string[] = [EVA_INTRO_LINE];
+  if (alsoPurpose) parts.push(pickPurposeOfCallPhrase());
+  return {
+    text: parts.join(' '),
+    socialGreetOnly: false,
+    introIdentitySaid: true,
+    purposeSaid: alsoPurpose,
+  };
+}
+
+/** Second live turn: after a short hi/hello, EVA gives identity intro (no leading "Hi, I'm Reena"). */
+export function composeEvaDeferredIntroReply(opts: {
+  alsoPurpose: boolean;
+  identityAnswer: string | null;
+}): EvaOpeningCompose {
+  const parts: string[] = [EVA_INTRO_IDENTITY_LINE];
+  if (opts.alsoPurpose) parts.push(pickPurposeOfCallPhrase());
+  if (opts.identityAnswer?.trim()) parts.push(opts.identityAnswer.trim());
+  return {
+    text: parts.join(' '),
+    socialGreetOnly: false,
+    introIdentitySaid: true,
+    purposeSaid: opts.alsoPurpose,
+  };
 }
 
 /** TPA explicitly moved to "what benefit details do you need about this patient?" — OK to ask verbatim benefit questions (once identity is cleared). */

@@ -19,9 +19,10 @@ import { getFfmpegErrorMessage } from './ffmpeg-check';
 function addSpeechPauses(text: string): string {
   if (!text || text.trim().length === 0) return text;
   let t = text.trim();
-  // After a period + space, add ellipsis so next sentence has a breath
+  // After a period + space, add ellipsis so the engine breathes between sentences
   t = t.replace(/\.\s+/g, '... ');
-  // Comma then "I want" -> ellipsis for a breath (e.g. "Got it, I want" -> "Got it... I want")
+  // Light pause after commas (not every comma — avoid choppy numbers)
+  t = t.replace(/,\s+(?=[A-Za-z])/g, ', ... ');
   t = t.replace(/,\s+(I want to know)/gi, '... $1');
   return t.replace(/\s+/g, ' ').replace(/\.{4,}/g, '...').trim();
 }

@@ -64,8 +64,12 @@ export interface StreamState {
   allDoneAnnounced: boolean;
   /** Consecutive turns with skip / inaudible / weak audio — for skip-LLM and abort guardrails. */
   consecutiveNoiseOrEmptyTurns: number;
-  /** Set after EVA's first spoken intro on the live call (deferred until the TPA finishes their opener). */
+  /** Set after EVA's opening exchange is complete (social greet + identity intro, or full intro line). */
   openingGreetingPlayed: boolean;
+  /** EVA said "Hi, I'm doing great…" on a short TPA hi/hello — identity intro deferred to next rep turn. */
+  evaSocialGreetDone: boolean;
+  /** True after EVA has said "I'm Reena — I'm calling from Went Dentals." */
+  evaIntroIdentitySaid: boolean;
 }
 
 /** Per-call TPA IVR script (Part 1); survives Twilio reconnect after DTMF. */
