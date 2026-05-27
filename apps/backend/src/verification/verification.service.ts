@@ -313,11 +313,11 @@ export class VerificationService {
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
   ) {
-    if (!(await this.mongoService.patientHasAppointment(payeeId))) {
-      throw new NotFoundException(
-        'Patient not found in appointments collection',
-      );
-    }
+    // if (!(await this.mongoService.patientHasAppointment(payeeId))) {
+    //   throw new NotFoundException(
+    //     'Patient not found in appointments collection',
+    //   );
+    // }
 
     const apptId = appointmentId?.trim() || null;
     if (apptId) {
