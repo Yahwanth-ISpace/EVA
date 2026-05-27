@@ -114,3 +114,15 @@ export const POST_DOB_LONG_SILENCE_NUDGE_MS = Number(
 
 export const EVA_POST_DOB_SILENCE_NUDGE =
   "Sounds good. Whenever you're ready, I can go through the benefit details we need for this patient.";
+
+/** Randomized short ack after TPA gives a benefit value (then ask next field). */
+export const EVA_POST_VALUE_ACK_PHRASES = [
+  'Okay.',
+  'Got you.',
+  'Thank you.',
+  'Awesome.',
+  'Thanks.',
+  'Done.',
+  'Okay, and next.',
+  'Yup.',
+] as const;
