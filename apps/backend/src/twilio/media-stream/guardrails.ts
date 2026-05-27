@@ -6,9 +6,11 @@ import {
   EVA_HOW_ARE_YOU_REPLY,
   EVA_INTRO_IDENTITY_LINE,
   EVA_INTRO_LINE,
+  EVA_MID_CALL_CONTINUE_LINE,
   EVA_POST_VALUE_ACK_PHRASES,
   EVA_SIMPLE_PURPOSE_FOR_OPENING,
   EVA_SOCIAL_GREETING_REPLY,
+  EVA_TIME_OF_DAY_PURPOSE_FOLLOWUP,
 } from './constants';
 
 export function pickPurposeOfCallPhrase(): string {
@@ -53,11 +55,12 @@ export function isTpaSocialGreetingOnly(userSaid: string): boolean {
     return false;
   }
   if (detectIdentityAsk(userSaid)) return false;
+  if (tpaTimeOfDayGreeting(userSaid)) return false;
   if (isSubstantiveTpaOpener(userSaid) && t.length >= 28) return false;
   const words = t.split(/\s+/).filter(Boolean).length;
   if (words > 14) return false;
   return (
-    /^(hi|hello|hey|good\s+(morning|afternoon|evening))\b/i.test(t) ||
+    /^(hi|hello|hey)\b/i.test(t) ||
     /\b(thank\s+you\s+for\s+calling|thanks\s+for\s+calling)\b/i.test(t) ||
     (/^(hi|hello|hey)\b/i.test(t) && words <= 6)
   );
@@ -92,10 +95,100 @@ export function tpaIntroducedSelf(userSaid: string): boolean {
   );
 }
 
-/** Brief polite ack — not "Of course" (sounds wrong on value confirm / filler). */
+/** Brief polite ack — not "Of course" or "Understood" (reserved for re-confirmation). */
 export function pickBriefAcknowledgement(): string {
-  const options = ['Thank you.', 'Understood.', 'Okay, thank you.'];
+  const options = ['Thank you.', 'Okay, thank you.', 'Thanks.'];
   return options[Math.floor(Math.random() * options.length)];
+}
+
+/** After TPA re-confirms a value we stated — "Understood" is appropriate here only. */
+export function pickReconfirmationAcknowledgement(): string {
+  const options = ['Understood.', 'Got it.', 'Okay, thank you.'];
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+export type TimeOfDayGreeting = 'morning' | 'afternoon' | 'evening';
+
+/** TPA said good morning / afternoon / evening (match their greeting). */
+export function tpaTimeOfDayGreeting(userSaid: string): TimeOfDayGreeting | null {
+  const t = userSaid.trim().toLowerCase();
+  if (/\bgood\s+morning\b/.test(t)) return 'morning';
+  if (/\bgood\s+afternoon\b/.test(t)) return 'afternoon';
+  if (/\bgood\s+evening\b/.test(t)) return 'evening';
+  return null;
+}
+
+function timeOfDayGreetingPhrase(tod: TimeOfDayGreeting): string {
+  if (tod === 'morning') return 'Good morning.';
+  if (tod === 'afternoon') return 'Good afternoon.';
+  return 'Good evening.';
+}
+
+/** Opening when TPA greets with good morning/evening — mirror their greeting + intro. */
+export function composeTimeOfDayGreetingReply(
+  tod: TimeOfDayGreeting,
+  opts: { alsoPurpose: boolean },
+): EvaOpeningCompose {
+  const greet = timeOfDayGreetingPhrase(tod);
+  const intro = 'I am Reena from Went Dentals.';
+  const parts = [greet, intro];
+  if (opts.alsoPurpose) parts.push(pickPurposeOfCallPhrase());
+  return {
+    text: parts.join(' '),
+    socialGreetOnly: false,
+    introIdentitySaid: true,
+    purposeSaid: opts.alsoPurpose,
+  };
+}
+
+/** Mid-call short hello — EVA is still on the line; do not re-introduce. */
+export function isMidCallPresenceCheck(
+  userSaid: string,
+  opts: { openingDone: boolean },
+): boolean {
+  if (!opts.openingDone) return false;
+  const t = userSaid
+    .trim()
+    .toLowerCase()
+    .replace(/[.!,?]+$/, '');
+  if (!t || t.length > 36) return false;
+  if (userAsksPurposeOfCallOrOpening(userSaid)) return false;
+  if (detectIdentityAsk(userSaid)) return false;
+  if (isTpaBenefitQnaHandoff(userSaid)) return false;
+  return (
+    /^(hi|hello|hey|yo|are you there|you there|hello there)$/.test(t) ||
+    (/^(hi|hello|hey)\b/.test(t) && t.split(/\s+/).length <= 4)
+  );
+}
+
+export { EVA_MID_CALL_CONTINUE_LINE };
+
+/** TPA confirmed the patient is on file / located. */
+export function isTpaPatientLocated(userSaid: string): boolean {
+  const t = userSaid.trim().toLowerCase();
+  if (t.length < 8) return false;
+  return (
+    /\b(i'?ve?\s+)?(found|located|have)\s+(?:the\s+)?(?:patient|member|subscriber)\b/.test(
+      t,
+    ) ||
+    /\bpatient\s+(?:has\s+been\s+)?(?:found|located)\b/.test(t) ||
+    /\b(?:member|subscriber)\s+(?:is\s+)?(?:found|located|on\s+file)\b/.test(t)
+  );
+}
+
+/** Whether this turn should open benefit Q&A (verbatim field questions). */
+export function shouldOpenBenefitQna(
+  userSaid: string,
+  tpaPatientLocated: boolean,
+): boolean {
+  if (isTpaBenefitQnaHandoff(userSaid)) return true;
+  if (isTpaPatientLocated(userSaid) && userAsksPurposeOfCallOrOpening(userSaid)) {
+    return true;
+  }
+  if (tpaPatientLocated && userAsksPurposeOfCallOrOpening(userSaid)) {
+    return true;
+  }
+  return false;
 }
 
 /** Short yes / okay only — advance to next benefit field; do not say "right?" or "yes it is". */
@@ -342,7 +435,23 @@ export function isTpaBenefitQnaHandoff(userSaid: string): boolean {
     ) ||
     /\b(what|which)\s+(benefit|benefits|fields)\s+(?:are you|do you)\s+(?:looking for|needing|want)\b/.test(
       t,
-    )
+    ) ||
+    /\bwhat\s+(?:is\s+)?(?:the\s+)?(?:patient\s+)?details?\b[\s\S]{0,50}\b(?:do you|you)\s+need\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+(?:patient|member)\s+details?\s+(?:do you|you)\s+need\b/.test(t) ||
+    /\bwhat\s+details?\s+(?:do you|you)\s+need\b/.test(t) ||
+    /\bwhat\s+(?:information|info)\s+(?:do you|you)\s+need\b[\s\S]{0,60}\b(?:patient|member|benefit|verify|verification)\b/.test(
+      t,
+    ) ||
+    (/\bwhat\s+(?:do you|you)\s+need\b/.test(t) &&
+      /\b(patient|member|benefit|detail|information|verify|verification|fields?)\b/.test(
+        t,
+      )) ||
+    (/\b(found|located|have)\s+(?:the\s+)?(?:patient|member)\b/.test(t) &&
+      /\b(how can i help|how may i help|what can i do for you|what can i help)\b/.test(
+        t,
+      ))
   );
 }
 
@@ -355,6 +464,7 @@ export function mayAskBenefitFields(tpaBenefitQnaOpen: boolean): boolean {
 export function userAsksPurposeOfCallOrOpening(userSaid: string): boolean {
   const t = userSaid.trim().toLowerCase();
   if (t.length < 3) return false;
+  if (isTpaBenefitQnaHandoff(userSaid)) return false;
   return (
     /how can i help|how may i help|what can i do for you|how can i (direct|assist)|need help with/i.test(
       t,
