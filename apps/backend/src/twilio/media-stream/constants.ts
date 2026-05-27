@@ -22,7 +22,7 @@ export const FALLBACK_PROCESS_INTERVAL_MS = Number(
   process.env.EVA_FALLBACK_PROCESS_INTERVAL_MS || 4_000,
 );
 /** Minimum ms to wait after EVA speaks before we process user audio (avoid echo + rushed replies). */
-export const ANSWER_WINDOW_MS = Number(process.env.EVA_ANSWER_WINDOW_MS || 2_200);
+export const ANSWER_WINDOW_MS = Number(process.env.EVA_ANSWER_WINDOW_MS || 2_700);
 /** Brief pause before EVA speaks (feels like a person thinking, not instant machine reply). */
 export const EVA_PRE_SPEAK_DELAY_MS = Number(
   process.env.EVA_PRE_SPEAK_DELAY_MS || 550,
@@ -88,6 +88,14 @@ export const CONVERSATION_GREETING = EVA_INTRO_LINE;
  */
 export const EVA_SIMPLE_PURPOSE_FOR_OPENING =
   'I need a few benefit details of a patient.';
+
+/** After a time-of-day greeting when the rep does not speak for ~1s. */
+export const EVA_TIME_OF_DAY_PURPOSE_FOLLOWUP =
+  'I want to verify a few patient benefits.';
+
+/** Mid-call hi/hello presence check — do not re-introduce. */
+export const EVA_MID_CALL_CONTINUE_LINE =
+  'Hi, sorry. Can we please continue now?';
 
 /** Optional extra phrasing (e.g. tests); voice uses `EVA_SIMPLE_PURPOSE_FOR_OPENING` only. */
 export const PURPOSE_OF_CALL_LINE_VARIANTS = [

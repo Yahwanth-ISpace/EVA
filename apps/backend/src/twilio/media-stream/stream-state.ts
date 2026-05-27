@@ -70,6 +70,8 @@ export interface StreamState {
   evaSocialGreetDone: boolean;
   /** True after EVA has said "I'm Reena — I'm calling from Went Dentals." */
   evaIntroIdentitySaid: boolean;
+  /** TPA said they found/located the patient — identity verification treated as done. */
+  tpaPatientLocated: boolean;
 }
 
 /** Per-call TPA IVR script (Part 1); survives Twilio reconnect after DTMF. */

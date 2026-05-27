@@ -43,8 +43,10 @@ import {
   EVA_TTS_CHUNK_PACE_MS,
   EVA_INTRO_IDENTITY_LINE,
   EVA_HOLD_ACK,
+  EVA_MID_CALL_CONTINUE_LINE,
   EVA_POST_DOB_SILENCE_NUDGE,
   EVA_RESUME_ACK,
+  EVA_TIME_OF_DAY_PURPOSE_FOLLOWUP,
   FALLBACK_PROCESS_INTERVAL_MS,
   HOLD_MAX_MS,
   POST_DOB_LONG_SILENCE_NUDGE_MS,
@@ -104,13 +106,17 @@ import {
   isResumePhrase,
   composeEvaDeferredIntroReply,
   composeEvaOpeningReply,
+  composeTimeOfDayGreetingReply,
   formatFirstBenefitFieldAsk,
+  isMidCallPresenceCheck,
   isSubstantiveTpaOpener,
   isTpaBareAffirmative,
   isTpaLiveOpener,
   isThankYouOrGoodbye,
   tpaAskedHowAreYou,
-  isTpaBenefitQnaHandoff,
+  isTpaPatientLocated,
+  shouldOpenBenefitQna,
+  tpaTimeOfDayGreeting,
   transcriptHasValue,
   transcriptIsDate,
   transcriptIsMoney,
@@ -211,6 +217,7 @@ export class MediaStreamHandlerService {
       openingGreetingPlayed: false,
       evaSocialGreetDone: false,
       evaIntroIdentitySaid: false,
+      tpaPatientLocated: false,
     };
 
     const send = (obj: object) => {
@@ -495,7 +502,11 @@ export class MediaStreamHandlerService {
         // Open benefit Q&A as soon as the TPA invites it — must run before the LLM so hints see tpaBenefitQnaOpen.
         let benefitQnaHandoffThisTurn = false;
         if (state.mode === 'eva') {
-          if (isTpaBenefitQnaHandoff(userSaid)) {
+          if (isTpaPatientLocated(userSaid)) {
+            state.tpaPatientLocated = true;
+            state.patientIdentityReadyForBenefits = true;
+          }
+          if (shouldOpenBenefitQna(userSaid, state.tpaPatientLocated)) {
             benefitQnaHandoffThisTurn = true;
             if (!state.tpaBenefitQnaOpen) {
               state.tpaBenefitQnaOpen = true;
@@ -1049,6 +1060,35 @@ export class MediaStreamHandlerService {
             : null;
 
           if (
+            state.openingGreetingPlayed &&
+            isMidCallPresenceCheck(userSaid, { openingDone: true })
+          ) {
+            if (userSaid?.trim())
+              state.conversationTranscript.push('User: ' + userSaid.trim());
+            state.conversationTranscript.push(
+              'EVA: ' + EVA_MID_CALL_CONTINUE_LINE,
+            );
+            const ttsMid = await speak(
+              EVA_MID_CALL_CONTINUE_LINE,
+              'mid_call_continue',
+            );
+            state.consecutiveNoiseOrEmptyTurns = 0;
+            this.logCallTurn(state.callSid, {
+              prepMs,
+              sttMs,
+              llmMs: null,
+              ttsMs: ttsMid,
+              totalMs: Date.now() - turnStart,
+              tpa: userSaid,
+              eva: EVA_MID_CALL_CONTINUE_LINE,
+              note: '(mid-call presence — no re-intro)',
+            });
+            state.processing = false;
+            startFallbackTimer();
+            return;
+          }
+
+          if (
             state.evaSocialGreetDone &&
             !state.evaIntroIdentitySaid &&
             (isTpaLiveOpener(userSaid) ||
@@ -1096,18 +1136,38 @@ export class MediaStreamHandlerService {
           }
 
           if (!state.openingGreetingPlayed) {
-            const openOk = isTpaLiveOpener(userSaid) || !!idAnsFirst?.trim();
+            const tod = tpaTimeOfDayGreeting(userSaid);
+            const openOk =
+              isTpaLiveOpener(userSaid) || !!idAnsFirst?.trim() || !!tod;
             if (openOk) {
               const alsoPurpose = userAsksPurposeOfCallOrOpening(userSaid);
-              const opening = composeEvaOpeningReply(userSaid, { alsoPurpose });
+              const opening = tod
+                ? composeTimeOfDayGreetingReply(tod, { alsoPurpose })
+                : composeEvaOpeningReply(userSaid, { alsoPurpose });
               let toSpeakFirst = opening.text;
               if (idAnsFirst?.trim() && !tpaAskedHowAreYou(userSaid)) {
                 toSpeakFirst = `${toSpeakFirst} ${idAnsFirst.trim()}`.trim();
               }
               if (userSaid?.trim())
                 state.conversationTranscript.push('User: ' + userSaid.trim());
-              state.conversationTranscript.push('EVA: ' + toSpeakFirst);
-              const ttsMsIntro = await speak(toSpeakFirst, 'eva_intro_after_tpa');
+              let ttsMsIntro = 0;
+              if (tod && !alsoPurpose) {
+                const greetIntro = opening.text;
+                state.conversationTranscript.push('EVA: ' + greetIntro);
+                ttsMsIntro += await speak(greetIntro, 'eva_tod_greeting');
+                await sleepMs(1_000);
+                state.conversationTranscript.push(
+                  'EVA: ' + EVA_TIME_OF_DAY_PURPOSE_FOLLOWUP,
+                );
+                ttsMsIntro += await speak(
+                  EVA_TIME_OF_DAY_PURPOSE_FOLLOWUP,
+                  'eva_tod_purpose_followup',
+                );
+                state.purposeSaid = true;
+              } else {
+                state.conversationTranscript.push('EVA: ' + toSpeakFirst);
+                ttsMsIntro = await speak(toSpeakFirst, 'eva_intro_after_tpa');
+              }
               if (opening.socialGreetOnly) {
                 state.evaSocialGreetDone = true;
               } else {
@@ -1130,10 +1190,14 @@ export class MediaStreamHandlerService {
                 ttsMs: ttsMsIntro,
                 totalMs: Date.now() - turnStart,
                 tpa: userSaid,
-                eva: toSpeakFirst,
-                note: opening.socialGreetOnly
-                  ? '(EVA social greet — intro on next rep turn)'
-                  : '(EVA intro after live TPA opener)',
+                eva: tod && !alsoPurpose
+                  ? `${opening.text} ${EVA_TIME_OF_DAY_PURPOSE_FOLLOWUP}`
+                  : toSpeakFirst,
+                note: tod
+                  ? '(EVA time-of-day greeting + intro)'
+                  : opening.socialGreetOnly
+                    ? '(EVA social greet — intro on next rep turn)'
+                    : '(EVA intro after live TPA opener)',
               });
               state.processing = false;
               startFallbackTimer();
@@ -1281,10 +1345,25 @@ export class MediaStreamHandlerService {
           !recallReply && !identityDirectReply && isTpaConfirmingStatedValue(userSaid)
             ? replyToValueConfirmation()
             : null;
+        const benefitHandoffReply =
+          benefitQnaHandoffThisTurn &&
+          !recallReply &&
+          !identityDirectReply &&
+          !valueConfirmReply
+            ? (() => {
+                const miss = getFirstMissingField(
+                  state.extractedData,
+                  orderedF,
+                );
+                return miss ? qField(miss) : pickBriefAcknowledgement();
+              })()
+            : null;
+
         const purposeOnlyReply =
           !recallReply &&
           !identityDirectReply &&
           !valueConfirmReply &&
+          !benefitHandoffReply &&
           userAsksPurposeOfCallOrOpening(userSaid) &&
           !state.purposeSaid &&
           !benefitQnaHandoffThisTurn
@@ -1297,6 +1376,7 @@ export class MediaStreamHandlerService {
           !recallReply &&
           !identityDirectReply &&
           !valueConfirmReply &&
+          !benefitHandoffReply &&
           !purposeOnlyReply
             ? (() => {
                 const miss = getFirstMissingField(
@@ -1358,6 +1438,13 @@ export class MediaStreamHandlerService {
           extractedUpdates = {};
           endCall = false;
           llmMs = 0;
+        } else if (benefitHandoffReply) {
+          nextMessage = benefitHandoffReply;
+          extractedUpdates = {};
+          endCall = false;
+          llmMs = 0;
+          const missHandoff = getFirstMissingField(state.extractedData, orderedF);
+          if (missHandoff) state.lastAskedField = missHandoff;
         } else if (purposeOnlyReply) {
           nextMessage = purposeOnlyReply;
           state.purposeSaid = true;
@@ -1760,7 +1847,8 @@ export class MediaStreamHandlerService {
         // GUARD: do not let EVA ask for ANY benefit field until identity is cleared AND
         // the TPA has opened benefit Q&A ("what do you want to know about the patient…").
         // ---------------------------------------------------------------------------
-        const benefitCollectionGated = !state.tpaBenefitQnaOpen;
+        const benefitCollectionGated =
+          !state.tpaBenefitQnaOpen && !benefitQnaHandoffThisTurn;
         if (
           benefitCollectionGated &&
           !state.allDoneAnnounced &&
