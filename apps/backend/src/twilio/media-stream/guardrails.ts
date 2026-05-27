@@ -6,6 +6,7 @@ import {
   EVA_HOW_ARE_YOU_REPLY,
   EVA_INTRO_IDENTITY_LINE,
   EVA_INTRO_LINE,
+  EVA_POST_VALUE_ACK_PHRASES,
   EVA_SIMPLE_PURPOSE_FOR_OPENING,
   EVA_SOCIAL_GREETING_REPLY,
 } from './constants';
@@ -97,20 +98,32 @@ export function pickBriefAcknowledgement(): string {
   return options[Math.floor(Math.random() * options.length)];
 }
 
-/** TPA confirms or repeats a value they already stated ("is it 1020 as I said?"). */
+/** Short yes / okay only — advance to next benefit field; do not say "right?" or "yes it is". */
+export function isTpaBareAffirmative(userSaid: string): boolean {
+  const t = userSaid
+    .trim()
+    .toLowerCase()
+    .replace(/[.!,]+$/, '');
+  if (!t || t.length > 24) return false;
+  return /^(yes|yeah|yep|yup|correct|that'?s\s+right|right|uh[-\s]?huh|ok|okay)$/.test(
+    t,
+  );
+}
+
+/** TPA confirms a specific value in the same utterance ("is it 1020 as I said?") — not bare "yes". */
 export function isTpaConfirmingStatedValue(userSaid: string): boolean {
   const t = userSaid.trim().toLowerCase();
-  if (t.length < 6) return false;
-  if (
-    /^(yes|yeah|yep|correct|that'?s\s+right|right|exactly)\b/i.test(t) ||
-    /\b(yes|yeah),?\s+(it\s+is|that'?s\s+(right|correct)|correct)\b/i.test(t)
-  ) {
-    return true;
-  }
+  if (t.length < 8) return false;
+  if (isTpaBareAffirmative(userSaid)) return false;
   return (
     /\b(is\s+it|is\s+that|as\s+i\s+said|like\s+i\s+said|what\s+i\s+said|did\s+you\s+get|you\s+got)\b/.test(
       t,
-    ) && /\d/.test(t)
+    ) &&
+    (/\d/.test(t) ||
+      /\b(dollar|percent|%|\$)\b/.test(t) ||
+      /\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/.test(
+        t,
+      ))
   );
 }
 
@@ -121,6 +134,48 @@ export function replyToValueConfirmation(): string {
     "That's right.",
   ];
   return options[Math.floor(Math.random() * options.length)];
+}
+
+/** After TPA provides a benefit field value — varied short ack before the next question. */
+export function pickPostValueAcknowledgement(): string {
+  const phrases = [...EVA_POST_VALUE_ACK_PHRASES];
+  return phrases[Math.floor(Math.random() * phrases.length)];
+}
+
+const BENEFIT_FIELD_LABELS: Record<string, string> = {
+  coverage: 'coverage',
+  deductible: 'deductible',
+  copay: 'copay',
+  validity: 'validity',
+};
+
+export function benefitFieldDisplayName(field: string): string {
+  const key = field.trim();
+  if (BENEFIT_FIELD_LABELS[key]) return BENEFIT_FIELD_LABELS[key];
+  return key.replace(/([A-Z])/g, ' $1').toLowerCase().trim() || key;
+}
+
+/** First benefit ask after TPA opens Q&A: "I would need the {field}." + verbatim question. */
+export function formatFirstBenefitFieldAsk(
+  field: string,
+  verbatimQuestion: string,
+): string {
+  const name = benefitFieldDisplayName(field);
+  const q = verbatimQuestion.trim();
+  return `I would need the ${name}. ${q}`;
+}
+
+/** Remove "is that right?", "correct?" etc. from EVA lines after collecting a value. */
+export function stripTrailingBenefitConfirmation(text: string): string {
+  let t = text.trim();
+  if (!t) return t;
+  t = t.replace(
+    /\s*,?\s*(is\s+that|is\s+it)\s+(right|correct|ok|okay)\s*\??\s*$/gi,
+    '',
+  );
+  t = t.replace(/\s*,?\s*right\s*\??\s*$/gi, '');
+  t = t.replace(/\s*,?\s*correct\s*\??\s*$/gi, '');
+  return t.trim();
 }
 
 /** Pull only the numeric/date token for a benefit field — never store the full TPA sentence. */
@@ -270,8 +325,30 @@ export function isTpaBenefitQnaHandoff(userSaid: string): boolean {
     ) ||
     /\b(what|which)\b[\s\S]{0,40}\b(benefit|benefits|details|fields)\b[\s\S]{0,60}\b(regarding|about)\s+(the\s+)?(patient|member)\b/.test(
       t,
+    ) ||
+    /\b(okay|ok),?\s+what\s+(do you|would you)\s+(want|need)\s+to\s+know\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+do\s+you\s+want\s+to\s+know\s+about\s+(the\s+)?(patient|member)\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+(benefit|benefits)\s+do\s+you\s+want\s+to\s+know\b/.test(t) ||
+    /\bwhat\s+benefit\s+(details|information)\s+do\s+you\s+need\b/.test(t) ||
+    /\bwhat\s+(fields|information)\s+(do you|would you)\s+want\s+me\s+to\s+provide\b/.test(
+      t,
+    ) ||
+    /\bwhat\s+(?:fields|details)\s+(?:do you|would you)\s+(?:want|need)\s+(?:me\s+)?to\s+(?:provide|give|share)\b/.test(
+      t,
+    ) ||
+    /\b(what|which)\s+(benefit|benefits|fields)\s+(?:are you|do you)\s+(?:looking for|needing|want)\b/.test(
+      t,
     )
   );
+}
+
+/** True only when the TPA has invited benefit Q&A — never infer from them asking for coverage directly. */
+export function mayAskBenefitFields(tpaBenefitQnaOpen: boolean): boolean {
+  return tpaBenefitQnaOpen;
 }
 
 /** TPA asks why we are calling / purpose / what they can help with in that sense. */

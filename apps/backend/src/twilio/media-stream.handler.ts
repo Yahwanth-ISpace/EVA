@@ -95,14 +95,18 @@ import {
   isIntroPurposePhrase,
   isTpaConfirmingStatedValue,
   pickBriefAcknowledgement,
+  pickPostValueAcknowledgement,
   pickPurposeOfCallPhrase,
   replyToValueConfirmation,
   scrubRawBenefitValue,
   stripInappropriateHoldReply,
+  stripTrailingBenefitConfirmation,
   isResumePhrase,
   composeEvaDeferredIntroReply,
   composeEvaOpeningReply,
+  formatFirstBenefitFieldAsk,
   isSubstantiveTpaOpener,
+  isTpaBareAffirmative,
   isTpaLiveOpener,
   isThankYouOrGoodbye,
   tpaAskedHowAreYou,
@@ -386,6 +390,9 @@ export class MediaStreamHandlerService {
       let llmMs: number | null = null;
 
       const qField = (field: string) => {
+        if (!state.tpaBenefitQnaOpen) {
+          return pickBriefAcknowledgement();
+        }
         const q = verbatimBenefitQuestion(field, state.fieldQuestionByKey);
         const ordered =
           state.orderedFields.length > 0
@@ -393,15 +400,12 @@ export class MediaStreamHandlerService {
             : ['coverage', 'deductible', 'copay', 'validity'];
         const firstMissing = getFirstMissingField(state.extractedData, ordered);
         if (
-          state.tpaBenefitQnaOpen &&
           firstMissing &&
           field === firstMissing &&
           !state.firstBenefitSoINeedPrefixUsed
         ) {
           state.firstBenefitSoINeedPrefixUsed = true;
-          const t = q.trim();
-          const lead = /^[a-z]/.test(t) ? t : t.charAt(0).toLowerCase() + t.slice(1);
-          return `I would need ${lead}`;
+          return formatFirstBenefitFieldAsk(field, q);
         }
         return q;
       };
@@ -1258,17 +1262,6 @@ export class MediaStreamHandlerService {
           ? state.orderedFields
           : ['coverage', 'deductible', 'copay', 'validity'];
 
-        if (
-          !state.tpaBenefitQnaOpen &&
-          state.patientIdentityReadyForBenefits &&
-          /\b(what is|what's|what are|can you (tell me|provide|share)|give me)\b.*\b(coverage|deductible|copay|coinsurance|out[-\s]?of[-\s]?pocket|maximum|validity|effective date|annual maximum|benefit)\b/i.test(
-            userSaid,
-          )
-        ) {
-          state.tpaBenefitQnaOpen = true;
-          state.postDobSilenceNudgePlayed = true;
-        }
-
         const recallReply = getRecallReply(
           userSaid,
           state.extractedData,
@@ -1296,6 +1289,24 @@ export class MediaStreamHandlerService {
           !state.purposeSaid &&
           !benefitQnaHandoffThisTurn
             ? pickPurposeOfCallPhrase()
+            : null;
+
+        const bareYesAdvanceReply =
+          state.tpaBenefitQnaOpen &&
+          isTpaBareAffirmative(userSaid) &&
+          !recallReply &&
+          !identityDirectReply &&
+          !valueConfirmReply &&
+          !purposeOnlyReply
+            ? (() => {
+                const miss = getFirstMissingField(
+                  state.extractedData,
+                  orderedF,
+                );
+                return miss
+                  ? `${pickPostValueAcknowledgement()} ${qField(miss)}`
+                  : pickPostValueAcknowledgement();
+              })()
             : null;
 
         let nextMessage = '';
@@ -1353,6 +1364,13 @@ export class MediaStreamHandlerService {
           extractedUpdates = {};
           endCall = false;
           llmMs = 0;
+        } else if (bareYesAdvanceReply) {
+          nextMessage = bareYesAdvanceReply;
+          extractedUpdates = {};
+          endCall = false;
+          llmMs = 0;
+          const missYes = getFirstMissingField(state.extractedData, orderedF);
+          if (missYes) state.lastAskedField = missYes;
         } else if (earlyAckAfterPurpose) {
           nextMessage = pickBriefAcknowledgement();
           extractedUpdates = {};
@@ -1677,13 +1695,7 @@ export class MediaStreamHandlerService {
                   state.justCompletedAllFields = false;
                   shouldEndCall = false;
                 } else {
-                  const ack = [
-                    'Got it, thanks.',
-                    'Thanks.',
-                    'Okay, thank you.',
-                    'Noted.',
-                  ][Math.floor(Math.random() * 4)];
-                  toSpeak = ack + ' ' + qField(state.lastAskedField);
+                  toSpeak = `${pickPostValueAcknowledgement()} ${qField(state.lastAskedField)}`;
                 }
               }
             } else {
@@ -1748,10 +1760,8 @@ export class MediaStreamHandlerService {
         // GUARD: do not let EVA ask for ANY benefit field until identity is cleared AND
         // the TPA has opened benefit Q&A ("what do you want to know about the patient…").
         // ---------------------------------------------------------------------------
-        const benefitCollectionGated =
-          !state.patientIdentityReadyForBenefits || !state.tpaBenefitQnaOpen;
+        const benefitCollectionGated = !state.tpaBenefitQnaOpen;
         if (
-          state.purposeSaid &&
           benefitCollectionGated &&
           !state.allDoneAnnounced &&
           toSpeak &&
@@ -1760,13 +1770,10 @@ export class MediaStreamHandlerService {
           !identityDirectReply
         ) {
           this.logger.warn(
-            '[MediaStream] LLM asked benefit field before identity + benefit gate — correcting.',
+            '[MediaStream] LLM asked benefit field before TPA opened benefit Q&A — correcting.',
           );
           state.lastAskedField = null;
-          if (
-            state.patientIdentityReadyForBenefits &&
-            !state.tpaBenefitQnaOpen
-          ) {
+          if (!state.tpaBenefitQnaOpen) {
             const uLogSilent =
               userSaid &&
               userSaid !== 'User did not respond or was inaudible.' &&
@@ -1814,7 +1821,6 @@ export class MediaStreamHandlerService {
         // it so EVA always asks for the correct next missing field.
         // ---------------------------------------------------------------------------
         if (
-          state.patientIdentityReadyForBenefits &&
           state.tpaBenefitQnaOpen &&
           !state.allDoneAnnounced &&
           !state.justCompletedAllFields &&
@@ -1841,14 +1847,12 @@ export class MediaStreamHandlerService {
               `[MediaStream] LLM asked wrong field (draft="${toSpeak}") — realigning to expected="${expected}".`,
             );
             // Keep any acknowledgement of the value we just received, then ask the right field.
-            const ack =
-              /^(got it|thanks|thank\s*you|okay|noted|alright|great)[.,!]?/i.test(
-                toSpeak,
-              )
-                ? 'Thanks. '
-                : '';
-            toSpeak = ack + qField(expected);
+            toSpeak = `${pickPostValueAcknowledgement()} ${qField(expected)}`;
           }
+        }
+
+        if (state.tpaBenefitQnaOpen && toSpeak) {
+          toSpeak = stripTrailingBenefitConfirmation(toSpeak);
         }
 
         // TYPE-MISMATCH RETRY: we were asking for X but the TPA answered with a
