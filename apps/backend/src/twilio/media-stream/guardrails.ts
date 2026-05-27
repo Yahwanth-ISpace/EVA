@@ -79,20 +79,92 @@ export type EvaOpeningCompose = {
   purposeSaid: boolean;
 };
 
-/** First EVA spoken turn after the TPA opens the live call. */
+/** TPA introduced themselves (name / company) — do not echo their name ("Hi John…"). */
+export function tpaIntroducedSelf(userSaid: string): boolean {
+  const t = userSaid.trim().toLowerCase();
+  if (t.length < 10) return false;
+  return (
+    /\b(my name is|i'?m\s+[a-z][a-z'-]+|i am\s+[a-z][a-z'-]+|this is\s+[a-z][a-z'-]+)\b/.test(
+      t,
+    ) &&
+    /\b(from|with|insurance|company|group|department|office)\b/.test(t)
+  );
+}
+
+/** Brief polite ack — not "Of course" (sounds wrong on value confirm / filler). */
+export function pickBriefAcknowledgement(): string {
+  const options = ['Thank you.', 'Understood.', 'Okay, thank you.'];
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+/** TPA confirms or repeats a value they already stated ("is it 1020 as I said?"). */
+export function isTpaConfirmingStatedValue(userSaid: string): boolean {
+  const t = userSaid.trim().toLowerCase();
+  if (t.length < 6) return false;
+  if (
+    /^(yes|yeah|yep|correct|that'?s\s+right|right|exactly)\b/i.test(t) ||
+    /\b(yes|yeah),?\s+(it\s+is|that'?s\s+(right|correct)|correct)\b/i.test(t)
+  ) {
+    return true;
+  }
+  return (
+    /\b(is\s+it|is\s+that|as\s+i\s+said|like\s+i\s+said|what\s+i\s+said|did\s+you\s+get|you\s+got)\b/.test(
+      t,
+    ) && /\d/.test(t)
+  );
+}
+
+export function replyToValueConfirmation(): string {
+  const options = [
+    "Yes, that's correct.",
+    'Yes, it is.',
+    "That's right.",
+  ];
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+/** Pull only the numeric/date token for a benefit field — never store the full TPA sentence. */
+export function scrubRawBenefitValue(
+  field: string,
+  raw: string,
+  userSaid: string,
+): string {
+  const fromSpeech = extractValueForField(userSaid, field);
+  if (fromSpeech) return fromSpeech;
+  const v = raw.trim();
+  if (!v) return v;
+  const fromRaw = extractValueForField(v, field);
+  if (fromRaw) return fromRaw;
+  const stripped = v
+    .replace(
+      /^(?:yes|no|yeah|okay|so|well|um|uh|it is|it's|that is|that's|the|a|an)[,\s]+/gi,
+      '',
+    )
+    .trim();
+  const fromStripped = extractValueForField(stripped, field);
+  if (fromStripped) return fromStripped;
+  const words = stripped.split(/\s+/).filter(Boolean);
+  if (words.length > 8 || stripped.length > 40) {
+    return fromSpeech || fromRaw || stripped.slice(0, 36).trim();
+  }
+  return stripped;
+}
+
+/** First EVA spoken turn after the TPA opens the live call (context-driven; never "Hi {TPA name}"). */
 export function composeEvaOpeningReply(
   userSaid: string,
   opts: { alsoPurpose: boolean },
 ): EvaOpeningCompose {
-  const alsoPurpose = opts.alsoPurpose;
+  const sameTurnPurpose =
+    opts.alsoPurpose || userAsksPurposeOfCallOrOpening(userSaid);
   if (tpaAskedHowAreYou(userSaid)) {
     const parts = [EVA_HOW_ARE_YOU_REPLY, EVA_INTRO_IDENTITY_LINE];
-    if (alsoPurpose) parts.push(pickPurposeOfCallPhrase());
+    if (sameTurnPurpose) parts.push(pickPurposeOfCallPhrase());
     return {
       text: parts.join(' '),
       socialGreetOnly: false,
       introIdentitySaid: true,
-      purposeSaid: alsoPurpose,
+      purposeSaid: sameTurnPurpose,
     };
   }
   if (isTpaSocialGreetingOnly(userSaid)) {
@@ -103,13 +175,21 @@ export function composeEvaOpeningReply(
       purposeSaid: false,
     };
   }
-  const parts: string[] = [EVA_INTRO_LINE];
-  if (alsoPurpose) parts.push(pickPurposeOfCallPhrase());
+  if (tpaIntroducedSelf(userSaid) && !sameTurnPurpose) {
+    return {
+      text: EVA_INTRO_IDENTITY_LINE,
+      socialGreetOnly: false,
+      introIdentitySaid: true,
+      purposeSaid: false,
+    };
+  }
+  const parts: string[] = [EVA_INTRO_IDENTITY_LINE];
+  if (sameTurnPurpose) parts.push(pickPurposeOfCallPhrase());
   return {
     text: parts.join(' '),
     socialGreetOnly: false,
     introIdentitySaid: true,
-    purposeSaid: alsoPurpose,
+    purposeSaid: sameTurnPurpose,
   };
 }
 
@@ -402,6 +482,10 @@ export function isIntroPurposePhrase(text: string): boolean {
     return true;
   if (/\bget\s+benefit\s+(detail|info|information)/i.test(t)) return true;
   if (/\bpurpose\s+of\s+(this|the|my)\s+call\s+is\b/i.test(t)) return true;
+  if (/\b(i'?d|i would)\s+like\s+to\s+verify\b/i.test(t)) return true;
+  if (/\b(i'?m|i am)\s+(calling|here)\s+to\s+(verify|get|obtain)\b/i.test(t)) {
+    return true;
+  }
   return false;
 }
 
@@ -856,19 +940,44 @@ export function isFullOpeningSelfIntro(text: string): boolean {
   return false;
 }
 
-/** Detect if user is asking to put the call on hold */
+/** TPA needs time to look something up — EVA may say hold / take your time. */
 export function isHoldPhrase(text: string): boolean {
   const t = text.trim().toLowerCase();
+  if (t.length < 10) return false;
+  if (isTpaConfirmingStatedValue(text)) return false;
   return (
-    /putting?\s+(?:the\s+)?call\s+on\s+hold/i.test(t) ||
-    /put\s+(?:me\s+)?(?:on\s+)?hold/i.test(t) ||
-    /(?:please\s+)?hold\s+(?:please)?/i.test(t) ||
-    /(?:can you\s+)?(?:please\s+)?(?:wait|hold)/i.test(t) ||
-    /one\s+moment/i.test(t) ||
-    /putting\s+you\s+on\s+hold/i.test(t) ||
-    /i'?m\s+putting\s+(?:the\s+)?call\s+on\s+hold/i.test(t) ||
-    /please\s+wait/i.test(t)
+    /putting?\s+(?:the\s+)?call\s+on\s+hold|put\s+(?:me\s+)?on\s+hold|stay\s+on\s+(?:the\s+)?line/i.test(
+      t,
+    ) ||
+    /\b(can|could)\s+you\s+(?:hold|stay\s+on|wait\s+on\s+(?:the\s+)?line)/i.test(
+      t,
+    ) ||
+    /\b(just\s+)?(one|a)\s+moment\b/.test(t) ||
+    /\blet\s+me\s+(check|look|pull|grab|get\s+that)\b/.test(t) ||
+    /\bbear\s+with\s+me\b/.test(t) ||
+    /\bi'?ll\s+(check|look\s+that\s+up|pull\s+that\s+up|be\s+right\s+back)\b/.test(
+      t,
+    ) ||
+    /\bhold\s+(?:for\s+a\s+moment|on|please)\b/.test(t) ||
+    /\bplease\s+hold\b/.test(t)
   );
+}
+
+/** Remove hold-style lines when the TPA did not ask to wait. */
+export function stripInappropriateHoldReply(
+  toSpeak: string,
+  userSaid: string,
+): string {
+  if (!toSpeak?.trim() || isHoldPhrase(userSaid)) return toSpeak;
+  const t = toSpeak.trim();
+  if (
+    /\b(take your time|i'?ll hold|sure,?\s*(i'?ll\s+)?hold|wait\s+on\s+the\s+line)\b/i.test(
+      t,
+    )
+  ) {
+    return pickBriefAcknowledgement();
+  }
+  return toSpeak;
 }
 
 /** Detect if user is saying they are back from hold. When matched, we stop hold, speak ack, and transcription + full conversation flow resume from the next user message. */

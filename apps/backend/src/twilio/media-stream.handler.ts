@@ -93,6 +93,12 @@ import {
   isFullOpeningSelfIntro,
   isHoldPhrase,
   isIntroPurposePhrase,
+  isTpaConfirmingStatedValue,
+  pickBriefAcknowledgement,
+  pickPurposeOfCallPhrase,
+  replyToValueConfirmation,
+  scrubRawBenefitValue,
+  stripInappropriateHoldReply,
   isResumePhrase,
   composeEvaDeferredIntroReply,
   composeEvaOpeningReply,
@@ -101,7 +107,6 @@ import {
   isThankYouOrGoodbye,
   tpaAskedHowAreYou,
   isTpaBenefitQnaHandoff,
-  pickPurposeOfCallPhrase,
   transcriptHasValue,
   transcriptIsDate,
   transcriptIsMoney,
@@ -1279,6 +1284,19 @@ export class MediaStreamHandlerService {
           !recallReply && state.callContext
             ? resolveIdentityDirectReply(userSaid, state.callContext)
             : null;
+        const valueConfirmReply =
+          !recallReply && !identityDirectReply && isTpaConfirmingStatedValue(userSaid)
+            ? replyToValueConfirmation()
+            : null;
+        const purposeOnlyReply =
+          !recallReply &&
+          !identityDirectReply &&
+          !valueConfirmReply &&
+          userAsksPurposeOfCallOrOpening(userSaid) &&
+          !state.purposeSaid &&
+          !benefitQnaHandoffThisTurn
+            ? pickPurposeOfCallPhrase()
+            : null;
 
         let nextMessage = '';
         let extractedUpdates: Record<string, string | null> = {};
@@ -1324,8 +1342,19 @@ export class MediaStreamHandlerService {
             state.identityAnswersGiven += 1;
             state.patientIdentityReadyForBenefits = true;
           }
+        } else if (valueConfirmReply) {
+          nextMessage = valueConfirmReply;
+          extractedUpdates = {};
+          endCall = false;
+          llmMs = 0;
+        } else if (purposeOnlyReply) {
+          nextMessage = purposeOnlyReply;
+          state.purposeSaid = true;
+          extractedUpdates = {};
+          endCall = false;
+          llmMs = 0;
         } else if (earlyAckAfterPurpose) {
-          nextMessage = 'Of course.';
+          nextMessage = pickBriefAcknowledgement();
           extractedUpdates = {};
           endCall = false;
           llmMs = 0;
@@ -1413,6 +1442,15 @@ export class MediaStreamHandlerService {
 
         // Data validation: coverage = %, deductible/copay = $, validity = date (month and year). Polite correction if wrong type.
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+          const scrubbed: Record<string, string | null> = {};
+          for (const [k, v] of Object.entries(extractedUpdates)) {
+            if (v != null && String(v).trim() && orderedF.includes(k)) {
+              scrubbed[k] = scrubRawBenefitValue(k, String(v), userSaid);
+            } else if (v != null) {
+              scrubbed[k] = v;
+            }
+          }
+          extractedUpdates = scrubbed;
           const validation =
             this.aiService.validateAndNormalizeBenefitExtracted(
               extractedUpdates,
@@ -1753,7 +1791,17 @@ export class MediaStreamHandlerService {
             startFallbackTimer();
             return;
           }
-          toSpeak = 'Of course.';
+          toSpeak = pickBriefAcknowledgement();
+        }
+
+        toSpeak = stripInappropriateHoldReply(toSpeak, userSaid);
+        if (
+          userAsksPurposeOfCallOrOpening(userSaid) &&
+          !state.purposeSaid &&
+          isIntroPurposePhrase(toSpeak)
+        ) {
+          toSpeak = pickPurposeOfCallPhrase();
+          state.purposeSaid = true;
         }
 
         // ---------------------------------------------------------------------------
