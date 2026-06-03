@@ -193,4 +193,27 @@ export class MongoService implements OnModuleDestroy {
       this.logger.log('MongoDB connection closed');
     }
   }
+
+  async deleteVerificationData(appointmentId: string, patientId: string) {
+    const db = await this.getDb();
+    const collection = db.collection('Verification');
+
+    const query: Document = {
+      appointmentId: appointmentId,
+      payeeId: patientId,
+    };
+
+    collection
+      .deleteMany(query)
+      .then((result) => {
+        this.logger.log(
+          `Deleted ${result.deletedCount} documents from Verification collection for AppointmentIDs: ${appointmentIds} and PayeeIDs: ${patientIds}`,
+        );
+      })
+      .catch((error) => {
+        this.logger.error(
+          `Error deleting documents from Verification collection for AppointmentIDs: ${appointmentIds} and PayeeIDs: ${patientIds}: ${error}`,
+        );
+      });
+  }
 }
