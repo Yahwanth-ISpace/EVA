@@ -207,12 +207,12 @@ export class MongoService implements OnModuleDestroy {
       .deleteMany(query)
       .then((result) => {
         this.logger.log(
-          `Deleted ${result.deletedCount} documents from Verification collection for AppointmentIDs: ${appointmentIds} and PayeeIDs: ${patientIds}`,
+          `Deleted ${result.deletedCount} documents from Verification collection for AppointmentIDs: ${appointmentId} and PayeeIDs: ${patientId}`,
         );
       })
       .catch((error) => {
         this.logger.error(
-          `Error deleting documents from Verification collection for AppointmentIDs: ${appointmentIds} and PayeeIDs: ${patientIds}: ${error}`,
+          `Error deleting documents from Verification collection for AppointmentIDs: ${appointmentId} and PayeeIDs: ${patientId}: ${error}`,
         );
       });
   }
