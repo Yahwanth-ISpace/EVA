@@ -1123,7 +1123,10 @@ Respond with ONLY a JSON object. No markdown. Format:
             correctionMessage: `I noticed you said "${quote(v)}". For validity, I need a date with month and year. Could you share it again?`,
           };
         }
-        const yearFromNorm = parseInt(/(\d{4})\s*$/i.exec(normalized)?.[1] ?? '', 10);
+        const yearFromNorm = parseInt(
+          /(\d{4})\s*$/i.exec(normalized)?.[1] ?? '',
+          10,
+        );
         if (
           Number.isFinite(yearFromNorm) &&
           yearFromNorm > new Date().getFullYear() + 30
@@ -1295,7 +1298,7 @@ INSTRUCTIONS:
 1. Identify every EVA turn that is a question or request for information.
 2. For each EVA question, capture the USER response immediately after it.
 3. Return a JSON array of objects with exactly two keys: "question" and "answar".
-4. Preserve the question text exactly as EVA spoke it in the transcript.
+4. If the USER provided multiple distinct values (e.g., two dates), provide them in "answar" as an array of strings, or as a single string joined by " and " or a comma. Preserve the question text exactly as EVA spoke it in the transcript.
 5. For the USER answer (answar), normalize it to a clean value:
    - Convert spoken numbers to digits: "twenty dollars" → "20", "one hundred" → "100", "fourteen" → "14"
    - Format dates properly: "May first twenty twenty six" → "May 1, 2026", "February twenty first two thousand twenty nine" → "February 21, 2029"
@@ -1345,19 +1348,31 @@ EXAMPLE OUTPUT:
           (item) =>
             typeof item === 'object' &&
             item !== null &&
-            typeof (item as { question?: unknown }).question === 'string' &&
-            typeof (item as { answar?: unknown }).answar === 'string',
+            typeof (item as any).question === 'string' &&
+            (typeof (item as any).answar === 'string' ||
+              Array.isArray((item as any).answar)),
         );
 
       const questionAnswerPairs = hasQuestionAnswerPairs
         ? parsedArray.map((item) => {
-            const raw = String((item as { answar: string }).answar);
-            // Split by " and " if it contains multiple values (e.g., dates)
-            const answar = raw.includes(' and ')
-              ? raw.split(/\s+and\s+/i).map((s) => s.trim())
-              : raw;
+            const itemObj = item as {
+              question: string;
+              answar: string | string[];
+            };
+            const rawVal = itemObj.answar;
+            let answar: string | string[];
+            if (Array.isArray(rawVal)) {
+              answar = rawVal.map((v) => String(v).trim()).filter(Boolean);
+            } else {
+              const raw = String(rawVal);
+              const parts = raw
+                .split(/\s+and\s+|(?<=\d{4}),\s*/i)
+                .map((s) => s.trim())
+                .filter(Boolean);
+              answar = parts.length > 1 ? parts : raw;
+            }
             return {
-              question: String((item as { question: string }).question),
+              question: String(itemObj.question),
               answar,
             };
           })
@@ -1379,7 +1394,7 @@ EXAMPLE OUTPUT:
         normalizedQuestion: normalizeText(pair.question),
       }));
 
-      this.logger.log('normalized pairs:::::: {}', normalizedPairs);
+      // this.logger.log('normalized pairs:::::: {}', normalizedPairs);
       return normalizedPairs;
     } catch (err) {
       this.logger.error(
