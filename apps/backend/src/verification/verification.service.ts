@@ -686,14 +686,14 @@ export class VerificationService {
     }
 
     // const doc = subrinaData as Record<string, unknown>;
-    const verificationByQuestion = new Map<string, string>();
+    const verificationByQuestion = new Map<string, string | string[]>();
     for (const field of verificationFields) {
       const question = field.question;
       const answer = field.answar ?? field.answer ?? field.value;
       if (typeof question === 'string' && answer != null) {
         verificationByQuestion.set(
           this.normalizeText(question),
-          String(answer).trim(),
+          answer as string | string[],
         );
       }
     }
@@ -712,10 +712,19 @@ export class VerificationService {
           normalizedTargetQuestion.includes(key),
       );
       if (match) {
+        const val = match[1];
         if (isHistory) {
-          target.history.push(match[1]);
+          if (Array.isArray(val)) {
+            target.history.push(...val);
+          } else {
+            const parts = String(val)
+              .split(/\s+and\s+|(?<=\d{4}),\s*/i)
+              .map((s) => s.trim())
+              .filter(Boolean);
+            target.history.push(...parts);
+          }
         } else {
-          target.answer = match[1];
+          target.answer = Array.isArray(val) ? val.join(', ') : val;
         }
         return true;
       }
