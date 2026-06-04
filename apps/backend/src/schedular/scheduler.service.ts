@@ -53,9 +53,16 @@ export class SchedulerService {
       );
       //save finalAppointments to mongo collection named processed_appointments for reference and debugging
       await this.saveTransformedAppointmentDataToMongo(finalAppointments);
+
+      // clear all verification data from Verification collection where appointmentId and payeeId=patientId in prisma before saving new data by using mongoService
+      this.mongoService.deleteVerificationData(
+        finalAppointments.AppointmentID,
+        finalAppointments.PatientID,
+      );
+
       // comment below 2 lines after actually calling
       const response = await this.appointmentService.create(finalAppointments);
-      this.logger.log(`API Response:::::::: ${JSON.stringify(response)}`);
+      // this.logger.log(`API Response:::::::: ${JSON.stringify(response)}`);
 
       const pendingAppointments = [finalAppointments];
 
