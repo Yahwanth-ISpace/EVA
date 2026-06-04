@@ -107,7 +107,7 @@ import {
   composeEvaDeferredIntroReply,
   composeEvaOpeningReply,
   composeTimeOfDayGreetingReply,
-  formatFirstBenefitFieldAsk,
+  buildBenefitFieldAskLine,
   isMidCallPresenceCheck,
   isSubstantiveTpaOpener,
   isTpaBareAffirmative,
@@ -396,25 +396,22 @@ export class MediaStreamHandlerService {
       let sttMs = 0;
       let llmMs: number | null = null;
 
+      const orderedFieldsDefault = () =>
+        state.orderedFields.length > 0
+          ? state.orderedFields
+          : ['coverage', 'deductible', 'copay', 'validity'];
+
       const qField = (field: string) => {
         if (!state.tpaBenefitQnaOpen) {
           return pickBriefAcknowledgement();
         }
-        const q = verbatimBenefitQuestion(field, state.fieldQuestionByKey);
-        const ordered =
-          state.orderedFields.length > 0
-            ? state.orderedFields
-            : ['coverage', 'deductible', 'copay', 'validity'];
-        const firstMissing = getFirstMissingField(state.extractedData, ordered);
-        if (
-          firstMissing &&
-          field === firstMissing &&
-          !state.firstBenefitSoINeedPrefixUsed
-        ) {
-          state.firstBenefitSoINeedPrefixUsed = true;
-          return formatFirstBenefitFieldAsk(field, q);
-        }
-        return q;
+        return buildBenefitFieldAskLine(
+          field,
+          state.extractedData,
+          orderedFieldsDefault(),
+          state.fieldQuestionByKey,
+          state.firstBenefitSoINeedPrefixUsed,
+        );
       };
 
       const ensurePatientCallContext = async () => {
@@ -1590,6 +1587,8 @@ export class MediaStreamHandlerService {
           extractedUpdates = validation.normalized;
         }
 
+        const extractedBeforeTurn = { ...state.extractedData };
+
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
           for (const [key, val] of Object.entries(extractedUpdates)) {
             if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
@@ -1600,6 +1599,14 @@ export class MediaStreamHandlerService {
           state.extractedData,
           orderedF,
         );
+
+        const valueCollectedThisTurn =
+          state.tpaBenefitQnaOpen &&
+          orderedF.some(
+            (f) =>
+              !hasValue(extractedBeforeTurn[f] ?? null) &&
+              hasValue(state.extractedData[f] ?? null),
+          );
 
         const allCollected = orderedF.every((f) =>
           hasValue(state.extractedData[f] ?? null),
@@ -1936,6 +1943,12 @@ export class MediaStreamHandlerService {
             );
             // Keep any acknowledgement of the value we just received, then ask the right field.
             toSpeak = `${pickPostValueAcknowledgement()} ${qField(expected)}`;
+          } else if (
+            !state.firstBenefitSoINeedPrefixUsed &&
+            expected === getFirstMissingField(state.extractedData, orderedF) &&
+            !/I would need the/i.test(toSpeak)
+          ) {
+            toSpeak = qField(expected);
           }
         }
 
@@ -2009,11 +2022,18 @@ export class MediaStreamHandlerService {
         } else {
           toSpeak = (toSpeak ?? '').trim();
         }
-        // TPA opened benefit Q&A ("what fields do you need…") → ask first missing benefit with "I would need …" once.
+        // After a value is stored: always ack and ask the next field (do not stop on "thanks" alone).
         if (
+          valueCollectedThisTurn &&
+          state.tpaBenefitQnaOpen &&
+          !allCollected &&
+          !state.justCompletedAllFields &&
+          state.lastAskedField
+        ) {
+          toSpeak = `${pickPostValueAcknowledgement()} ${qField(state.lastAskedField)}`;
+        } else if (
           benefitQnaHandoffThisTurn &&
           state.tpaBenefitQnaOpen &&
-          state.patientIdentityReadyForBenefits &&
           !state.allDoneAnnounced &&
           !allCollected
         ) {
@@ -2023,6 +2043,22 @@ export class MediaStreamHandlerService {
             toSpeak = qField(miss);
             state.lastAskedField = miss;
           }
+        } else if (
+          state.tpaBenefitQnaOpen &&
+          !state.firstBenefitSoINeedPrefixUsed &&
+          !allCollected &&
+          state.lastAskedField &&
+          isBenefitFieldAsk(toSpeak, orderedF, state.fieldQuestionByKey) &&
+          !/I would need the/i.test(toSpeak ?? '')
+        ) {
+          const firstMissing = getFirstMissingField(state.extractedData, orderedF);
+          if (firstMissing === state.lastAskedField) {
+            toSpeak = qField(firstMissing);
+          }
+        }
+
+        if (/I would need the/i.test(toSpeak ?? '')) {
+          state.firstBenefitSoINeedPrefixUsed = true;
         }
         // In-memory transcript updates (sync): needed for verification save on stop.
         const userLineForLog =

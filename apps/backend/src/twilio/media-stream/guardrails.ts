@@ -258,6 +258,31 @@ export function formatFirstBenefitFieldAsk(
   return `I would need the ${name}. ${q}`;
 }
 
+const DEFAULT_BENEFIT_ORDER = [
+  'coverage',
+  'deductible',
+  'copay',
+  'validity',
+] as const;
+
+/** Build the line to ask for a benefit field (prefix on first missing field only). Does not mutate state. */
+export function buildBenefitFieldAskLine(
+  field: string,
+  extractedData: Record<string, string | null>,
+  orderedFields: string[],
+  fieldQuestionByKey: Record<string, string>,
+  firstPrefixAlreadyUsed: boolean,
+): string {
+  const ordered =
+    orderedFields.length > 0 ? orderedFields : [...DEFAULT_BENEFIT_ORDER];
+  const q = verbatimBenefitQuestion(field, fieldQuestionByKey);
+  const firstMissing = getFirstMissingField(extractedData, ordered);
+  if (firstMissing && field === firstMissing && !firstPrefixAlreadyUsed) {
+    return formatFirstBenefitFieldAsk(field, q);
+  }
+  return q;
+}
+
 /** Remove "is that right?", "correct?" etc. from EVA lines after collecting a value. */
 export function stripTrailingBenefitConfirmation(text: string): string {
   let t = text.trim();
