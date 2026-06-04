@@ -203,6 +203,10 @@ export class MongoService implements OnModuleDestroy {
       payeeId: patientId,
     };
 
+    this.logger.log(
+      'MongoDB query for deleting verification data: ' + JSON.stringify(query),
+    );
+
     collection
       .deleteMany(query)
       .then((result) => {
