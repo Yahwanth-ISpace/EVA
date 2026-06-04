@@ -199,13 +199,9 @@ export class MongoService implements OnModuleDestroy {
     const collection = db.collection('Verification');
 
     const query: Document = {
-      appointmentId: appointmentId,
-      payeeId: patientId,
+      appointmentId: String(appointmentId),
+      payeeId: String(patientId),
     };
-
-    this.logger.log(
-      'MongoDB query for deleting verification data: ' + JSON.stringify(query),
-    );
 
     collection
       .deleteMany(query)
