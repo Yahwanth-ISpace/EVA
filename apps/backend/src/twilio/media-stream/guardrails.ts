@@ -585,6 +585,11 @@ export function extractValueForField(
   const dollarMatch = t.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
   const percentMatch = t.match(/(\d+)\s*%|(\d+)\s*percent/i);
   const numberMatch = t.match(/\b(\d+)\b/);
+  if (field === 'history-list') {
+    if (/\b(no|none|false|don'?t\s+have|never)\b/i.test(t)) return 'no';
+    if (/\b(yes|yeah|yep|yup|true|have)\b/i.test(t)) return 'yes';
+    return null;
+  }
   if (field === 'validity') {
     // Validity MUST be a date. If the transcript is a dollar amount or a percentage,
     // it is clearly NOT a validity answer — return null so we don't pollute the field
@@ -641,7 +646,10 @@ export function transcriptIsDate(transcript: string): boolean {
 
 /** True if transcript looks like it contains a number, dollar amount, or percent (user may be giving a value). */
 export function transcriptHasValue(transcript: string): boolean {
-  return /\d+|dollar|percent|%\s*\$/.test(transcript);
+  return (
+    /\d+|dollar|percent|%\s*\$/.test(transcript) ||
+    /\b(no|none|false|yes|yeah|yep|yup|true)\b/i.test(transcript)
+  );
 }
 
 /**
