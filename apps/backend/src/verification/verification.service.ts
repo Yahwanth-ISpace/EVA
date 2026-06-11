@@ -673,6 +673,83 @@ export class VerificationService {
       .trim();
   }
 
+  private normalizeAnswerForQuestion(
+    question: string,
+    answer: string | string[],
+  ): string | string[] {
+    if (!AiService.isGroupNameQuestion(question)) return answer;
+    if (Array.isArray(answer)) {
+      return answer
+        .map((v) => this.aiService.extractGroupNameFromAnswer(String(v)))
+        .filter(Boolean);
+    }
+    return this.aiService.extractGroupNameFromAnswer(String(answer));
+  }
+
+  private hasSabrinaAnswer(value: unknown): boolean {
+    if (value == null) return false;
+    if (Array.isArray(value)) {
+      return value.some((v) => String(v).trim().length > 0);
+    }
+    const s = String(value).trim();
+    return s.length > 0 && !/^skipped\b/i.test(s);
+  }
+
+  private isPatientNotFoundInTranscript(transcript: string): boolean {
+    const t = transcript.toLowerCase();
+    return (
+      /\b(patient|member|subscriber)\s+(is\s+)?not\s+found\b/.test(t) ||
+      /\b(no|not)\s+(patient|member|subscriber)\s+(on\s+file|in\s+(the\s+)?system|found)\b/.test(
+        t,
+      ) ||
+      /\b(can'?t|cannot)\s+find\s+(the\s+)?(patient|member|subscriber)\b/.test(
+        t,
+      ) ||
+      /\bwe\s+don'?t\s+have\s+(that\s+)?(patient|member|subscriber)\b/.test(
+        t,
+      ) ||
+      /\bno\s+record\s+(for|of)\s+(this\s+)?(patient|member|subscriber)\b/.test(
+        t,
+      )
+    );
+  }
+
+  private areAllSabrinaFieldsComplete(doc: Record<string, any>): boolean {
+    for (const value of Object.values(doc)) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        continue;
+      }
+      const nested = value as Record<string, any>;
+      if (
+        typeof nested.question === 'string' &&
+        Object.prototype.hasOwnProperty.call(nested, 'answer')
+      ) {
+        if (!this.hasSabrinaAnswer(nested.answer)) return false;
+      }
+    }
+
+    const history = Array.isArray(doc.history) ? doc.history : [];
+    for (const item of history) {
+      if (!item || typeof item !== 'object') continue;
+      const historyItem = item as Record<string, any>;
+      if (typeof historyItem.question !== 'string') continue;
+      const hist = historyItem.history;
+      if (!Array.isArray(hist) || hist.length === 0) return false;
+    }
+
+    return true;
+  }
+
+  private computeSabrinaResponseStatus(
+    doc: Record<string, any> | null,
+    transcript: string,
+  ): 'Complete' | 'Incomplete' | 'Not Found' {
+    if (this.isPatientNotFoundInTranscript(transcript)) return 'Not Found';
+    if (!doc) return 'Incomplete';
+    if (this.areAllSabrinaFieldsComplete(doc)) return 'Complete';
+    return 'Incomplete';
+  }
+
   private mapSubrinaAnswers(
     verificationFields: Array<Record<string, unknown>>,
     subrinaData: any,
@@ -712,7 +789,7 @@ export class VerificationService {
           normalizedTargetQuestion.includes(key),
       );
       if (match) {
-        const val = match[1];
+        const val = this.normalizeAnswerForQuestion(targetQuestion, match[1]);
         if (isHistory) {
           if (Array.isArray(val)) {
             target.history.push(...val);
@@ -919,6 +996,11 @@ export class VerificationService {
     );
     if (subrinaData) {
       this.mapSubrinaAnswers(verificationFields, subrinaData);
+      (subrinaData as Record<string, unknown>).status =
+        this.computeSabrinaResponseStatus(
+          subrinaData as Record<string, any>,
+          transcriptToAppend,
+        );
     }
     // this.logger.log(subrinaData);
 

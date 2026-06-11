@@ -210,6 +210,47 @@ ${patientBlock}
     return v != null && String(v).trim().length > 0;
   }
 
+  /** True when the field key refers to insurance group name (not group number). */
+  public static isGroupNameField(field: string): boolean {
+    const f = field
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '');
+    return f === 'groupname' || f === 'insurancegroupname';
+  }
+
+  /** True when the spoken question is asking for group name (not group number). */
+  public static isGroupNameQuestion(question: string): boolean {
+    const q = question.trim().toLowerCase();
+    return q.includes('group name') && !q.includes('group number');
+  }
+
+  /**
+   * Pull the group name token from a conversational answer, e.g.
+   * "That is My India." → "My India", "That would be My india" → "My India".
+   */
+  public extractGroupNameFromAnswer(raw: string): string {
+    let v = String(raw ?? '')
+      .trim()
+      .replace(/[.!?]+$/g, '')
+      .trim();
+    v = v
+      .replace(
+        /^(?:yes|no|yeah|okay|so|well|um|uh|it\s+is|it's|that\s+is|that's|that\s+would\s+be|that\s+would|this\s+is|the\s+group\s+name\s+is|group\s+name\s+is|the\s+name\s+is|name\s+is)[,\s:]+/gi,
+        '',
+      )
+      .trim();
+    v = v
+      .replace(/^(?:that\s+is|that's|that\s+would\s+be|it\s+is|it's)[,\s:]+/gi, '')
+      .trim();
+    if (!v) return '';
+    return v
+      .split(/\s+/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ')
+      .trim();
+  }
+
   /** Returns missing field names in required order (uses orderedFields or default four) */
   private getMissingFields(
     state: Record<string, string | null | undefined>,
@@ -1159,6 +1200,9 @@ Respond with ONLY a JSON object. No markdown. Format:
           }
         }
         out.validity = normalized;
+      } else if (AiService.isGroupNameField(field)) {
+        const name = this.extractGroupNameFromAnswer(v || userSaid);
+        if (name.trim()) out[field] = name;
       } else {
         out[field] = v;
       }
@@ -1304,14 +1348,15 @@ INSTRUCTIONS:
    - Format dates properly: "May first twenty twenty six" → "May 1, 2026", "February twenty first two thousand twenty nine" → "February 21, 2029"
    - Keep percentages as is or convert: "eighty percent" → "80", "twenty five %" → "25"
    - Remove filler words and normalize: "Uh, it is, uh, two forty-four" → "244"
-   - For text answers, keep as clean text without extra words.
+   - For insurance GROUP NAME questions: extract only the name from conversational answers — "That is My India." → "My India", "That would be My india" → "My India". Do NOT convert group names to numbers.
+   - For other text answers, keep as clean text without extra words.
 6. Do NOT include any field definitions, metadata, markdown, code fences, or extra text.
 7. If a USER response is missing after an EVA question, omit that pair.
 8. Return valid JSON only.
 
 EXAMPLE OUTPUT:
 [
-  { "question": "What is the insurance group name?", "answar": "244" },
+  { "question": "What is the insurance group name?", "answar": "My India" },
   { "question": "What is the insurance group number?", "answar": "1717" },
   { "question": "What is the patient's date of birth?", "answar": "March 26, 1984" },
   { "question": "What is the basic coverage?", "answar": "20" }
@@ -1361,18 +1406,31 @@ EXAMPLE OUTPUT:
             };
             const rawVal = itemObj.answar;
             let answar: string | string[];
+            const question = String(itemObj.question);
             if (Array.isArray(rawVal)) {
-              answar = rawVal.map((v) => String(v).trim()).filter(Boolean);
+              answar = rawVal
+                .map((v) => String(v).trim())
+                .filter(Boolean)
+                .map((v) =>
+                  AiService.isGroupNameQuestion(question)
+                    ? this.extractGroupNameFromAnswer(v)
+                    : v,
+                )
+                .filter(Boolean);
             } else {
               const raw = String(rawVal);
-              const parts = raw
-                .split(/\s+and\s+|(?<=\d{4}),\s*/i)
-                .map((s) => s.trim())
-                .filter(Boolean);
-              answar = parts.length > 1 ? parts : raw;
+              if (AiService.isGroupNameQuestion(question)) {
+                answar = this.extractGroupNameFromAnswer(raw);
+              } else {
+                const parts = raw
+                  .split(/\s+and\s+|(?<=\d{4}),\s*/i)
+                  .map((s) => s.trim())
+                  .filter(Boolean);
+                answar = parts.length > 1 ? parts : raw;
+              }
             }
             return {
-              question: String(itemObj.question),
+              question,
               answar,
             };
           })
