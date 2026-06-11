@@ -64,8 +64,14 @@ import {
 } from './media-stream/constants';
 import { truncateForLogLine } from './media-stream/logging';
 import { isSilenceAtEnd, streamModeUsesIvrTiming } from './media-stream/speech';
-import { STATIC_CALL_CONTEXT, STATIC_PATIENT_INFO } from './media-stream/static-context';
-import type { StreamState, TpaIvrRuntimeState } from './media-stream/stream-state';
+import {
+  STATIC_CALL_CONTEXT,
+  STATIC_PATIENT_INFO,
+} from './media-stream/static-context';
+import type {
+  StreamState,
+  TpaIvrRuntimeState,
+} from './media-stream/stream-state';
 import {
   buildDobDtmf,
   buildMemberIdDtmf,
@@ -599,7 +605,7 @@ export class MediaStreamHandlerService {
                 ttsMs: ttsHandoff,
                 totalMs: Date.now() - turnStart,
                 tpa: t,
-              eva: '—',
+                eva: '—',
                 note: '(TPA IVR Part 2 → EVA live agent)',
               });
               state.processing = false;
@@ -1187,9 +1193,10 @@ export class MediaStreamHandlerService {
                 ttsMs: ttsMsIntro,
                 totalMs: Date.now() - turnStart,
                 tpa: userSaid,
-                eva: tod && !alsoPurpose
-                  ? `${opening.text} ${EVA_TIME_OF_DAY_PURPOSE_FOLLOWUP}`
-                  : toSpeakFirst,
+                eva:
+                  tod && !alsoPurpose
+                    ? `${opening.text} ${EVA_TIME_OF_DAY_PURPOSE_FOLLOWUP}`
+                    : toSpeakFirst,
                 note: tod
                   ? '(EVA time-of-day greeting + intro)'
                   : opening.socialGreetOnly
@@ -1216,7 +1223,9 @@ export class MediaStreamHandlerService {
             quietMs >= POST_DOB_LONG_SILENCE_NUDGE_MS
           ) {
             state.postDobSilenceNudgePlayed = true;
-            state.conversationTranscript.push('EVA: ' + EVA_POST_DOB_SILENCE_NUDGE);
+            state.conversationTranscript.push(
+              'EVA: ' + EVA_POST_DOB_SILENCE_NUDGE,
+            );
             void pushLiveTracker(`EVA: ${EVA_POST_DOB_SILENCE_NUDGE}`);
             const ttsNudge = await speak(
               EVA_POST_DOB_SILENCE_NUDGE,
@@ -1339,7 +1348,9 @@ export class MediaStreamHandlerService {
             ? resolveIdentityDirectReply(userSaid, state.callContext)
             : null;
         const valueConfirmReply =
-          !recallReply && !identityDirectReply && isTpaConfirmingStatedValue(userSaid)
+          !recallReply &&
+          !identityDirectReply &&
+          isTpaConfirmingStatedValue(userSaid)
             ? replyToValueConfirmation()
             : null;
         const benefitHandoffReply =
@@ -1440,7 +1451,10 @@ export class MediaStreamHandlerService {
           extractedUpdates = {};
           endCall = false;
           llmMs = 0;
-          const missHandoff = getFirstMissingField(state.extractedData, orderedF);
+          const missHandoff = getFirstMissingField(
+            state.extractedData,
+            orderedF,
+          );
           if (missHandoff) state.lastAskedField = missHandoff;
         } else if (purposeOnlyReply) {
           nextMessage = purposeOnlyReply;
@@ -1592,6 +1606,23 @@ export class MediaStreamHandlerService {
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
           for (const [key, val] of Object.entries(extractedUpdates)) {
             if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
+          }
+
+          // If we just asked "does this patient have any history?" and they said no, skip remaining fields.
+          if (state.lastAskedField === 'history-list') {
+            const val = String(
+              state.extractedData['history-list'] ?? '',
+            ).toLowerCase();
+            if (val.includes('no') || val === 'none' || val === 'false') {
+              for (const f of orderedF) {
+                if (
+                  f.includes('history.') &&
+                  !hasValue(state.extractedData[f] ?? null)
+                ) {
+                  state.extractedData[f] = 'skipped (no history)';
+                }
+              }
+            }
           }
         }
 
@@ -1745,7 +1776,8 @@ export class MediaStreamHandlerService {
               'As I mentioned, we just need a few patient benefit details from your end.';
           } else if (tpaAskedHowAreYou(userSaid)) {
             if (!state.evaIntroIdentitySaid) {
-              toSpeak = `${EVA_HOW_ARE_YOU_REPLY} ${EVA_INTRO_IDENTITY_LINE}`.trim();
+              toSpeak =
+                `${EVA_HOW_ARE_YOU_REPLY} ${EVA_INTRO_IDENTITY_LINE}`.trim();
               state.evaIntroIdentitySaid = true;
               state.openingGreetingPlayed = true;
             } else {
@@ -2262,10 +2294,7 @@ export class MediaStreamHandlerService {
             if (!state.patientInfo && !state.patientId) {
               state.patientInfo = STATIC_PATIENT_INFO;
               state.callContext = STATIC_CALL_CONTEXT;
-              applyVerificationStepsToStreamState(
-                state,
-                STATIC_CALL_CONTEXT,
-              );
+              applyVerificationStepsToStreamState(state, STATIC_CALL_CONTEXT);
               this.logger.warn(
                 '[MediaStream] Using static patient info (no patientId on stream). Pass patientId (or payeeId) in the stream URL to use real patient details from the database.',
               );

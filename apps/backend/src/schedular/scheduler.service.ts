@@ -235,7 +235,18 @@ export class SchedulerService {
     }
 
     // Process history array and add to verificationFields
-    if (appointmentData.history && Array.isArray(appointmentData.history)) {
+    if (
+      appointmentData.history &&
+      Array.isArray(appointmentData.history) &&
+      appointmentData.history.length > 0
+    ) {
+      verificationFields.push({
+        question: 'does this patient have any history?',
+        field: 'history-list',
+        order: order,
+      });
+      order++;
+
       for (const historyItem of appointmentData.history) {
         if (historyItem.question && historyItem.procedurecode) {
           verificationFields.push({
