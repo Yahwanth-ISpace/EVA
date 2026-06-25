@@ -17,9 +17,17 @@ const noOfAgents = process.env.NO_OF_AGENTS
   ? parseInt(process.env.NO_OF_AGENTS)
   : 1;
 
-const sampleDataApiUrl =
-  process.env.SAMPLE_DATA_API_URL ||
-  'http://localhost:3000/scheduler/sample-data';
+const today = new Date();
+
+const fromDate = new Date(today);
+fromDate.setDate(today.getDate() - 2);
+
+const sabrinaApiUrl =
+  process.env.SABRINA_API_URL || 'https://sabrinauatapi.ispace.com/api';
+
+// const sampleDataApiUrl =
+//   process.env.SAMPLE_DATA_API_URL ||
+//   'http://localhost:3000/scheduler/sample-data';
 
 @Injectable()
 export class SchedulerService {
@@ -120,18 +128,76 @@ export class SchedulerService {
     });
   }
 
-  async getAppointments() {
+  async loginToSabrina() {
     try {
-      this.logger.log(
-        'Fetching appointment data from API...',
-        sampleDataApiUrl,
-      );
-      const response = await axios.get<any>(sampleDataApiUrl);
-      this.logger.debug(`Appointment data: ${JSON.stringify(response.data)}`);
+      this.logger.log('Logging into Sabrina...');
+
+      const response = await axios.post(`${sabrinaApiUrl}/login/login`, {
+        // Replace with actual login payload
+        username: process.env.SABRINA_USERNAME,
+        password: process.env.SABRINA_PASSWORD,
+        verificationCode: process.env.SABRINA_VERIFICATION_CODE,
+      });
+
       return response.data;
     } catch (error) {
       this.logger.error(
-        'Failed to fetch appointment data from API',
+        'Failed to login to Sabrina',
+        error instanceof Error ? error.message : error,
+      );
+      throw error;
+    }
+  }
+
+  async getAppointments() {
+    try {
+      const loginResponse = await this.loginToSabrina();
+
+      const payload = {
+        userID: loginResponse.userID,
+        roleName: loginResponse.roleName,
+        officeBusinessKey: 'ALL',
+
+        appointmentFromDate: fromDate.toISOString().split('T')[0],
+        appointmentToDate: today.toISOString().split('T')[0],
+
+        workQueueName: 'Total',
+        isSameDay: false,
+        isCopay: false,
+        isMedicarePlans: false,
+
+        start: 1,
+        pageSize: 10,
+        order: '',
+        search: '',
+        isExport: false,
+
+        clientName: loginResponse.clientShortName,
+      };
+
+      this.logger.log(
+        `Fetching appointments with payload: ${JSON.stringify(payload)}`,
+      );
+
+      const response = await axios.post(
+        `${sabrinaApiUrl}/appointments/Summary`,
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${loginResponse.accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      this.logger.log(
+        `Appointments Response: ${JSON.stringify(response.data)}`,
+      );
+
+      return response.data;
+    } catch (error) {
+      this.logger.error(
+        'Failed to fetch appointment data',
         error instanceof Error ? error.message : error,
       );
       throw error;
