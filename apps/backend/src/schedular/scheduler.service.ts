@@ -137,6 +137,12 @@ export class SchedulerService {
       verificationCode: process.env.SABRINA_VERIFICATION_CODE || '123456',
     };
 
+    const headers = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'Ocp-Apim-Subscription-Key': process.env.SABRINA_SUBSCRIPTION_KEY,
+    };
+
     try {
       this.logger.log('================ SABRINA LOGIN =================');
       this.logger.log(`URL: ${loginUrl}`);
@@ -154,12 +160,16 @@ export class SchedulerService {
       );
       this.logger.log(`Payload: ${JSON.stringify(payload)}`);
 
+      this.logger.log(
+        `SABRINA_SUBSCRIPTION_KEY: ${
+          process.env.SABRINA_SUBSCRIPTION_KEY || 'UNDEFINED'
+        }`,
+      );
+
+      this.logger.log(`Headers: ${JSON.stringify(headers)}`);
+
       const response = await axios.post(loginUrl, payload, {
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          'Ocp-Apim-Subscription-Key': process.env.SABRINA_SUBSCRIPTION_KEY,
-        },
+        headers,
       });
 
       this.logger.log(`Response Status: ${response.status}`);
@@ -174,6 +184,9 @@ export class SchedulerService {
 
       this.logger.error(
         `Response Data: ${JSON.stringify(error?.response?.data)}`,
+      );
+      this.logger.error(
+        `Raw Response Data: ${JSON.stringify(error?.response?.data, null, 2)}`,
       );
 
       this.logger.error(
