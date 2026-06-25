@@ -162,8 +162,14 @@ export class SchedulerService {
   async getAppointments() {
     try {
       const loginResponse = await this.loginToSabrina();
+      const login =
+        typeof loginResponse === 'string'
+          ? JSON.parse(loginResponse)
+          : loginResponse;
 
-      this.logger.log(`login = ${loginResponse}`);
+      this.logger.log(`typeof loginResponse = ${typeof loginResponse}`);
+      this.logger.log(`constructor = ${loginResponse?.constructor?.name}`);
+      this.logger.log(`loginResponse raw = ${JSON.stringify(loginResponse)}`);
       this.logger.log(`userID = ${loginResponse?.data.userID}`);
       this.logger.log(`roleName = ${loginResponse?.result.roleName}`);
       this.logger.log(
@@ -171,8 +177,8 @@ export class SchedulerService {
       );
 
       const payload = {
-        userID: loginResponse.userID,
-        roleName: loginResponse.roleName,
+        userID: login.userID,
+        roleName: login.roleName,
         officeBusinessKey: 'ALL',
 
         appointmentFromDate: fromDate.toISOString().split('T')[0],
@@ -189,7 +195,7 @@ export class SchedulerService {
         search: '',
         isExport: false,
 
-        clientName: loginResponse.clientShortName,
+        clientName: login.clientShortName,
       };
 
       this.logger.log(
