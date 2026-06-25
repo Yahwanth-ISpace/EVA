@@ -158,6 +158,7 @@ export class SchedulerService {
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
+          'Ocp-Apim-Subscription-Key': process.env.SABRINA_SUBSCRIPTION_KEY,
         },
       });
 
