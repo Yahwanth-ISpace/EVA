@@ -202,7 +202,7 @@ export class SchedulerService {
         payload,
         {
           headers: {
-            Authorization: `Bearer ${loginResponse.accessToken}`,
+            Authorization: `Bearer ${login.accessToken}`,
             'Content-Type': 'application/json',
             Accept: 'application/json',
             'Ocp-Apim-Subscription-Key': process.env.SABRINA_SUBSCRIPTION_KEY,
