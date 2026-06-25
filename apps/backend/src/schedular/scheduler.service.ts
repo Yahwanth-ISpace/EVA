@@ -163,13 +163,13 @@ export class SchedulerService {
     try {
       const loginResponse = await this.loginToSabrina();
 
-      this.logger.log(`userID = ${loginResponse?.userID}`);
-      this.logger.log(`roleName = ${loginResponse?.roleName}`);
-      this.logger.log(`clientShortName = ${loginResponse?.clientShortName}`);
+      this.logger.log(`userID = ${loginResponse?.data.userID}`);
+      this.logger.log(`roleName = ${loginResponse?.result.roleName}`);
+      this.logger.log(`clientShortName = ${loginResponse?.results.clientShortName}`);
 
       const payload = {
-        userID: loginResponse.data.userID,
-        roleName: loginResponse.data.roleName,
+        userID: loginResponse.userID,
+        roleName: loginResponse.roleName,
         officeBusinessKey: 'ALL',
 
         appointmentFromDate: fromDate.toISOString().split('T')[0],
