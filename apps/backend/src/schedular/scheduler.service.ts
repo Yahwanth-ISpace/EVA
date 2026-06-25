@@ -167,14 +167,9 @@ export class SchedulerService {
           ? JSON.parse(loginResponse)
           : loginResponse;
 
-      this.logger.log(`typeof loginResponse = ${typeof loginResponse}`);
-      this.logger.log(`constructor = ${loginResponse?.constructor?.name}`);
-      this.logger.log(`loginResponse raw = ${JSON.stringify(loginResponse)}`);
-      this.logger.log(`userID = ${loginResponse?.data.userID}`);
-      this.logger.log(`roleName = ${loginResponse?.result.roleName}`);
-      this.logger.log(
-        `clientShortName = ${loginResponse?.results.clientShortName}`,
-      );
+      this.logger.log(`userID = ${login?.userID}`);
+      this.logger.log(`roleName = ${login?.roleName}`);
+      this.logger.log(`clientShortName = ${login?.clientShortName}`);
 
       const payload = {
         userID: login.userID,
