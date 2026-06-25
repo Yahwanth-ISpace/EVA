@@ -132,12 +132,19 @@ export class SchedulerService {
     try {
       this.logger.log('Logging into Sabrina...');
 
-      const response = await axios.post(`${sabrinaApiUrl}/login/login`, {
-        // Replace with actual login payload
-        username: process.env.SABRINA_USERNAME,
-        password: process.env.SABRINA_PASSWORD,
-        verificationCode: process.env.SABRINA_VERIFICATION_CODE,
-      });
+      const response = await axios.post(
+        `${sabrinaApiUrl}/login/login`,
+        {
+          username: process.env.SABRINA_USERNAME,
+          password: process.env.SABRINA_PASSWORD,
+          verificationCode: process.env.SABRINA_VERIFICATION_CODE || '123456',
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        },
+      );
 
       return response.data;
     } catch (error) {
