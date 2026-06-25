@@ -129,29 +129,66 @@ export class SchedulerService {
   }
 
   async loginToSabrina() {
-    try {
-      this.logger.log('Logging into Sabrina...');
+    const loginUrl = `${sabrinaApiUrl}/login/login`;
 
-      const response = await axios.post(
-        `${sabrinaApiUrl}/login/login`,
-        {
-          username: process.env.SABRINA_USERNAME,
-          password: process.env.SABRINA_PASSWORD,
-          verificationCode: process.env.SABRINA_VERIFICATION_CODE || '123456',
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        },
+    const payload = {
+      username: process.env.SABRINA_USERNAME,
+      password: process.env.SABRINA_PASSWORD,
+      verificationCode: process.env.SABRINA_VERIFICATION_CODE || '123456',
+    };
+
+    try {
+      this.logger.log('================ SABRINA LOGIN =================');
+      this.logger.log(`URL: ${loginUrl}`);
+      this.logger.log(`SABRINA_API_URL: ${sabrinaApiUrl}`);
+      this.logger.log(`SABRINA_USERNAME: ${process.env.SABRINA_USERNAME}`);
+      this.logger.log(
+        `SABRINA_PASSWORD: ${
+          process.env.SABRINA_PASSWORD
+            ? '*'.repeat(process.env.SABRINA_PASSWORD.length)
+            : 'undefined'
+        }`,
       );
+      this.logger.log(
+        `SABRINA_VERIFICATION_CODE: ${process.env.SABRINA_VERIFICATION_CODE}`,
+      );
+      this.logger.log(`Payload: ${JSON.stringify(payload)}`);
+
+      const response = await axios.post(loginUrl, payload, {
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+      });
+
+      this.logger.log(`Response Status: ${response.status}`);
+      this.logger.log(`Response Data: ${JSON.stringify(response.data)}`);
 
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error('================ LOGIN FAILED =================');
+      this.logger.error(`URL: ${loginUrl}`);
+      this.logger.error(`Status: ${error?.response?.status}`);
+      this.logger.error(`Status Text: ${error?.response?.statusText}`);
+
       this.logger.error(
-        'Failed to login to Sabrina',
-        error instanceof Error ? error.message : error,
+        `Response Data: ${JSON.stringify(error?.response?.data)}`,
       );
+
+      this.logger.error(
+        `Response Headers: ${JSON.stringify(error?.response?.headers)}`,
+      );
+
+      this.logger.error(`Axios Message: ${error?.message}`);
+
+      this.logger.error(
+        `Axios Config: ${JSON.stringify({
+          method: error?.config?.method,
+          url: error?.config?.url,
+          data: error?.config?.data,
+        })}`,
+      );
+
       throw error;
     }
   }
