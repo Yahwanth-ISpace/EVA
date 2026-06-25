@@ -163,9 +163,9 @@ export class SchedulerService {
     try {
       const loginResponse = await this.loginToSabrina();
 
-      this.logger.log(
-        `the response of Login: ${JSON.stringify(loginResponse)}}`,
-      );
+      this.logger.log(`userID = ${loginResponse?.userID}`);
+      this.logger.log(`roleName = ${loginResponse?.roleName}`);
+      this.logger.log(`clientShortName = ${loginResponse?.clientShortName}`);
 
       const payload = {
         userID: loginResponse.userID,
