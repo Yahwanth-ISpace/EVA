@@ -168,8 +168,8 @@ export class SchedulerService {
       this.logger.log(`clientShortName = ${loginResponse?.clientShortName}`);
 
       const payload = {
-        userID: loginResponse.userID,
-        roleName: loginResponse.roleName,
+        userID: loginResponse.data.userID,
+        roleName: loginResponse.data.roleName,
         officeBusinessKey: 'ALL',
 
         appointmentFromDate: fromDate.toISOString().split('T')[0],
