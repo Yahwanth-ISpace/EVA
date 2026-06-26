@@ -5,7 +5,7 @@ EVA is a monorepo that automates the process of verifying dental insurance cover
 ## 🏗️ Monorepo Structure
 
 ```
-claimBot/
+EVA/
 ├── apps/
 │   ├── backend/            # NestJS backend
 │   ├── ai-server/          # FastAPI server for Whisper + Ollama
@@ -20,8 +20,8 @@ claimBot/
 ### 1. Clone the Repo
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/claimBot.git
-cd claimBot
+git clone https://github.com/YOUR_USERNAME/EVA.git
+cd EVA
 ```
 
 ### 2. Backend (NestJS)
@@ -45,7 +45,7 @@ npm run start:dev
 `🐳 Run the Whisper-based AI server entirely through Docker:`
 
 ```bash
-cd claimBot
+cd EVA
 
 # This will create a image in local docker to give you whisper services
 docker build -f Docker/Dockerfile -t whisper-ai-server .
