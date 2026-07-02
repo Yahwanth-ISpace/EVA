@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { ServiceBusClient } from '@azure/service-bus';
 import axios from 'axios';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AgentStatus } from '@prisma/client';
@@ -17,9 +18,25 @@ const noOfAgents = process.env.NO_OF_AGENTS
   ? parseInt(process.env.NO_OF_AGENTS)
   : 1;
 
-const sampleDataApiUrl =
-  process.env.SAMPLE_DATA_API_URL ||
-  'http://localhost:3000/scheduler/sample-data';
+const today = new Date();
+
+const fromDate = new Date(today);
+fromDate.setDate(today.getDate() - 2);
+
+const sabrinaApiUrl =
+  process.env.SABRINA_API_URL || 'https://sabrinauatapi.ispace.com/api';
+
+// const sampleDataApiUrl =
+//   process.env.SAMPLE_DATA_API_URL ||
+//   'http://localhost:3000/scheduler/sample-data';
+// const sampleDataApiUrl =
+//   process.env.SAMPLE_DATA_API_URL ||
+//   'http://localhost:3000/scheduler/sample-data';
+const serviceBusConnectionString =
+  process.env.SERVICE_BUS_CONNECTION_STRING ||
+  'sb://uat-sabrina-servicebus.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=uZjWvtmuDM70Q/BYvdPbxD1IqQyY/KhtD+ASbI3/fiQ=';
+const serviceBusQueueName =
+  process.env.SERVICE_BUS_QUEUE_NAME || 'eva_voicebot';
 
 @Injectable()
 export class SchedulerService {
@@ -120,21 +137,153 @@ export class SchedulerService {
     });
   }
 
+  async loginToSabrina() {
+    const loginUrl = `${sabrinaApiUrl}/login/login`;
+
+    const payload = {
+      username: process.env.SABRINA_USERNAME,
+      password: process.env.SABRINA_PASSWORD,
+      verificationCode: process.env.SABRINA_VERIFICATION_CODE || '123456',
+    };
+
+    const headers = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'Ocp-Apim-Subscription-Key': process.env.SABRINA_SUBSCRIPTION_KEY,
+    };
+
+    try {
+      const response = await axios.post(loginUrl, payload, {
+        headers,
+      });
+
+      return response.data;
+    } catch (error: any) {
+      this.logger.error(`Status: ${error?.response?.status}`);
+      this.logger.error(`Status Text: ${error?.response?.statusText}`);
+
+      this.logger.error(`Axios Message: ${error?.message}`);
+
+      throw error;
+    }
+  }
+
   async getAppointments() {
     try {
+      const serviceBusAppointment =
+        await this.tryReadAppointmentFromServiceBus();
+      if (serviceBusAppointment) {
+        this.logger.log(
+          'Fetched appointment data from Azure Service Bus queue.',
+        );
+        // return serviceBusAppointment;
+      }
       this.logger.log(
-        'Fetching appointment data from API...',
-        sampleDataApiUrl,
+        'Fetched appointment data from service bus...',
+        serviceBusAppointment,
       );
-      const response = await axios.get<any>(sampleDataApiUrl);
-      this.logger.debug(`Appointment data: ${JSON.stringify(response.data)}`);
+
+      this.logger.log(
+        `Fetching appointments with payload: ${JSON.stringify(payload)}`,
+      );
+
+      const response = await axios.post(
+        `${sabrinaApiUrl}/appointments/Summary`,
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${login.accessToken}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'Ocp-Apim-Subscription-Key': process.env.SABRINA_SUBSCRIPTION_KEY,
+          },
+        },
+      );
+
+      this.logger.log(
+        `Appointments Response: ${JSON.stringify(response.data)}`,
+      );
+
       return response.data;
     } catch (error) {
       this.logger.error(
-        'Failed to fetch appointment data from API',
+        'Failed to fetch appointment data',
         error instanceof Error ? error.message : error,
       );
       throw error;
+    }
+  }
+
+  parseServiceBusPayload(
+    message: Record<string, any>,
+  ): Record<string, any> | null {
+    const body = message?.body;
+
+    if (body == null) {
+      return null;
+    }
+
+    if (typeof body === 'string') {
+      try {
+        return JSON.parse(body) as Record<string, any>;
+      } catch {
+        return null;
+      }
+    }
+
+    if (Buffer.isBuffer(body)) {
+      try {
+        return JSON.parse(body.toString('utf8')) as Record<string, any>;
+      } catch {
+        return null;
+      }
+    }
+
+    if (typeof body === 'object') {
+      return body as Record<string, any>;
+    }
+
+    return null;
+  }
+
+  private async tryReadAppointmentFromServiceBus(): Promise<Record<
+    string,
+    any
+  > | null> {
+    if (!serviceBusConnectionString || !serviceBusQueueName) {
+      this.logger.debug(
+        'Azure Service Bus connection settings are not configured. Falling back to the sample API.',
+      );
+      return null;
+    }
+
+    const client = new ServiceBusClient(serviceBusConnectionString);
+    const receiver = client.createReceiver(serviceBusQueueName, {
+      receiveMode: 'peekLock',
+    });
+
+    try {
+      const messages = await receiver.receiveMessages(1, {
+        maxWaitTimeInMs: 5000,
+      });
+      const message = messages[0];
+
+      if (!message) {
+        return null;
+      }
+
+      const payload = this.parseServiceBusPayload(message);
+      await receiver.completeMessage(message);
+      return payload;
+    } catch (error) {
+      this.logger.warn(
+        'Unable to read appointment data from Azure Service Bus.',
+        error instanceof Error ? error.message : error,
+      );
+      return null;
+    } finally {
+      await receiver.close();
+      await client.close();
     }
   }
 

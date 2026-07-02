@@ -61,124 +61,157 @@
 
   "GroupName": {
     "question": "What is the insurance group name?",
+    "rule": "Answer should be the insurance group name as provided by the payer. Return text only.",
     "answer": ""
   },
   "GroupNumber": {
     "question": "What is the insurance group number?",
+    "rule": "Answer should be the insurance group number. Return alphanumeric value exactly as provided.",
     "answer": ""
   },
 
   "ORIGINAL EFFECTIVE DATE": {
     "question": "What is the patient's plan effective date?",
+    "rule": "Answer should be a valid coverage effective date in MM/DD/YYYY format.",
     "answer": ""
   },
 
   "Relationship Status": {
     "question": "What is the patient's relation with subscriber",
+    "rule": "Answer should be the relationship to the subscriber (Self, Spouse, Child, Dependent, etc.).",
     "answer": ""
   },
 
   "Preventive(D0120)": {
     "question": "What is the Preventive percentage?",
+    "rule": "Answer should be a numeric coverage percentage between 0 and 100. Do not include the % symbol.",
     "answer": null
   },
+
   "Basic(D2160)": {
     "question": "What is the Basic percentage?",
+    "rule": "Answer should be a numeric coverage percentage between 0 and 100. Do not include the % symbol.",
     "answer": null
   },
+
   "Major(D2740)": {
     "question": "What is the Major percentage?",
+    "rule": "Answer should be a numeric coverage percentage between 0 and 100. Do not include the % symbol.",
     "answer": null
   },
 
   "YearlyMaxAmount": {
     "question": "What is the yearly maximum amount?",
+    "rule": "Answer should be a monetary amount in dollars. Return numbers only without currency symbols.",
     "answer": null
   },
+
   "FamilyDeductible": {
     "question": "What is the family deductible?",
+    "rule": "Answer should be a monetary deductible amount for the family. Return numbers only without currency symbols.",
     "answer": null
   },
+
   "IndividualDeductible": {
     "question": "What is the individual deductible?",
+    "rule": "Answer should be a monetary deductible amount for an individual. Return numbers only without currency symbols.",
     "answer": null
   },
+
   "OrthoMaximum": {
     "question": "What is the orthodontics maximum?",
+    "rule": "Answer should be the orthodontic lifetime maximum benefit amount. Return numbers only without currency symbols.",
     "answer": null
   },
 
   "IndividualMetAmount": {
     "question": "How much has been used for individual deductible?",
+    "rule": "Answer should be the amount already met toward the individual deductible. Return numbers only without currency symbols.",
     "answer": null
   },
+
   "FamilyMetAmount": {
     "question": "How much has been used for family deductible?",
+    "rule": "Answer should be the amount already met toward the family deductible. Return numbers only without currency symbols.",
     "answer": null
   },
+
   "YearlyMaxUsed": {
     "question": "What is the yearly maximum amount used for the patient?",
+    "rule": "Answer should be the amount already used from the annual maximum. Return numbers only without currency symbols.",
     "answer": null
   },
 
   "history": [
     {
       "question": "History for Full-Mouth Xray D0210",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
       "procedurecode": "D0210",
       "description": "Full-Mouth Xray"
     },
     {
       "question": "What is D0330 code history?",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
       "procedurecode": "D0330",
       "description": "Panoramic Xray"
     },
     {
       "question": "What is D0274 code history?",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
       "procedurecode": "D0274",
       "description": "Xray Bitewings"
     },
     {
       "question": "What is D4341 code history?",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
       "procedurecode": "D4341",
       "description": "Scaling Root Planing"
     },
     {
       "question": "What is D9310 code history?",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
       "procedurecode": "D9310",
       "description": "Consultation"
     },
     {
       "question": "What is D1110 code history?",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
       "procedurecode": "D1110",
       "description": "Prophylaxis"
     },
     {
       "question": "Is Orthodontics a Covered Benefit?",
+      "rule": "Answer should be either 'Yes' or 'No'. Return only one of these values.",
       "procedurecode": "BOT-CDQ-023",
       "description": "Orthodontics Coverage"
     },
     {
       "question": "What is D0140 code history?",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
       "procedurecode": "D0140",
       "description": "Limited Exam"
     },
     {
       "question": "What is D2950 code history?",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
       "procedurecode": "D2950",
       "description": "Core Buildup"
     },
     {
       "question": "What is D0120 code history?",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
       "procedurecode": "D0120",
       "description": "Periodic Exam"
     },
     {
       "question": "What is D1351 code history?",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
       "procedurecode": "D1351",
       "description": "Sealant"
     },
     {
       "question": "What is D1206/D1208 code history?",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
       "procedurecode": "D1206/D1208",
       "description": "Fluoride Treatment"
     }
