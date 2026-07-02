@@ -167,19 +167,25 @@ export class SchedulerService {
     try {
       const serviceBusAppointment =
         await this.tryReadAppointmentFromServiceBus();
+      const response = await axios.get<any>(sampleDataApiUrl);
+
       if (serviceBusAppointment) {
         this.logger.log(
           'Fetched appointment data from Azure Service Bus queue.',
+          serviceBusAppointment,
         );
         // return serviceBusAppointment;
-      }
-      this.logger.log(
-        'Fetched appointment data from service bus...',
-        serviceBusAppointment,
-      );
 
-      const response = await axios.get<any>(sampleDataApiUrl);
+        //Configured Static for now will change this as soon as sabrina sends this information
+        serviceBusAppointment.InsurancePhoneNumber =
+          process.env.INSURANCE_COMPANY_PHONENUMBER;
+        serviceBusAppointment.benefitsInfo = process.env.FIELDS_TO_BE_COLLECTED;
+
+        return serviceBusAppointment;
+      }
+
       this.logger.debug(`Appointment data: ${JSON.stringify(response.data)}`);
+
       return response.data;
     } catch (error) {
       this.logger.error(
