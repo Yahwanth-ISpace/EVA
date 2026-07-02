@@ -32,11 +32,8 @@ const sabrinaApiUrl =
 // const sampleDataApiUrl =
 //   process.env.SAMPLE_DATA_API_URL ||
 //   'http://localhost:3000/scheduler/sample-data';
-const serviceBusConnectionString =
-  process.env.SERVICE_BUS_CONNECTION_STRING ||
-  'sb://uat-sabrina-servicebus.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=uZjWvtmuDM70Q/BYvdPbxD1IqQyY/KhtD+ASbI3/fiQ=';
-const serviceBusQueueName =
-  process.env.SERVICE_BUS_QUEUE_NAME || 'eva_voicebot';
+const serviceBusConnectionString = process.env.SERVICE_BUS_CONNECTION_STRING;
+const serviceBusQueueName = process.env.SERVICE_BUS_QUEUE_NAME;
 
 @Injectable()
 export class SchedulerService {
