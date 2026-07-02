@@ -26,12 +26,10 @@ fromDate.setDate(today.getDate() - 2);
 const sabrinaApiUrl =
   process.env.SABRINA_API_URL || 'https://sabrinauatapi.ispace.com/api';
 
-// const sampleDataApiUrl =
-//   process.env.SAMPLE_DATA_API_URL ||
-//   'http://localhost:3000/scheduler/sample-data';
-// const sampleDataApiUrl =
-//   process.env.SAMPLE_DATA_API_URL ||
-//   'http://localhost:3000/scheduler/sample-data';
+const sampleDataApiUrl =
+  process.env.SAMPLE_DATA_API_URL ||
+  'http://localhost:3000/scheduler/sample-data';
+
 const serviceBusConnectionString = process.env.SERVICE_BUS_CONNECTION_STRING;
 const serviceBusQueueName = process.env.SERVICE_BUS_QUEUE_NAME;
 
@@ -180,27 +178,8 @@ export class SchedulerService {
         serviceBusAppointment,
       );
 
-      this.logger.log(
-        `Fetching appointments with payload: ${JSON.stringify(payload)}`,
-      );
-
-      const response = await axios.post(
-        `${sabrinaApiUrl}/appointments/Summary`,
-        payload,
-        {
-          headers: {
-            Authorization: `Bearer ${login.accessToken}`,
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            'Ocp-Apim-Subscription-Key': process.env.SABRINA_SUBSCRIPTION_KEY,
-          },
-        },
-      );
-
-      this.logger.log(
-        `Appointments Response: ${JSON.stringify(response.data)}`,
-      );
-
+      const response = await axios.get<any>(sampleDataApiUrl);
+      this.logger.debug(`Appointment data: ${JSON.stringify(response.data)}`);
       return response.data;
     } catch (error) {
       this.logger.error(
