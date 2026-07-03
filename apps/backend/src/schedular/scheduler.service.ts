@@ -179,6 +179,8 @@ export class SchedulerService {
         //Configured Static for now will change this as soon as sabrina sends this information
         serviceBusAppointment.InsurancePhoneNumber =
           process.env.INSURANCE_COMPANY_PHONENUMBER;
+        serviceBusAppointment.InsuranceCompanyPhoneExt =
+          process.env.INSURANCE_COMPANY_PHONENUMBER_EXT;
         serviceBusAppointment.benefitsInfo = process.env.FIELDS_TO_BE_COLLECTED;
 
         return serviceBusAppointment;
