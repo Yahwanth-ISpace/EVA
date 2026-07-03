@@ -2083,7 +2083,10 @@ export class MediaStreamHandlerService {
           isBenefitFieldAsk(toSpeak, orderedF, state.fieldQuestionByKey) &&
           !/I would need the/i.test(toSpeak ?? '')
         ) {
-          const firstMissing = getFirstMissingField(state.extractedData, orderedF);
+          const firstMissing = getFirstMissingField(
+            state.extractedData,
+            orderedF,
+          );
           if (firstMissing === state.lastAskedField) {
             toSpeak = qField(firstMissing);
           }
@@ -2474,6 +2477,7 @@ export class MediaStreamHandlerService {
     state.evaIntroIdentitySaid = false;
 
     const ctx = await contextPromise;
+    this.logger.log(`[EVA] Patient Context: ${JSON.stringify(ctx, null, 2)}`);
     if (ctx) {
       state.callContext = ctx;
       state.patientInfo = {
@@ -2484,6 +2488,9 @@ export class MediaStreamHandlerService {
         ssn: ctx.patient.ssn,
       };
       applyVerificationStepsToStreamState(state, ctx);
+      this.logger.log(
+        `[EVA] state.patientInfo = ${JSON.stringify(state.patientInfo, null, 2)}`,
+      );
       this.logger.log(
         `[MediaStream] Call context loaded after ${sourceLabel}: patient=${ctx.patient.fullName}`,
       );
