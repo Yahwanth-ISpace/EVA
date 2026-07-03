@@ -177,9 +177,9 @@ export class SchedulerService {
         // return serviceBusAppointment;
 
         //Configured Static for now will change this as soon as sabrina sends this information
-        serviceBusAppointment.InsurancePhoneNumber =
+        serviceBusAppointment.InsuranceCompany_Phone =
           process.env.INSURANCE_COMPANY_PHONENUMBER;
-        serviceBusAppointment.InsuranceCompanyPhoneExt =
+        serviceBusAppointment.InsuranceCompany_Phone_Ext =
           process.env.INSURANCE_COMPANY_PHONENUMBER_EXT;
         serviceBusAppointment.benefitsInfo = process.env.FIELDS_TO_BE_COLLECTED;
 
@@ -187,6 +187,7 @@ export class SchedulerService {
       }
 
       this.logger.debug(`Appointment data: ${JSON.stringify(response.data)}`);
+      this.logger.debug(`ServiceBus data: ${serviceBusAppointment}`);
 
       return response.data;
     } catch (error) {
