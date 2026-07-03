@@ -60,12 +60,13 @@ async function bootstrap() {
   wss.on('connection', (ws: WebSocket, req: { url?: string }) => {
     const url = new URL(req.url || '', 'http://localhost');
     const patientId =
-      url.searchParams.get('patientId')?.trim() ||
+      url.searchParams.get('PatientId')?.trim() ||
       url.searchParams.get('payeeId')?.trim() ||
       null;
     const mode = url.searchParams.get('mode');
     const appointmentId = url.searchParams.get('appointmentId');
     mediaHandler.handleConnection(ws, patientId, mode, appointmentId);
+    console.log('printing the stirng required:', url);
   });
 }
 bootstrap();
