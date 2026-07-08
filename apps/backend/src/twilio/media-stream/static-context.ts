@@ -36,17 +36,21 @@ export const STATIC_CALL_CONTEXT: PatientCallContext = {
     {
       field: 'coverage',
       question: 'What is the basic coverage?',
+      rule: '',
       order: 1,
     },
     {
       field: 'deductible',
       question: 'Can you provide the deductible?',
+      rule: '',
       order: 2,
     },
-    { field: 'copay', question: 'What is the copay?', order: 3 },
+    { field: 'copay', question: 'What is the copay?', rule: '', order: 3 },
+
     {
       field: 'validity',
       question: 'What is the validity of the insurance?',
+      rule: '',
       order: 4,
     },
   ],
