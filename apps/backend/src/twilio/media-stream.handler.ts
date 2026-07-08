@@ -181,7 +181,7 @@ export class MediaStreamHandlerService {
 
   handleConnection(
     ws: WebSocket,
-    PatientID?: string | null,
+    patientId?: string | null,
     mode?: string | null,
     AppointmentID?: string | null,
   ): void {
@@ -192,7 +192,7 @@ export class MediaStreamHandlerService {
       callSid: null,
       processing: false,
       fallbackTimer: null,
-      patientId: PatientID ?? null,
+      patientId: patientId ?? null,
       patientInfo: null,
       callContext: null,
       extractedData: {},
