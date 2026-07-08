@@ -14,6 +14,7 @@ import { MongoService } from 'src/mongo/mongo.service';
 export type PatientVerificationStep = {
   field: string;
   question: string;
+  rule: string;
   order: number;
 };
 

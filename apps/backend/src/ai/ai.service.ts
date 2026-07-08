@@ -185,24 +185,46 @@ ${patientBlock}
 
   private fieldQuestionMapFromContext(
     ctx: PatientCallContext | null | undefined,
-  ): Record<string, string> {
-    if (!ctx?.verificationSteps?.length) return {};
-    const m: Record<string, string> = {};
-    for (const s of ctx.verificationSteps) {
-      const q = s.question?.trim();
-      if (s.field && q) m[s.field] = q;
+  ): Record<
+    string,
+    {
+      question: string;
+      rule?: string;
     }
-    return m;
+  > {
+    if (!ctx?.verificationSteps?.length) return {};
+
+    const map: Record<string, { question: string; rule?: string }> = {};
+
+    for (const step of ctx.verificationSteps) {
+      if (!step.field) continue;
+
+      map[step.field] = {
+        question: step.question?.trim() ?? '',
+        rule: step.rule?.trim() ?? '',
+      };
+    }
+
+    return map;
   }
 
   /** Exact line EVA should speak for a benefit field (from appointment payload when present). */
   private verbatimBenefitQuestion(
     field: string | null | undefined,
-    fieldQ: Record<string, string>,
+    fieldQ: Record<
+      string,
+      {
+        question: string;
+        rule?: string;
+      }
+    >,
   ): string {
     if (!field) return '';
-    const fromPayload = fieldQ[field]?.trim();
+
+    const fromPayload = fieldQ[field]?.question?.trim();
+
     if (fromPayload) return fromPayload;
+
     return AiService.LEGACY_VERBATIM_BENEFIT_QUESTIONS[field] ?? String(field);
   }
 
@@ -241,7 +263,10 @@ ${patientBlock}
       )
       .trim();
     v = v
-      .replace(/^(?:that\s+is|that's|that\s+would\s+be|it\s+is|it's)[,\s:]+/gi, '')
+      .replace(
+        /^(?:that\s+is|that's|that\s+would\s+be|it\s+is|it's)[,\s:]+/gi,
+        '',
+      )
       .trim();
     if (!v) return '';
     return v
@@ -608,8 +633,16 @@ PRE-LOADED IDENTITY CHEAT-SHEET: (no patient appointment context on file — TPA
 BENEFIT QUESTIONS — speak EXACTLY one line per field below (verbatim). Keys (${fieldsList}) are for extraction only; do not invent new wording.
 ${callContext.verificationSteps
   .filter((s) => s.field && s.question?.trim())
-  .map((s) => `- (${s.field}) ${s.question.trim()}`)
-  .join('\n')}
+  .map(
+    (s) => `- (Field: ${s.field}) 
+
+    Question: 
+    ${s.question.trim()} 
+
+    Rule:
+    ${s.rule?.trim() || 'No additional rule.'}`,
+  )
+  .join('\n\n-----------------------------\n\n')}
 `
         : '';
 
@@ -681,6 +714,112 @@ EXTRACTION (CRITICAL — field assignment and multi-value in one go):
 - VALIDITY: Only set validity when the user explicitly says a date, month, or year (e.g. "December 31st 2024", "valid through Dec 2024"). Do NOT set validity to any default or assumed date (e.g. "31st Dec 2024", "July 17 2025"). If they did not say anything about validity or a date, leave validity empty. Never invent a date. CRITICAL — If we do NOT have validity in "Data we have so far", never say a date in your nextMessage and never ask "is it [date] right?". Only ask "What is the validity?" or "Can I get the validity?" or "Can you provide the validity?". Only confirm a date for validity ("So the validity is [date], right?") if the user JUST said that date in this turn.
 - Only ask them to repeat when transcript is exactly "User did not respond or was inaudible". Do not ask to repeat if they gave a number or amount.
 - After extracting a value (or multiple): acknowledge once and ask for the NEXT missing field only.
+FIELD RULE EXECUTION
+
+Each verification field contains:
+
+1. Field Name
+2. Question
+3. Rule
+
+The Rule is mandatory.
+
+Whenever collecting a value:
+
+• Read the Rule for the current field before accepting the answer.
+
+• If the answer satisfies the Rule:
+    - Extract the value.
+    - Populate extractedUpdates.
+    - Continue to the next field.
+
+• If the answer violates the Rule:
+    - Do NOT populate extractedUpdates.
+    - Do NOT move to the next field.
+    - Politely explain what format or information is expected based on the Rule.
+    - Ask the representative for the same field again.
+
+Never guess.
+Never transform values.
+Never convert values.
+Never ignore a Rule.
+
+A field is considered complete ONLY after its Rule has been satisfied.
+
+The Rule has higher priority than generic extraction instructions.
+Example:
+Examples
+
+Field:
+Coverage
+
+Question:
+What is the coverage?
+
+Rule:
+Coverage must be provided as percentage only.
+
+TPA:
+Twenty dollars.
+
+Correct Response:
+"I would need the coverage in percentage. Could you provide it as a percentage?"
+
+extractedUpdates:
+{}
+
+----------------------------------------
+
+Field:
+Deductible
+
+Rule:
+Deductible must be a dollar amount.
+
+TPA:
+80 percent.
+
+Correct Response:
+"I would need the deductible as a dollar amount."
+
+extractedUpdates:
+{}
+
+----------------------------------------
+
+Field:
+Validity
+
+Rule:
+Validity must be a date.
+
+TPA:
+It is active.
+
+Correct Response:
+"Could you provide the validity date?"
+
+extractedUpdates:
+{}
+
+----------------------------------------
+
+Field:
+Coverage
+
+Rule:
+Coverage must be percentage.
+
+TPA:
+80 percent.
+
+Correct Response:
+"Thank you."
+
+extractedUpdates:
+{
+    "coverage":"80%"
+}
 
 WHAT TO SAY (check in this order). NEVER use "Does that match your records?", "Are we good?", or similar after DOB, name, recall, or a normal benefit value.
 - If they GAVE a value for the current field: extract, acknowledge briefly, ask NEXT field verbatim from BENEFIT QUESTIONS.
