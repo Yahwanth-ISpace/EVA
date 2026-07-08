@@ -647,22 +647,31 @@ export class VerificationService {
   ): PatientVerificationStep[] {
     const raw = doc['verificationFields'];
     if (!Array.isArray(raw) || raw.length === 0) return [];
+
     const steps: PatientVerificationStep[] = [];
+
     for (let i = 0; i < raw.length; i++) {
       const item = raw[i] as Record<string, unknown>;
+
       const field = String(item?.field ?? '').trim();
       if (!field) continue;
+
       const qRaw = String(item?.question ?? '').trim();
+      const rule = String(item?.rule ?? '').trim();
+
       const order =
         typeof item?.order === 'number' && Number.isFinite(item.order)
           ? (item.order as number)
           : i + 1;
+
       steps.push({
         field,
         question: qRaw || field,
+        rule,
         order,
       });
     }
+
     steps.sort((a, b) => a.order - b.order);
     return steps;
   }
