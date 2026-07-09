@@ -26,10 +26,6 @@ fromDate.setDate(today.getDate() - 2);
 const sabrinaApiUrl =
   process.env.SABRINA_API_URL || 'https://sabrinauatapi.ispace.com/api';
 
-const sampleDataApiUrl =
-  process.env.SAMPLE_DATA_API_URL ||
-  'http://localhost:3000/scheduler/sample-data';
-
 const serviceBusConnectionString = process.env.SERVICE_BUS_CONNECTION_STRING;
 const serviceBusQueueName = process.env.SERVICE_BUS_QUEUE_NAME;
 
@@ -55,28 +51,30 @@ export class SchedulerService {
       this.logger.debug(
         `Appointment data fetched::: ${JSON.stringify(appointmentData)}`,
       );
-      await this.saveRawAppointmentDataToMongo(appointmentData);
+      if (appointmentData) {
+        await this.saveRawAppointmentDataToMongo(appointmentData);
 
-      let finalAppointments =
-        this.transformAppointmentDataToVerificationFields(appointmentData);
+        let finalAppointments =
+          this.transformAppointmentDataToVerificationFields(appointmentData);
 
-      this.logger.debug(
-        `Final appointments::: ${JSON.stringify(finalAppointments)}`,
-      );
-      //save finalAppointments to mongo collection named processed_appointments for reference and debugging
-      await this.saveTransformedAppointmentDataToMongo(finalAppointments);
+        this.logger.debug(
+          `Final appointments::: ${JSON.stringify(finalAppointments)}`,
+        );
+        //save finalAppointments to mongo collection named processed_appointments for reference and debugging
+        await this.saveTransformedAppointmentDataToMongo(finalAppointments);
 
-      // clear all verification data from Verification collection where appointmentId and payeeId=patientId in prisma before saving new data by using mongoService
-      this.mongoService.deleteVerificationData(
-        finalAppointments.AppointmentID,
-        finalAppointments.PatientID,
-      );
+        // clear all verification data from Verification collection where appointmentId and payeeId=patientId in prisma before saving new data by using mongoService
+        this.mongoService.deleteVerificationData(
+          finalAppointments.AppointmentID,
+          finalAppointments.PatientID,
+        );
 
-      // comment below 2 lines after actually calling
-      const response = await this.appointmentService.create(finalAppointments);
-      // this.logger.log(`API Response:::::::: ${JSON.stringify(response)}`);
-
-      const pendingAppointments = [finalAppointments];
+        // comment below 2 lines after actually calling
+        const response =
+          await this.appointmentService.create(finalAppointments);
+        // this.logger.log(`API Response:::::::: ${JSON.stringify(response)}`);
+        const pendingAppointments = [finalAppointments];
+      }
 
       // while (pendingAppointments.length > 0) {
       //   const agents: AgentDto[] = await this.prisma.agent.findMany({
@@ -167,8 +165,8 @@ export class SchedulerService {
     try {
       const serviceBusAppointment =
         await this.tryReadAppointmentFromServiceBus();
-      const response = await axios.get<any>(sampleDataApiUrl);
 
+      this.logger.debug(`ServiceBus data: ${serviceBusAppointment}`);
       if (serviceBusAppointment) {
         this.logger.log(
           'Fetched appointment data from Azure Service Bus queue.',
@@ -188,10 +186,7 @@ export class SchedulerService {
         return serviceBusAppointment;
       }
 
-      this.logger.debug(`Appointment data: ${JSON.stringify(response.data)}`);
-      this.logger.debug(`ServiceBus data: ${serviceBusAppointment}`);
-
-      return response.data;
+      return null;
     } catch (error) {
       this.logger.error(
         'Failed to fetch appointment data',
