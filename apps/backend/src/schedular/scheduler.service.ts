@@ -53,9 +53,12 @@ export class SchedulerService {
       if (appointmentData) {
         await this.saveRawAppointmentDataToMongo(appointmentData);
 
-        finalAppointments =
-          this.transformAppointmentDataToVerificationFields(appointmentData);
-        // finalAppointments = appointmentData;
+        if (appointmentData.benefitsInfo) {
+          finalAppointments = appointmentData;
+        } else {
+          finalAppointments =
+            this.transformAppointmentDataToVerificationFields(appointmentData);
+        }
 
         this.logger.debug(
           `Final appointments::: ${JSON.stringify(finalAppointments)}`,
@@ -343,37 +346,42 @@ export class SchedulerService {
   transformAppointmentDataToVerificationFields(
     appointmentData: Record<string, any>,
   ): AppointmentDetailsDto {
-    const transformedData: any = {};
+    // Copy the entire appointment first
+    const transformedData: any = { ...appointmentData };
+
     const verificationFields: VerificationField[] = [];
     let order = 1;
 
     for (const [key, value] of Object.entries(appointmentData)) {
-      // Skip the 'history' array and known object keys
+      // Skip history (handled separately)
       if (key === 'history') continue;
 
+      // Old question format
       if (typeof value === 'object' && value !== null && 'question' in value) {
         verificationFields.push({
-          question: value?.question,
+          question: value.question,
           field: key,
-          order: order,
+          order,
         });
+
+        // Remove the original question object
+        delete transformedData[key];
+
         order++;
-      } else if (typeof value === 'string' || typeof value === 'number') {
-        transformedData[key] = value;
       }
     }
 
-    // Process history array and add to verificationFields
+    // Handle history
     if (
-      appointmentData.history &&
       Array.isArray(appointmentData.history) &&
       appointmentData.history.length > 0
     ) {
       verificationFields.push({
-        question: 'does this patient have any history?',
+        question: 'Does this patient have any history?',
         field: 'history-list',
-        order: order,
+        order,
       });
+
       order++;
 
       for (const historyItem of appointmentData.history) {
@@ -381,15 +389,17 @@ export class SchedulerService {
           verificationFields.push({
             question: historyItem.question,
             field: `history.${historyItem.procedurecode}`,
-            order: order,
+            order,
           });
+
           order++;
         }
       }
     }
 
-    transformedData['verificationFields'] = verificationFields;
-    return transformedData;
+    transformedData.verificationFields = verificationFields;
+
+    return transformedData as AppointmentDetailsDto;
   }
 
   private delay(ms: number) {
