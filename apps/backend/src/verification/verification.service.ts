@@ -514,7 +514,7 @@ export class VerificationService {
    */
   async getPatientCallContext(
     patientId: string,
-    appointmentId?: string | null,
+    appointmentId: string | null,
   ): Promise<PatientCallContext | null> {
     const doc = await this.mongoService.findAppointmentDocument(
       patientId,
