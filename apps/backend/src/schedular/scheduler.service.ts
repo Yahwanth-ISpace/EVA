@@ -52,8 +52,7 @@ export class SchedulerService {
       if (appointmentData) {
         await this.saveRawAppointmentDataToMongo(appointmentData);
 
-        let finalAppointments =
-          this.transformAppointmentDataToVerificationFields(appointmentData);
+        let finalAppointments = appointmentData;
 
         this.logger.debug(
           `Final appointments::: ${JSON.stringify(finalAppointments)}`,
@@ -64,7 +63,7 @@ export class SchedulerService {
         // clear all verification data from Verification collection where appointmentId and payeeId=patientId in prisma before saving new data by using mongoService
         this.mongoService.deleteVerificationData(
           appointmentData.appointmentId,
-          appointmentData.patient.patientId,
+          appointmentData.patientId,
         );
 
         // comment below 2 lines after actually calling
@@ -167,14 +166,14 @@ export class SchedulerService {
       this.logger.debug(
         `ServiceBus data: ${JSON.stringify(serviceBusAppointment)}`,
       );
+
       if (serviceBusAppointment) {
         this.logger.log(
           'Fetched appointment data from Azure Service Bus queue.',
           serviceBusAppointment,
         );
-        // return serviceBusAppointment;
 
-        //Configured Static for now will change this as soon as sabrina sends this information
+        // Configured static for now. Will change this once Sabrina sends this information.
         serviceBusAppointment.InsuranceCompany_Phone =
           process.env.INSURANCE_COMPANY_PHONENUMBER;
         serviceBusAppointment.InsuranceCompany_Phone_Ext =
@@ -183,9 +182,20 @@ export class SchedulerService {
           ? JSON.parse(process.env.FIELDS_TO_BE_COLLECTED)
           : {};
 
-        return serviceBusAppointment;
+        return {
+          success: true,
+          message: 'Appointment fetched successfully.',
+          data: serviceBusAppointment,
+        };
       }
-      return null;
+
+      this.logger.log('No appointments left to verify.');
+
+      return {
+        success: false,
+        message: 'No appointments left to verify.',
+        data: null,
+      };
     } catch (error) {
       this.logger.error(
         'Failed to fetch appointment data',
