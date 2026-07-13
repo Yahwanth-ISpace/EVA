@@ -185,8 +185,7 @@ export class SchedulerService {
 
         return serviceBusAppointment;
       }
-
-      return null;
+      return serviceBusAppointment;
     } catch (error) {
       this.logger.error(
         'Failed to fetch appointment data',
