@@ -5,7 +5,10 @@ import axios from 'axios';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AgentStatus } from '@prisma/client';
 import { AgentDto } from './dto/agent.dto';
-import { AppointmentDetailsDto } from 'src/appointment/dto/appointment-details.dto';
+import {
+  AppointmentDetailsDto,
+  VerificationField,
+} from 'src/appointment/dto/appointment-details.dto';
 import { AppointmentService } from 'src/appointment/appointment.service';
 import { MongoService } from 'src/mongo/mongo.service';
 

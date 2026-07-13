@@ -1,5 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+export interface VerificationField {
+  question: string;
+  field: string;
+  order: number;
+  value?: string;
+}
 export interface BenefitInfo {
   question: string;
   rule: string;
