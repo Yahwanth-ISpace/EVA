@@ -2272,6 +2272,7 @@ export class MediaStreamHandlerService {
             }
 
             const ctx = await contextPromise;
+            this.logger.log("the output needed:",ctx);
             if (ctx) {
               state.callContext = ctx;
               state.patientInfo = {
@@ -2298,7 +2299,6 @@ export class MediaStreamHandlerService {
               state.patientInfo = STATIC_PATIENT_INFO;
               state.callContext = STATIC_CALL_CONTEXT;
               applyVerificationStepsToStreamState(state, STATIC_CALL_CONTEXT);
-              this.logger.log('Steam Data:', state);
               this.logger.warn(
                 '[MediaStream] Using static patient info (no patientId on stream). Pass patientId (or payeeId) in the stream URL to use real patient details from the database.',
               );
