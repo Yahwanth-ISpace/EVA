@@ -50,9 +50,9 @@ export class SchedulerService {
       if (appointmentData) {
         await this.saveRawAppointmentDataToMongo(appointmentData);
 
-        // let finalAppointments =
-        //   this.transformAppointmentDataToVerificationFields(appointmentData);
-        finalAppointments = appointmentData;
+        finalAppointments =
+          this.transformAppointmentDataToVerificationFields(appointmentData);
+        // finalAppointments = appointmentData;
 
         this.logger.debug(
           `Final appointments::: ${JSON.stringify(finalAppointments)}`,
@@ -337,57 +337,57 @@ export class SchedulerService {
     return result;
   }
 
-  // transformAppointmentDataToVerificationFields(
-  //   appointmentData: Record<string, any>,
-  // ): AppointmentDetailsDto {
-  //   const transformedData: any = {};
-  //   const verificationFields: VerificationField[] = [];
-  //   let order = 1;
+  transformAppointmentDataToVerificationFields(
+    appointmentData: Record<string, any>,
+  ): AppointmentDetailsDto {
+    const transformedData: any = {};
+    const verificationFields: VerificationField[] = [];
+    let order = 1;
 
-  //   for (const [key, value] of Object.entries(appointmentData)) {
-  //     // Skip the 'history' array and known object keys
-  //     if (key === 'history') continue;
+    for (const [key, value] of Object.entries(appointmentData)) {
+      // Skip the 'history' array and known object keys
+      if (key === 'history') continue;
 
-  //     if (typeof value === 'object' && value !== null && 'question' in value) {
-  //       verificationFields.push({
-  //         question: value?.question,
-  //         field: key,
-  //         order: order,
-  //       });
-  //       order++;
-  //     } else if (typeof value === 'string' || typeof value === 'number') {
-  //       transformedData[key] = value;
-  //     }
-  //   }
+      if (typeof value === 'object' && value !== null && 'question' in value) {
+        verificationFields.push({
+          question: value?.question,
+          field: key,
+          order: order,
+        });
+        order++;
+      } else if (typeof value === 'string' || typeof value === 'number') {
+        transformedData[key] = value;
+      }
+    }
 
-  //   // Process history array and add to verificationFields
-  //   if (
-  //     appointmentData.history &&
-  //     Array.isArray(appointmentData.history) &&
-  //     appointmentData.history.length > 0
-  //   ) {
-  //     verificationFields.push({
-  //       question: 'does this patient have any history?',
-  //       field: 'history-list',
-  //       order: order,
-  //     });
-  //     order++;
+    // Process history array and add to verificationFields
+    if (
+      appointmentData.history &&
+      Array.isArray(appointmentData.history) &&
+      appointmentData.history.length > 0
+    ) {
+      verificationFields.push({
+        question: 'does this patient have any history?',
+        field: 'history-list',
+        order: order,
+      });
+      order++;
 
-  //     for (const historyItem of appointmentData.history) {
-  //       if (historyItem.question && historyItem.procedurecode) {
-  //         verificationFields.push({
-  //           question: historyItem.question,
-  //           field: `history.${historyItem.procedurecode}`,
-  //           order: order,
-  //         });
-  //         order++;
-  //       }
-  //     }
-  //   }
+      for (const historyItem of appointmentData.history) {
+        if (historyItem.question && historyItem.procedurecode) {
+          verificationFields.push({
+            question: historyItem.question,
+            field: `history.${historyItem.procedurecode}`,
+            order: order,
+          });
+          order++;
+        }
+      }
+    }
 
-  //   transformedData['verificationFields'] = verificationFields;
-  //   return transformedData;
-  // }
+    transformedData['verificationFields'] = verificationFields;
+    return transformedData;
+  }
 
   private delay(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
