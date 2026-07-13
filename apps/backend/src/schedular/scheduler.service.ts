@@ -48,7 +48,9 @@ export class SchedulerService {
     this.isProcessing = true;
     try {
       let appointmentData = await this.getAppointments();
-      this.logger.debug(`Appointment data fetched::: `, appointmentData);
+      this.logger.debug(
+        `Appointment data fetched::: ${JSON.stringify(appointmentData)}`,
+      );
       if (appointmentData) {
         await this.saveRawAppointmentDataToMongo(appointmentData);
 
@@ -183,7 +185,8 @@ export class SchedulerService {
 
         return serviceBusAppointment;
       }
-      return serviceBusAppointment;
+
+      return null;
     } catch (error) {
       this.logger.error(
         'Failed to fetch appointment data',
