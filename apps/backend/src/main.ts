@@ -60,7 +60,7 @@ async function bootstrap() {
   wss.on('connection', (ws: WebSocket, req: { url?: string }) => {
     const url = new URL(req.url || '', 'http://localhost');
     const patientId =
-      url.searchParams.get('patientId')?.trim() ||
+      url.searchParams.get('PatientID')?.trim() ||
       url.searchParams.get('payeeId')?.trim() ||
       null;
     const mode = url.searchParams.get('mode');
