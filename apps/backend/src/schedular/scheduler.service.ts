@@ -48,9 +48,7 @@ export class SchedulerService {
     this.isProcessing = true;
     try {
       let appointmentData = await this.getAppointments();
-      this.logger.debug(
-        `Appointment data fetched::: ${JSON.stringify(appointmentData)}`,
-      );
+      this.logger.debug(`Appointment data fetched::: `, appointmentData);
       if (appointmentData) {
         await this.saveRawAppointmentDataToMongo(appointmentData);
 
