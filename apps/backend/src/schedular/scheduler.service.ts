@@ -184,11 +184,7 @@ export class SchedulerService {
           ? JSON.parse(process.env.FIELDS_TO_BE_COLLECTED)
           : {};
 
-        return {
-          success: true,
-          message: 'Appointment fetched successfully.',
-          data: serviceBusAppointment,
-        };
+        return serviceBusAppointment;
       }
 
       this.logger.log('No appointments left to verify.');
