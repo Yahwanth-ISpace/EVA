@@ -15,8 +15,8 @@ export class SchedulerController {
     description: 'Returns the sample.json file content',
   })
   getSampleData(): Record<string, any> {
-    const appointment = this.schedulerService.getSampleData();
-    return appointment;
+    // const appointment = this.schedulerService.getSampleData();
+    return appointmentData;
   }
 
   @Get('appointment')
