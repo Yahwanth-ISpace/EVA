@@ -1,66 +1,133 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
-export interface VerificationField {
+import { ApiProperty } from '@nestjs/swagger';
+
+export interface BenefitInfo {
   question: string;
-  field: string;
-  order: number;
-  value?: string;
+  rule: string;
+  answer: string;
+}
+
+export interface BenefitsInfo {
+  [key: string]: BenefitInfo;
+}
+
+export class OfficeDto {
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty()
+  officeID: number;
+
+  @ApiProperty()
+  address: string;
+}
+
+export class InsuranceDto {
+  @ApiProperty()
+  companyName: string;
+
+  @ApiProperty()
+  insuredName: string;
+
+  @ApiProperty()
+  groupNumber: string;
+}
+
+export class PatientDto {
+  @ApiProperty()
+  patientId: string;
+
+  @ApiProperty()
+  patientName: string;
+
+  @ApiProperty()
+  patientDOB: string;
+
+  @ApiProperty()
+  memberId: string;
+}
+
+export class SubscriberDto {
+  @ApiProperty()
+  subscriberId: string;
+
+  @ApiProperty()
+  subscriberName: string;
+
+  @ApiProperty()
+  subscriberDOB: string;
+}
+
+export class ProviderDto {
+  @ApiProperty()
+  providerId: string;
+
+  @ApiProperty()
+  providerName: string;
+
+  @ApiProperty()
+  providerTaxId: string;
 }
 
 export class AppointmentDetailsDto {
-  ClientID: number;
-  UserID: number;
-  AppointmentID: string;
-  AppointmentDate: string;
-  AppointmentNote: string;
-  Insurance_GroupName: string;
-  Insurance_GroupNumber: string;
-  InsurancePlan_GroupName: string;
-  InsuranceBusinessKey: string;
-  PristinePlanMasterID: number;
-  PMSType: string;
-  Pgid: string;
-  FeeSchedule: string;
-  PlanType: string;
-  Patient_OfficeID: string;
-  Patient_OfficeName: string;
-  Patient_OfficeStreet1: string;
-  Patient_OfficeStreet2: string;
-  Patient_OfficeCity: string;
-  Patient_OfficeState: string;
-  Patient_OfficeZip: string;
-  json_id: string;
-  PatientID: string;
-  PatientBusinessKey: string;
-  Patient_FirstName: string;
-  Patient_LastName: string;
-  Patient_Mi: string;
-  Patient_DOB: string;
-  SSN: string;
-  Patient_Zip: string;
-  Insured_FirstName: string;
-  Insured_LastName: string;
-  Insured_DOB: string;
-  SubscriberID: string;
-  InsuranceCompany_Name: string;
+  @ApiProperty()
+  appointmentId: number;
+
+  @ApiProperty()
+  appointmentDate: string;
+
+  @ApiProperty()
+  eligibilityResult: string;
+
+  @ApiProperty()
+  status: string;
+
+  @ApiProperty({ type: OfficeDto })
+  office: OfficeDto;
+
+  @ApiProperty({ type: InsuranceDto })
+  insurance: InsuranceDto;
+
+  @ApiProperty({ type: PatientDto })
+  patient: PatientDto;
+
+  @ApiProperty({ type: SubscriberDto })
+  subscriber: SubscriberDto;
+
+  @ApiProperty({ type: ProviderDto })
+  provider: ProviderDto;
+
+  @ApiProperty()
+  tenantName: string;
+
+  @ApiProperty()
+  userName: string;
+
+  @ApiProperty()
+  source: string;
+
+  @ApiProperty()
+  savedAt: string;
+
+  @ApiProperty()
   InsuranceCompany_Phone: string;
+
+  @ApiProperty()
   InsuranceCompany_Phone_Ext: string;
-  PriSecTerQua: string;
-  Provider_FirstName: string;
-  Provider_LastName: string;
-  Provider_Mi: string;
-  Provider_IsNonPerson: boolean;
-  Provider_NPI: string;
-  Provider_Network: string;
-  Provider_Specialty: string;
-  OfficeName: string;
-  OfficeBusinessKey: string;
-  OfficeID: string;
-  OfficeCode: string;
-  OfficeStreet1: string;
-  OfficeStreet2: string;
-  OfficeCity: string;
-  OfficeState: string;
-  OfficeZip: string;
-  verificationFields: VerificationField[];
+
+  @ApiProperty({
+    description: 'Benefit fields to be verified',
+    example: {
+      GroupName: {
+        question: 'What is the insurance group name?',
+        rule: 'Answer should be the insurance group name as provided by the payer. Return text only.',
+        answer: '',
+      },
+      GroupNumber: {
+        question: 'What is the insurance group number?',
+        rule: 'Answer should be the insurance group number. Return alphanumeric value exactly as provided.',
+        answer: '',
+      },
+    },
+  })
+  benefitsInfo: BenefitsInfo;
 }
