@@ -5,10 +5,7 @@ import axios from 'axios';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AgentStatus } from '@prisma/client';
 import { AgentDto } from './dto/agent.dto';
-import {
-  AppointmentDetailsDto,
-  VerificationField,
-} from 'src/appointment/dto/appointment-details.dto';
+import { AppointmentDetailsDto } from 'src/appointment/dto/appointment-details.dto';
 import { AppointmentService } from 'src/appointment/appointment.service';
 import { MongoService } from 'src/mongo/mongo.service';
 
@@ -69,10 +66,10 @@ export class SchedulerService {
         );
 
         // comment below 2 lines after actually calling
-        const response =
-          await this.appointmentService.create(finalAppointments);
+        // const response =
+        //   await this.appointmentService.create(finalAppointments);
         // this.logger.log(`API Response:::::::: ${JSON.stringify(response)}`);
-        const pendingAppointments = [finalAppointments];
+        // const pendingAppointments = [finalAppointments];
       }
 
       // while (pendingAppointments.length > 0) {
@@ -121,7 +118,7 @@ export class SchedulerService {
     appointment: AppointmentDetailsDto,
   ) {
     this.logger.log(
-      `Calling appointment API for ${appointment.Patient_FirstName} ${appointment.Patient_LastName} with agent ${agent.name}`,
+      `Calling appointment API for ${appointment.patient.patientName} with agent ${agent.name}`,
     );
     await this.prisma.agent.update({
       where: { id: agent.id },
@@ -349,57 +346,57 @@ export class SchedulerService {
     return result;
   }
 
-  transformAppointmentDataToVerificationFields(
-    appointmentData: Record<string, any>,
-  ): AppointmentDetailsDto {
-    const transformedData: any = {};
-    const verificationFields: VerificationField[] = [];
-    let order = 1;
+  // transformAppointmentDataToVerificationFields(
+  //   appointmentData: Record<string, any>,
+  // ): AppointmentDetailsDto {
+  //   const transformedData: any = {};
+  //   const verificationFields: VerificationField[] = [];
+  //   let order = 1;
 
-    for (const [key, value] of Object.entries(appointmentData)) {
-      // Skip the 'history' array and known object keys
-      if (key === 'history') continue;
+  //   for (const [key, value] of Object.entries(appointmentData)) {
+  //     // Skip the 'history' array and known object keys
+  //     if (key === 'history') continue;
 
-      if (typeof value === 'object' && value !== null && 'question' in value) {
-        verificationFields.push({
-          question: value?.question,
-          field: key,
-          order: order,
-        });
-        order++;
-      } else if (typeof value === 'string' || typeof value === 'number') {
-        transformedData[key] = value;
-      }
-    }
+  //     if (typeof value === 'object' && value !== null && 'question' in value) {
+  //       verificationFields.push({
+  //         question: value?.question,
+  //         field: key,
+  //         order: order,
+  //       });
+  //       order++;
+  //     } else if (typeof value === 'string' || typeof value === 'number') {
+  //       transformedData[key] = value;
+  //     }
+  //   }
 
-    // Process history array and add to verificationFields
-    if (
-      appointmentData.history &&
-      Array.isArray(appointmentData.history) &&
-      appointmentData.history.length > 0
-    ) {
-      verificationFields.push({
-        question: 'does this patient have any history?',
-        field: 'history-list',
-        order: order,
-      });
-      order++;
+  //   // Process history array and add to verificationFields
+  //   if (
+  //     appointmentData.history &&
+  //     Array.isArray(appointmentData.history) &&
+  //     appointmentData.history.length > 0
+  //   ) {
+  //     verificationFields.push({
+  //       question: 'does this patient have any history?',
+  //       field: 'history-list',
+  //       order: order,
+  //     });
+  //     order++;
 
-      for (const historyItem of appointmentData.history) {
-        if (historyItem.question && historyItem.procedurecode) {
-          verificationFields.push({
-            question: historyItem.question,
-            field: `history.${historyItem.procedurecode}`,
-            order: order,
-          });
-          order++;
-        }
-      }
-    }
+  //     for (const historyItem of appointmentData.history) {
+  //       if (historyItem.question && historyItem.procedurecode) {
+  //         verificationFields.push({
+  //           question: historyItem.question,
+  //           field: `history.${historyItem.procedurecode}`,
+  //           order: order,
+  //         });
+  //         order++;
+  //       }
+  //     }
+  //   }
 
-    transformedData['verificationFields'] = verificationFields;
-    return transformedData;
-  }
+  //   transformedData['verificationFields'] = verificationFields;
+  //   return transformedData;
+  // }
 
   private delay(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
