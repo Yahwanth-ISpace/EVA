@@ -70,7 +70,7 @@ export class ProviderDto {
 
 export class AppointmentDetailsDto {
   @ApiProperty()
-  appointmentId: number;
+  appointmentId: string;
 
   @ApiProperty()
   appointmentDate: string;

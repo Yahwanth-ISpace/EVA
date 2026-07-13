@@ -45,13 +45,14 @@ export class SchedulerService {
     this.isProcessing = true;
     try {
       let appointmentData = await this.getAppointments();
+      let finalAppointments: AppointmentDetailsDto;
       this.logger.debug(`Appointment data fetched::: `, appointmentData);
       if (appointmentData) {
         await this.saveRawAppointmentDataToMongo(appointmentData);
 
         // let finalAppointments =
         //   this.transformAppointmentDataToVerificationFields(appointmentData);
-        let finalAppointments = appointmentData;
+        finalAppointments = appointmentData;
 
         this.logger.debug(
           `Final appointments::: ${JSON.stringify(finalAppointments)}`,
@@ -62,14 +63,14 @@ export class SchedulerService {
         // clear all verification data from Verification collection where appointmentId and payeeId=patientId in prisma before saving new data by using mongoService
         this.mongoService.deleteVerificationData(
           appointmentData.appointmentId,
-          appointmentData.patientId,
+          appointmentData.patient.patientId,
         );
 
         // comment below 2 lines after actually calling
-        // const response =
-        //   await this.appointmentService.create(finalAppointments);
+        const response =
+          await this.appointmentService.create(finalAppointments);
         // this.logger.log(`API Response:::::::: ${JSON.stringify(response)}`);
-        // const pendingAppointments = [finalAppointments];
+        const pendingAppointments = [finalAppointments];
       }
 
       // while (pendingAppointments.length > 0) {
@@ -157,7 +158,7 @@ export class SchedulerService {
     }
   }
 
-  async getAppointments() {
+  async getAppointments(): Promise<AppointmentDetailsDto | null> {
     try {
       const serviceBusAppointment =
         await this.tryReadAppointmentFromServiceBus();
@@ -167,11 +168,6 @@ export class SchedulerService {
       );
 
       if (serviceBusAppointment) {
-        this.logger.log(
-          'Fetched appointment data from Azure Service Bus queue.',
-          serviceBusAppointment,
-        );
-
         // Configured static for now. Will change this once Sabrina sends this information.
         serviceBusAppointment.InsuranceCompany_Phone =
           process.env.INSURANCE_COMPANY_PHONENUMBER;
@@ -181,16 +177,11 @@ export class SchedulerService {
           ? JSON.parse(process.env.FIELDS_TO_BE_COLLECTED)
           : {};
 
-        return serviceBusAppointment;
+        return serviceBusAppointment as AppointmentDetailsDto;
       }
 
       this.logger.log('No appointments left to verify.');
-
-      return {
-        success: false,
-        message: 'No appointments left to verify.',
-        data: null,
-      };
+      return null;
     } catch (error) {
       this.logger.error(
         'Failed to fetch appointment data',
@@ -323,7 +314,7 @@ export class SchedulerService {
     const patientId = appointmentData?.patient.patientId as string | undefined;
     if (appointmentId != null && patientId != null) {
       const query = {
-        patientId: patientId,
+        'patient.patientId': patientId,
         appointmentId: Number(appointmentId),
       };
       const existing = await collection.findOne(query);
