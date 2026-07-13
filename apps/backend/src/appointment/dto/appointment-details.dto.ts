@@ -129,5 +129,5 @@ export class AppointmentDetailsDto {
       },
     },
   })
-  benefitsInfo: BenefitsInfo;
+  benefitsInfo?: BenefitsInfo;
 }
