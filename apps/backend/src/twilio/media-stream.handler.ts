@@ -2212,7 +2212,7 @@ export class MediaStreamHandlerService {
               state.callSid,
             );
             if (ctx) {
-              this.logger.log(`this is the CTX::: ${ctx}`);
+              this.logger.log(`this is the CTX::: ${JSON.stringify(ctx)}`);
               if (!state.patientId?.trim()) state.patientId = ctx.PatientID;
               if (!state.appointmentId?.trim() && ctx.AppointmentID) {
                 state.appointmentId = ctx.AppointmentID;
@@ -2241,9 +2241,10 @@ export class MediaStreamHandlerService {
               });
             if (ctx) {
               state.callContext = ctx;
+              const nameSlice = ctx.patient.fullName.split(/\s+/);
               state.patientInfo = {
-                firstName: ctx.patient.firstName,
-                lastName: ctx.patient.lastName,
+                firstName: nameSlice[0] ?? '',
+                lastName: nameSlice.slice(1).join(' '),
                 fullName: ctx.patient.fullName,
                 dobFormatted: ctx.patient.dobFormatted,
                 ssn: ctx.patient.ssn,

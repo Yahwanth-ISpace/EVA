@@ -615,7 +615,9 @@ export class VerificationService {
       doc as Record<string, unknown>,
     );
 
-    this.logger.log("verificationSteps:",verificationSteps);
+    this.logger.debug(
+      `Verification Steps: ${JSON.stringify(verificationSteps, null, 2)}`,
+    );
 
     const patientName = String(patient.patientName ?? '').trim();
     const nameSlice = patientName.split(/\s+/);

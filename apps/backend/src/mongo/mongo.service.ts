@@ -45,11 +45,19 @@ export class MongoService implements OnModuleDestroy {
   appointmentIdQuery(appointmentId: string): Document {
     const raw = appointmentId.trim();
     const n = Number(raw);
+
     const variants: (string | number)[] = [raw];
-    if (Number.isFinite(n) && String(n) === raw) {
+
+    if (Number.isFinite(n)) {
       variants.push(n);
     }
-    return { AppointmentID: { $in: variants } };
+
+    return {
+      $or: [
+        { appointmentId: { $in: variants } }, // New schema
+        { AppointmentID: { $in: variants } }, // Legacy schema (TODO: Remove after migration)
+      ],
+    };
   }
 
   /**
@@ -67,9 +75,22 @@ export class MongoService implements OnModuleDestroy {
     const aid = appointmentId?.trim();
     if (!aid) return null;
 
-    return col.findOne(this.appointmentIdQuery(aid), {
-      sort: { savedAt: -1 } as Document,
-    });
+    return col.findOne(
+      {
+        $and: [
+          this.appointmentIdQuery(aid),
+          {
+            $or: [
+              { 'patient.patientId': pid }, // New schema
+              { PatientID: pid }, // Legacy schema
+            ],
+          },
+        ],
+      },
+      {
+        sort: { savedAt: -1 },
+      },
+    );
   }
 
   async patientHasAppointment(patientId: string): Promise<boolean> {
