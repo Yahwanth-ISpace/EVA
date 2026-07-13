@@ -57,30 +57,38 @@ export class MongoService implements OnModuleDestroy {
    */
   async findAppointmentDocument(
     patientId: string,
-    appointmentBusinessId?: string | null,
+    appointmentId: string | null,
   ): Promise<Document | null> {
     const col = await this.appointmentsCollection();
+
     const pid = patientId.trim();
     if (!pid) return null;
 
-    const base: Document = { PatientID: pid };
-    const aid = appointmentBusinessId?.trim();
-    if (aid) {
-      const withAppt = await col.findOne({
-        ...base,
-        ...this.appointmentIdQuery(aid),
-      });
-      if (withAppt) return withAppt;
-    }
+    const aid = appointmentId?.trim();
+    if (!aid) return null;
 
-    return col.findOne(base, {
-      sort: { savedAt: -1, AppointmentDate: -1 } as Document,
+    return col.findOne(this.appointmentIdQuery(aid), {
+      sort: { savedAt: -1 } as Document,
     });
   }
 
   async patientHasAppointment(patientId: string): Promise<boolean> {
     const doc = await this.findAppointmentDocument(patientId, null);
     return doc != null;
+  }
+
+  async upsertAppointmentDocument(appointment: Document): Promise<void> {
+    const col = await this.appointmentsCollection();
+
+    await col.updateOne(
+      this.appointmentIdQuery(String(appointment.appointmentId)),
+      {
+        $set: appointment,
+      },
+      {
+        upsert: true,
+      },
+    );
   }
 
   /** Distinct `PatientID` values for rows matching the logged-in user's profile (name ± DOB). */

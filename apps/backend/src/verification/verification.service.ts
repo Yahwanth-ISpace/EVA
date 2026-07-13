@@ -522,92 +522,107 @@ export class VerificationService {
     );
     if (!doc) return null;
 
-    const patientDob = this.parseAppointmentDob(doc.Patient_DOB);
+    const patient = doc.patient ?? {};
+    const subscriber = doc.subscriber ?? {};
+    const providerDoc = doc.provider ?? {};
+    const officeDoc = doc.office ?? {};
+    const insuranceDoc = doc.insurance ?? {};
+
+    const patientDob = this.parseAppointmentDob(patient.patientDOB);
     const patientDobFormatted = patientDob
       ? this.formatDobForSpeech(patientDob)
       : null;
 
-    const insuredDob = this.parseAppointmentDob(doc.Insured_DOB);
-    const insuredDobFormatted = insuredDob
-      ? this.formatDobForSpeech(insuredDob)
+    const subscriberDob = this.parseAppointmentDob(subscriber.subscriberDOB);
+    const subscriberDobFormatted = subscriberDob
+      ? this.formatDobForSpeech(subscriberDob)
       : null;
 
+    const providerName = String(providerDoc.providerName ?? '').trim();
+    const providerNameParts = providerName.split(/\s+/);
+
     const provider =
-      doc.Provider_FirstName || doc.Provider_LastName
+      providerName || providerDoc.providerId
         ? {
-            firstName: String(doc.Provider_FirstName ?? ''),
-            lastName: String(doc.Provider_LastName ?? ''),
-            fullName:
-              `${doc.Provider_FirstName ?? ''} ${doc.Provider_LastName ?? ''}`.trim(),
-            npi: doc.Provider_NPI ? String(doc.Provider_NPI) : null,
+            firstName: providerNameParts[0] ?? '',
+            lastName: providerNameParts.slice(1).join(' '),
+            fullName: providerName,
+            npi: providerDoc.providerId ? String(providerDoc.providerId) : null,
             billingNpi:
               process.env.EVA_BILLING_PROVIDER_NPI?.trim() ||
-              (doc.Provider_NPI ? String(doc.Provider_NPI) : null),
-            taxId: process.env.EVA_PROVIDER_TAX_ID?.trim() || null,
-            specialty: doc.Provider_Specialty
-              ? String(doc.Provider_Specialty)
-              : null,
+              (providerDoc.providerId ? String(providerDoc.providerId) : null),
+            taxId:
+              process.env.EVA_PROVIDER_TAX_ID?.trim() ||
+              (providerDoc.providerTaxId
+                ? String(providerDoc.providerTaxId)
+                : null),
+            specialty: null,
           }
         : null;
 
     const office =
-      doc.OfficeName || doc.OfficeCity || doc.OfficeState
+      officeDoc.name || officeDoc.address
         ? {
-            name: String(doc.OfficeName ?? ''),
-            city: String(doc.OfficeCity ?? ''),
-            state: String(doc.OfficeState ?? ''),
+            name: String(officeDoc.name ?? ''),
+            city: '',
+            state: '',
           }
         : null;
 
     const payer =
-      doc.InsuranceCompany_Name || doc.Insurance_GroupName
+      insuranceDoc.companyName || insuranceDoc.groupNumber
         ? {
-            companyName: String(doc.InsuranceCompany_Name ?? ''),
-            groupName: doc.Insurance_GroupName
-              ? String(doc.Insurance_GroupName)
+            companyName: String(insuranceDoc.companyName ?? ''),
+            groupName: null,
+            groupNumber: insuranceDoc.groupNumber
+              ? String(insuranceDoc.groupNumber)
               : null,
-            groupNumber: doc.Insurance_GroupNumber
-              ? String(doc.Insurance_GroupNumber)
-              : null,
-            planName: doc.InsurancePlan_GroupName
-              ? String(doc.InsurancePlan_GroupName)
-              : null,
+            planName: null,
           }
         : null;
 
     const subscriberId =
-      doc.SubscriberID != null && String(doc.SubscriberID).trim() !== ''
-        ? String(doc.SubscriberID).trim()
+      subscriber.subscriberId != null &&
+      String(subscriber.subscriberId).trim() !== ''
+        ? String(subscriber.subscriberId).trim()
         : null;
-    const memberId = subscriberId || process.env.EVA_MEMBER_ID?.trim() || null;
 
-    const sf = String(doc.Insured_FirstName ?? '').trim();
-    const sl = String(doc.Insured_LastName ?? '').trim();
-    const useInsured = Boolean(sf || sl);
-    const subscriberFirstName = useInsured
-      ? sf || String(doc.Patient_FirstName ?? '')
-      : process.env.EVA_SUBSCRIBER_FIRST_NAME?.trim() ||
-        String(doc.Patient_FirstName ?? '');
-    const subscriberLastName = useInsured
-      ? sl || String(doc.Patient_LastName ?? '')
-      : process.env.EVA_SUBSCRIBER_LAST_NAME?.trim() ||
-        String(doc.Patient_LastName ?? '');
+    const memberId =
+      patient.memberId != null && String(patient.memberId).trim() !== ''
+        ? String(patient.memberId).trim()
+        : subscriberId || process.env.EVA_MEMBER_ID?.trim() || null;
+
+    const subscriberName = String(subscriber.subscriberName ?? '').trim();
+    const subscriberNameParts = subscriberName.split(/\s+/);
+
+    const subscriberFirstName =
+      subscriberNameParts[0] ??
+      process.env.EVA_SUBSCRIBER_FIRST_NAME?.trim() ??
+      '';
+
+    const subscriberLastName =
+      subscriberNameParts.slice(1).join(' ') ||
+      process.env.EVA_SUBSCRIBER_LAST_NAME?.trim() ||
+      '';
 
     const subscriberDobRaw = process.env.EVA_SUBSCRIBER_DOB?.trim();
-    const subscriberDobFormatted = subscriberDobRaw
+
+    const finalSubscriberDobFormatted = subscriberDobRaw
       ? this.tryFormatDateString(subscriberDobRaw)
-      : insuredDobFormatted || patientDobFormatted;
+      : subscriberDobFormatted || patientDobFormatted;
 
     const verificationSteps = this.verificationStepsFromAppointmentDoc(
       doc as Record<string, unknown>,
     );
 
+    const patientName = String(patient.patientName ?? '').trim();
+    const nameSlice = patientName.split(/\s+/);
+
     return {
       patient: {
-        firstName: String(doc.Patient_FirstName ?? ''),
-        lastName: String(doc.Patient_LastName ?? ''),
-        fullName:
-          `${doc.Patient_FirstName ?? ''} ${doc.Patient_LastName ?? ''}`.trim(),
+        firstName: nameSlice[0] ?? '',
+        lastName: nameSlice.slice(1).join(' '),
+        fullName: patientName,
         dob: patientDob,
         dobFormatted: patientDobFormatted,
         ssn:
@@ -618,8 +633,8 @@ export class VerificationService {
       subscriber: {
         firstName: subscriberFirstName,
         lastName: subscriberLastName,
-        fullName: `${subscriberFirstName} ${subscriberLastName}`.trim(),
-        dobFormatted: subscriberDobFormatted,
+        fullName: subscriberName,
+        dobFormatted: finalSubscriberDobFormatted,
       },
       memberId,
       provider,
