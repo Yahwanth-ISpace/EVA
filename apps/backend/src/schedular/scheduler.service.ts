@@ -53,8 +53,12 @@ export class SchedulerService {
       if (appointmentData) {
         await this.saveRawAppointmentDataToMongo(appointmentData);
 
-        finalAppointments =
-          this.transformAppointmentDataToVerificationFields(appointmentData);
+        if (appointmentData.benefitsInfo) {
+          finalAppointments = appointmentData;
+        } else {
+          finalAppointments =
+            this.transformAppointmentDataToVerificationFields(appointmentData);
+        }
 
         this.logger.debug(
           `Final appointments::: ${JSON.stringify(finalAppointments)}`,
