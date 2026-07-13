@@ -2212,6 +2212,7 @@ export class MediaStreamHandlerService {
               state.callSid,
             );
             if (ctx) {
+              this.logger.log(`this is the CTX::: ${ctx}`);
               if (!state.patientId?.trim()) state.patientId = ctx.PatientID;
               if (!state.appointmentId?.trim() && ctx.AppointmentID) {
                 state.appointmentId = ctx.AppointmentID;
@@ -2272,7 +2273,7 @@ export class MediaStreamHandlerService {
             }
 
             const ctx = await contextPromise;
-            this.logger.log("the output needed:",ctx);
+            this.logger.log('the output needed:', ctx);
             if (ctx) {
               state.callContext = ctx;
               state.patientInfo = {
