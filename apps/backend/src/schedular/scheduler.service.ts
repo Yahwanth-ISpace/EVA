@@ -63,8 +63,8 @@ export class SchedulerService {
 
         // clear all verification data from Verification collection where appointmentId and payeeId=patientId in prisma before saving new data by using mongoService
         this.mongoService.deleteVerificationData(
-          finalAppointments.AppointmentID,
-          finalAppointments.PatientID,
+          appointmentData.appointmentId,
+          appointmentData.patient.patientId,
         );
 
         // comment below 2 lines after actually calling
@@ -276,15 +276,15 @@ export class SchedulerService {
       this.mongoService.getSubrinaAppointmentsCollectionName(),
     );
 
-    const appointmentId = appointmentData?.AppointmentID as
+    const appointmentId = appointmentData?.appointmentId as
       | string
       | number
       | undefined;
-    const patientId = appointmentData?.PatientID as string | undefined;
+    const patientId = appointmentData?.patient.patientId as string | undefined;
     if (appointmentId != null && patientId != null) {
       const query = {
-        PatientID: patientId,
-        AppointmentID: Number(appointmentId),
+        patientId: patientId,
+        appointmentId: Number(appointmentId),
       };
       const existing = await collection.findOne(query);
 
@@ -311,15 +311,15 @@ export class SchedulerService {
   ) {
     const collection = await this.mongoService.appointmentsCollection();
 
-    const appointmentId = appointmentData?.AppointmentID as
+    const appointmentId = appointmentData?.appointmentId as
       | string
       | number
       | undefined;
-    const patientId = appointmentData?.PatientID as string | undefined;
+    const patientId = appointmentData?.patient.patientId as string | undefined;
     if (appointmentId != null && patientId != null) {
       const query = {
-        PatientID: patientId,
-        AppointmentID: Number(appointmentId),
+        patientId: patientId,
+        appointmentId: Number(appointmentId),
       };
       const existing = await collection.findOne(query);
 
@@ -395,12 +395,5 @@ export class SchedulerService {
 
   private delay(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  async getSampleData() {
-    const db = await this.mongoService.getDb();
-    const collection = db.collection('sabrina_sample_data');
-    const sampleData = await collection.findOne();
-    return sampleData;
   }
 }
