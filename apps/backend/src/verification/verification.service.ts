@@ -647,7 +647,7 @@ export class VerificationService {
   /** @deprecated Use {@link getPatientCallContext} */
   async getPayeeCallContext(
     patientId: string,
-    appointmentId?: string | null,
+    appointmentId: string | null,
   ): Promise<PatientCallContext | null> {
     return this.getPatientCallContext(patientId, appointmentId);
   }
