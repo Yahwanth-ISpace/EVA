@@ -660,35 +660,78 @@ export class VerificationService {
   private verificationStepsFromAppointmentDoc(
     doc: Record<string, unknown>,
   ): PatientVerificationStep[] {
-    const raw = doc['verificationFields'];
-    if (!Array.isArray(raw) || raw.length === 0) return [];
-
     const steps: PatientVerificationStep[] = [];
 
-    for (let i = 0; i < raw.length; i++) {
-      const item = raw[i] as Record<string, unknown>;
+    /**
+     * ----------------------------
+     * Priority 1: verificationFields
+     * ----------------------------
+     */
+    const raw = doc['verificationFields'];
 
-      const field = String(item?.field ?? '').trim();
-      if (!field) continue;
+    if (Array.isArray(raw) && raw.length > 0) {
+      for (let i = 0; i < raw.length; i++) {
+        const item = raw[i] as Record<string, unknown>;
 
-      const qRaw = String(item?.question ?? '').trim();
-      const rule = String(item?.rule ?? '').trim();
+        const field = String(item.field ?? '').trim();
+        if (!field) continue;
 
-      const order =
-        typeof item?.order === 'number' && Number.isFinite(item.order)
-          ? (item.order as number)
-          : i + 1;
+        const question = String(item.question ?? '').trim();
+        const rule = String(item.rule ?? '').trim();
 
-      steps.push({
-        field,
-        question: qRaw || field,
-        rule,
-        order,
-      });
+        const order =
+          typeof item.order === 'number' && Number.isFinite(item.order)
+            ? item.order
+            : i + 1;
+
+        steps.push({
+          field,
+          question: question || field,
+          rule,
+          order,
+        });
+      }
+
+      steps.sort((a, b) => a.order - b.order);
+      return steps;
     }
 
-    steps.sort((a, b) => a.order - b.order);
-    return steps;
+    /**
+     * ----------------------------
+     * Fallback: benefitsInfo
+     * ----------------------------
+     */
+    const benefitsInfo = doc['benefitsInfo'];
+
+    if (
+      benefitsInfo &&
+      typeof benefitsInfo === 'object' &&
+      !Array.isArray(benefitsInfo)
+    ) {
+      let order = 1;
+
+      for (const [field, value] of Object.entries(
+        benefitsInfo as Record<string, unknown>,
+      )) {
+        if (!value || typeof value !== 'object') continue;
+
+        const benefit = value as Record<string, unknown>;
+
+        steps.push({
+          field,
+          question: String(benefit.question ?? '').trim() || field,
+          rule: String(benefit.rule ?? '').trim(),
+          order,
+        });
+
+        order++;
+      }
+
+      steps.sort((a, b) => a.order - b.order);
+      return steps;
+    }
+
+    return [];
   }
 
   private normalizeText(value: string): string {
