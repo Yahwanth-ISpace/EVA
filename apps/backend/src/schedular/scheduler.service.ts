@@ -48,9 +48,7 @@ export class SchedulerService {
     this.isProcessing = true;
     try {
       let appointmentData = await this.getAppointments();
-      this.logger.debug(
-        `Appointment data fetched::: ${JSON.stringify(appointmentData)}`,
-      );
+      this.logger.debug(`Appointment data fetched::: `, appointmentData);
       if (appointmentData) {
         await this.saveRawAppointmentDataToMongo(appointmentData);
 
@@ -166,7 +164,9 @@ export class SchedulerService {
       const serviceBusAppointment =
         await this.tryReadAppointmentFromServiceBus();
 
-      this.logger.debug(`ServiceBus data: ${serviceBusAppointment}`);
+      this.logger.debug(
+        `ServiceBus data: ${JSON.stringify(serviceBusAppointment)}`,
+      );
       if (serviceBusAppointment) {
         this.logger.log(
           'Fetched appointment data from Azure Service Bus queue.',
@@ -185,7 +185,6 @@ export class SchedulerService {
 
         return serviceBusAppointment;
       }
-
       return null;
     } catch (error) {
       this.logger.error(
