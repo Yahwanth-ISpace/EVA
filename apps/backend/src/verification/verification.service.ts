@@ -693,6 +693,9 @@ export class VerificationService {
       }
 
       steps.sort((a, b) => a.order - b.order);
+      this.logger.debug(
+        `Verification Steps: ${JSON.stringify(steps, null, 2)}`,
+      );
       return steps;
     }
 
@@ -728,9 +731,13 @@ export class VerificationService {
       }
 
       steps.sort((a, b) => a.order - b.order);
+      this.logger.debug(
+        `Verification Steps: ${JSON.stringify(steps, null, 2)}`,
+      );
       return steps;
     }
 
+    this.logger.debug(`Verification Steps: ${JSON.stringify(steps, null, 2)}`);
     return [];
   }
 
