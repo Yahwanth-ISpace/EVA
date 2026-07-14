@@ -9,6 +9,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
 import { TranscriptionService } from 'src/transcription/transcription.service';
 import { MongoService } from 'src/mongo/mongo.service';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
 
 /** One benefit question from the appointment / requirement payload (ask this verbatim). */
 export type PatientVerificationStep = {
@@ -72,7 +74,20 @@ export class VerificationService {
     private readonly aiService: AiService,
     private readonly transcriptionService: TranscriptionService,
     private readonly mongoService: MongoService,
+    private readonly httpService: HttpService,
   ) {}
+
+  private buildEligibilityPayload(appointment: any, subrinaData: any) {
+    return {
+      ...appointment,
+      benefitsInfo: Object.fromEntries(
+        Object.entries(subrinaData ?? {}).map(([key, value]: any) => [
+          key,
+          value?.answer ?? '',
+        ]),
+      ),
+    };
+  }
 
   async simulateVerification(payeeId: string, transcript: string) {
     if (!(await this.mongoService.patientHasAppointment(payeeId))) {
@@ -1088,6 +1103,22 @@ export class VerificationService {
       payeeId,
       appointmentId?.trim() || null,
       subrinaData,
+    );
+
+    const appointment = await this.mongoService.findAppointmentDocument(
+      payeeId,
+      appointmentId?.trim() || null,
+    );
+
+    const payload = this.buildEligibilityPayload(appointment, subrinaData);
+
+    this.logger.log(`Eligibility Payload: ${JSON.stringify(payload, null, 2)}`);
+
+    await firstValueFrom(
+      this.httpService.post(
+        'https://sabrinauatapi.ispace.com/api/appointments/SaveEligibility',
+        payload,
+      ),
     );
 
     return subrinaData;
