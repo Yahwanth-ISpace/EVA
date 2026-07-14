@@ -80,6 +80,9 @@ export class VerificationService {
   private buildEligibilityPayload(appointment: any, sabrinaData: any) {
     return {
       ...appointment,
+      tenantName: 'stardental',
+      userName: 'EVA VoiceBot',
+      source: 'EVA-Bot',
       benefitsInfo: Object.fromEntries(
         Object.entries(sabrinaData.benefitsInfo ?? {}).map(
           ([key, value]: [string, any]) => [key, value?.answer ?? ''],
