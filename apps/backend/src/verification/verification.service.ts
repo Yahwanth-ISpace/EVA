@@ -77,14 +77,13 @@ export class VerificationService {
     private readonly httpService: HttpService,
   ) {}
 
-  private buildEligibilityPayload(appointment: any, subrinaData: any) {
+  private buildEligibilityPayload(appointment: any, sabrinaData: any) {
     return {
       ...appointment,
       benefitsInfo: Object.fromEntries(
-        Object.entries(subrinaData ?? {}).map(([key, value]: any) => [
-          key,
-          value?.answer ?? '',
-        ]),
+        Object.entries(sabrinaData.benefitsInfo ?? {}).map(
+          ([key, value]: [string, any]) => [key, value?.answer ?? ''],
+        ),
       ),
     };
   }
@@ -846,17 +845,17 @@ export class VerificationService {
 
   private mapSubrinaAnswers(
     verificationFields: Array<Record<string, unknown>>,
-    subrinaData: any,
+    sabrinaData: any,
   ): void {
     if (
-      !subrinaData ||
-      typeof subrinaData !== 'object' ||
-      Array.isArray(subrinaData)
+      !sabrinaData ||
+      typeof sabrinaData !== 'object' ||
+      Array.isArray(sabrinaData)
     ) {
       return;
     }
 
-    // const doc = subrinaData as Record<string, unknown>;
+    // const doc = sabrinaData as Record<string, unknown>;
     const verificationByQuestion = new Map<string, string | string[]>();
     for (const field of verificationFields) {
       const question = field.question;
@@ -902,7 +901,7 @@ export class VerificationService {
       return false;
     };
 
-    const doc = subrinaData as Record<string, any>;
+    const doc = sabrinaData as Record<string, any>;
     for (const value of Object.values(doc)) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) {
         continue;
@@ -1084,25 +1083,25 @@ export class VerificationService {
         transcriptToAppend,
         fieldsToExtract,
       );
-    const subrinaData = await this.mongoService.getSubrinaAppointments(
+    const sabrinaData = await this.mongoService.getSubrinaAppointments(
       payeeId,
       appointmentId?.trim() || '',
     );
-    if (subrinaData) {
-      this.mapSubrinaAnswers(verificationFields, subrinaData);
-      (subrinaData as Record<string, unknown>).status =
+    if (sabrinaData) {
+      this.mapSubrinaAnswers(verificationFields, sabrinaData);
+      (sabrinaData as Record<string, unknown>).status =
         this.computeSabrinaResponseStatus(
-          subrinaData as Record<string, any>,
+          sabrinaData as Record<string, any>,
           transcriptToAppend,
         );
     }
-    // this.logger.log(subrinaData);
+    // this.logger.log(sabrinaData);
 
-    //save subrinaData to mongo collection for debugging
+    //save sabrinaData to mongo collection for debugging
     await this.mongoService.saveSubrinaDebugData(
       payeeId,
       appointmentId?.trim() || null,
-      subrinaData,
+      sabrinaData,
     );
 
     const appointment = await this.mongoService.findAppointmentDocument(
@@ -1110,7 +1109,7 @@ export class VerificationService {
       appointmentId?.trim() || null,
     );
 
-    const payload = this.buildEligibilityPayload(appointment, subrinaData);
+    const payload = this.buildEligibilityPayload(appointment, sabrinaData);
     const headers = {
       'Content-Type': 'application/json',
       Accept: 'application/json',
@@ -1129,6 +1128,6 @@ export class VerificationService {
       ),
     );
 
-    return subrinaData;
+    return sabrinaData;
   }
 }
