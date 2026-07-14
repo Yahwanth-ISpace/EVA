@@ -978,24 +978,18 @@ export class VerificationService {
     );
   }
 
-  private buildEligibilityPayload(appointment: any, sabrinaData: any) {
-    const benefitsInfo: Record<string, string> = {};
-
-    for (const [key, value] of Object.entries(sabrinaData ?? {})) {
-      if (value && typeof value === 'object' && 'question' in value) {
-        benefitsInfo[key] = (value as any).answer ?? '';
-      }
-    }
-
-    this.logger.debug(
-      `this is the sabrina data: ${JSON.stringify(sabrinaData)}`,
-    );
+  private buildEligibilityPayload(
+    appointment: any,
+    extracted: Record<string, any>,
+  ) {
     return {
       ...appointment,
-      benefitsInfo,
-      tenantName: 'smilecare',
-      userName: 'EVA VoiceBot',
-      source: 'EVA-Bot',
+      benefitsInfo: Object.fromEntries(
+        Object.keys(appointment.benefitsInfo ?? {}).map((key) => [
+          key,
+          extracted[key] ?? '',
+        ]),
+      ),
     };
   }
 
