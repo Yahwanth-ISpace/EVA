@@ -1111,6 +1111,11 @@ export class VerificationService {
     );
 
     const payload = this.buildEligibilityPayload(appointment, subrinaData);
+    const headers = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'Ocp-Apim-Subscription-Key': process.env.SABRINA_SUBSCRIPTION_KEY,
+    };
 
     this.logger.log(`Eligibility Payload: ${JSON.stringify(payload, null, 2)}`);
 
@@ -1118,6 +1123,9 @@ export class VerificationService {
       this.httpService.post(
         'https://sabrinauatapi.ispace.com/api/appointments/SaveEligibility',
         payload,
+        {
+          headers,
+        },
       ),
     );
 
