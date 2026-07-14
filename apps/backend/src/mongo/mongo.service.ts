@@ -153,7 +153,7 @@ export class MongoService implements OnModuleDestroy {
     const doc = await col.findOne(
       {
         ...this.appointmentIdQuery(aid),
-        PatientID: pid,
+        'patient.patientId': pid,
       },
       {
         sort: { AppointmentDate: -1, savedAt: -1 } as Document,
@@ -168,12 +168,15 @@ export class MongoService implements OnModuleDestroy {
     subrinaData: Document | null,
   ) {
     try {
+      this.logger.log(
+        `Saving Subrina debug data for PayeeID: ${payeeId}, AppointmentID: ${appointmentId}, Data: ${JSON.stringify(subrinaData)}`,
+      );
       const col = await this.subrinaResponseCollection();
 
       // Build query to find existing document
-      const query: Document = { PatientID: payeeId.trim() };
+      const query: Document = { 'patient.patientId': payeeId.trim() };
       if (appointmentId?.trim()) {
-        query.AppointmentID = Number(appointmentId.trim());
+        query.appointmentId = Number(appointmentId.trim());
       }
       this.logger.log(
         'MongoDB query for saving Subrina debug data: ' + JSON.stringify(query),
