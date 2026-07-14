@@ -77,25 +77,6 @@ export class VerificationService {
     private readonly httpService: HttpService,
   ) {}
 
-  private buildEligibilityPayload(appointment: any, sabrinaData: any) {
-    const benefitsInfo: Record<string, string> = {};
-
-    for (const [key, value] of Object.entries(sabrinaData ?? {})) {
-      if (value && typeof value === 'object' && 'question' in value) {
-        benefitsInfo[key] = (value as any).answer ?? '';
-      }
-    }
-
-    this.logger.debug(`this is the sabrina data: ${sabrinaData}`);
-    return {
-      ...appointment,
-      benefitsInfo,
-      tenantName: 'stardental',
-      userName: 'EVA VoiceBot',
-      source: 'EVA-Bot',
-    };
-  }
-
   async simulateVerification(payeeId: string, transcript: string) {
     if (!(await this.mongoService.patientHasAppointment(payeeId))) {
       throw new NotFoundException(
@@ -637,7 +618,7 @@ export class VerificationService {
       doc as Record<string, unknown>,
     );
 
-    this.logger.debug(
+    this.logger.log(
       `Verification Steps: ${JSON.stringify(verificationSteps, null, 2)}`,
     );
 
@@ -995,6 +976,27 @@ export class VerificationService {
       verificationRequirementId,
       appointmentId,
     );
+  }
+
+  private buildEligibilityPayload(appointment: any, sabrinaData: any) {
+    const benefitsInfo: Record<string, string> = {};
+
+    for (const [key, value] of Object.entries(sabrinaData ?? {})) {
+      if (value && typeof value === 'object' && 'question' in value) {
+        benefitsInfo[key] = (value as any).answer ?? '';
+      }
+    }
+
+    this.logger.debug(
+      `this is the sabrina data: ${JSON.stringify(sabrinaData)}`,
+    );
+    return {
+      ...appointment,
+      benefitsInfo,
+      tenantName: 'smilecare',
+      userName: 'EVA VoiceBot',
+      source: 'EVA-Bot',
+    };
   }
 
   /**
