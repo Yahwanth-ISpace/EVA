@@ -77,17 +77,21 @@ export class VerificationService {
     private readonly httpService: HttpService,
   ) {}
 
-  private buildEligibilityPayload(appointment: any, sabrinaData: any) {
+  private buildEligibilityPayload(appointment: any, subrinaData: any) {
+    const benefitsInfo: Record<string, string> = {};
+
+    for (const [key, value] of Object.entries(subrinaData ?? {})) {
+      if (value && typeof value === 'object' && 'question' in value) {
+        benefitsInfo[key] = (value as any).answer ?? '';
+      }
+    }
+
     return {
       ...appointment,
+      benefitsInfo,
       tenantName: 'stardental',
       userName: 'EVA VoiceBot',
       source: 'EVA-Bot',
-      benefitsInfo: Object.fromEntries(
-        Object.entries(sabrinaData.benefitsInfo ?? {}).map(
-          ([key, value]: [string, any]) => [key, value?.answer ?? ''],
-        ),
-      ),
     };
   }
 
