@@ -77,15 +77,16 @@ export class VerificationService {
     private readonly httpService: HttpService,
   ) {}
 
-  private buildEligibilityPayload(appointment: any, subrinaData: any) {
+  private buildEligibilityPayload(appointment: any, sabrinaData: any) {
     const benefitsInfo: Record<string, string> = {};
 
-    for (const [key, value] of Object.entries(subrinaData ?? {})) {
+    for (const [key, value] of Object.entries(sabrinaData ?? {})) {
       if (value && typeof value === 'object' && 'question' in value) {
         benefitsInfo[key] = (value as any).answer ?? '';
       }
     }
 
+    this.logger.debug(`this is the sabrina data: ${sabrinaData}`);
     return {
       ...appointment,
       benefitsInfo,
