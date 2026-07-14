@@ -980,14 +980,14 @@ export class VerificationService {
 
   private buildEligibilityPayload(
     appointment: any,
-    extracted: Record<string, any>,
+    extracted?: Record<string, string | null | undefined>,
   ) {
     return {
       ...appointment,
       benefitsInfo: Object.fromEntries(
         Object.keys(appointment.benefitsInfo ?? {}).map((key) => [
           key,
-          extracted[key] ?? '',
+          extracted?.[key] ?? '',
         ]),
       ),
     };
@@ -1113,7 +1113,7 @@ export class VerificationService {
       appointmentId?.trim() || null,
     );
 
-    const payload = this.buildEligibilityPayload(appointment, sabrinaData);
+    const payload = this.buildEligibilityPayload(appointment, extracted);
     const headers = {
       'Content-Type': 'application/json',
       Accept: 'application/json',
