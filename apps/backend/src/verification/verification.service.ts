@@ -982,6 +982,17 @@ export class VerificationService {
     appointment: any,
     extracted?: Record<string, string | null | undefined>,
   ) {
+    const numericFields = new Set([
+      'individualDeductible',
+      'familyDeductible',
+      'yearlyMaxAmount',
+      'preventive',
+      'basic',
+      'major',
+      // Remove this if you don't want numbers only for dates
+      // Add other numeric fields here
+    ]);
+
     const getNumericValue = (value?: string | null): string => {
       if (!value) return '';
 
@@ -992,10 +1003,11 @@ export class VerificationService {
     };
 
     const mappedBenefits = Object.fromEntries(
-      Object.keys(appointment.benefitsInfo ?? {}).map((key) => [
-        key,
-        getNumericValue(extracted?.[key]),
-      ]),
+      Object.keys(appointment.benefitsInfo ?? {}).map((key) => {
+        const value = extracted?.[key] ?? '';
+
+        return [key, numericFields.has(key) ? getNumericValue(value) : value];
+      }),
     );
 
     // Temporary: Remove unwanted fields
@@ -1009,7 +1021,7 @@ export class VerificationService {
     return {
       ...payload,
       insurance: mappedBenefits,
-      // benefitsInfo: mappedBenefits,
+      benefitsInfo: mappedBenefits,
     };
   }
 
