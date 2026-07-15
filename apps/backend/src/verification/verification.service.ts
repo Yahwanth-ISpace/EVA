@@ -984,7 +984,7 @@ export class VerificationService {
   ) {
     return {
       ...appointment,
-      benefitsInfo: Object.fromEntries(
+      insurance: Object.fromEntries(
         Object.keys(appointment.benefitsInfo ?? {}).map((key) => [
           key,
           extracted?.[key] ?? '',
