@@ -990,14 +990,26 @@ export class VerificationService {
 
       return match ? match[0] : '';
     };
+
+    const mappedBenefits = Object.fromEntries(
+      Object.keys(appointment.benefitsInfo ?? {}).map((key) => [
+        key,
+        getNumericValue(extracted?.[key]),
+      ]),
+    );
+
+    // Temporary: Remove unwanted fields
+    const {
+      benefitsInfo,
+      InsuranceCompany_Phone,
+      InsuranceCompany_Phone_Ext,
+      ...payload
+    } = appointment;
+
     return {
-      ...appointment,
-      insurance: Object.fromEntries(
-        Object.keys(appointment.benefitsInfo ?? {}).map((key) => [
-          key,
-          getNumericValue(extracted?.[key]),
-        ]),
-      ),
+      ...payload,
+      insurance: mappedBenefits,
+      // benefitsInfo: mappedBenefits,
     };
   }
 
