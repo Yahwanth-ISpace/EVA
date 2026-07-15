@@ -982,12 +982,20 @@ export class VerificationService {
     appointment: any,
     extracted?: Record<string, string | null | undefined>,
   ) {
+    const getNumericValue = (value?: string | null): string => {
+      if (!value) return '';
+
+      const cleaned = value.replace(/,/g, '');
+      const match = cleaned.match(/\d+(\.\d+)?/);
+
+      return match ? match[0] : '';
+    };
     return {
       ...appointment,
       insurance: Object.fromEntries(
         Object.keys(appointment.benefitsInfo ?? {}).map((key) => [
           key,
-          extracted?.[key] ?? '',
+          getNumericValue(extracted?.[key]),
         ]),
       ),
     };
