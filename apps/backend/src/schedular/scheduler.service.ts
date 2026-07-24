@@ -361,6 +361,7 @@ export class SchedulerService {
         verificationFields.push({
           question: value.question,
           field: key,
+          rule: value.rule || '',
           order,
         });
 
@@ -379,6 +380,7 @@ export class SchedulerService {
       verificationFields.push({
         question: 'Does this patient have any history?',
         field: 'history-list',
+        rule: 'Answer should be "Yes" or "No"',
         order,
       });
 
@@ -389,6 +391,9 @@ export class SchedulerService {
           verificationFields.push({
             question: historyItem.question,
             field: `history.${historyItem.procedurecode}`,
+            procedureCode: historyItem.procedurecode,
+            dependencies: historyItem.dependencies ?? [],
+            rule: historyItem.rule ?? '',
             order,
           });
 

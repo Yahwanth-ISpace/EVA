@@ -3,12 +3,17 @@ import { ApiProperty } from '@nestjs/swagger';
 export interface VerificationField {
   question: string;
   field: string;
+  rule: string;
   order: number;
+  procedureCode?: string;
+  dependencies?: string[];
   value?: string;
 }
 export interface BenefitInfo {
   question: string;
   rule: string;
+  procedureCode?: string;
+  dependencies?: string[];
   answer: string;
 }
 

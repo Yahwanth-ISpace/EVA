@@ -1,4 +1,7 @@
-import type { PatientCallContext } from '../../verification/verification.service';
+import type {
+  PatientCallContext,
+  PatientVerificationStep,
+} from '../../verification/verification.service';
 
 /** Patient info from DB for EVA to use in prompts (name, DOB, SSN when asked). */
 export interface PatientInfo {
@@ -72,6 +75,10 @@ export interface StreamState {
   evaIntroIdentitySaid: boolean;
   /** TPA said they found/located the patient — identity verification treated as done. */
   tpaPatientLocated: boolean;
+
+  verificationStepByField: Record<string, PatientVerificationStep>;
+
+  verificationStepByProcedureCode: Record<string, PatientVerificationStep>;
 }
 
 /** Per-call TPA IVR script (Part 1); survives Twilio reconnect after DTMF. */

@@ -1440,12 +1440,12 @@ Respond with ONLY a JSON object. No markdown. Format:
 
   /**
    * Extract verification fields from a transcript by matching EVA questions to USER responses.
-   * Uses Gemini to parse the transcript and return a transcript-only list of question/answar pairs.
+   * Uses Gemini to parse the transcript and return a transcript-only list of question/answer pairs.
    * If the model returns detailed field values, those are still supported as a fallback.
    *
    * @param transcript The full transcript with EVA and User dialog
    * @param verificationFields Array of field definitions with questions
-   * @returns Array of question/answar pairs or field extraction results
+   * @returns Array of question/answer pairs or field extraction results
    */
   public async extractVerificationFieldsFromTranscript(
     transcript: string,
@@ -1459,7 +1459,7 @@ Respond with ONLY a JSON object. No markdown. Format:
     Array<{
       normalizedQuestion: string;
       question: string;
-      answar: string | string[];
+      answer: string | string[];
     }>
   > {
     if (!verificationFields || verificationFields.length === 0) {
@@ -1480,11 +1480,14 @@ ${transcript}
 INSTRUCTIONS:
 1. Identify every EVA turn that is a question or request for information.
 2. For each EVA question, capture the USER response immediately after it.
-3. Return a JSON array of objects with exactly two keys: "question" and "answar".
-4. If the USER provided multiple distinct values (e.g., two dates), provide them in "answar" as an array of strings, or as a single string joined by " and " or a comma. Preserve the question text exactly as EVA spoke it in the transcript.
-5. For the USER answer (answar), normalize it to a clean value:
+3. Return a JSON array of objects with exactly two keys: "question" and "answer".
+4. If the USER provided multiple distinct values (e.g., two dates), provide them in "answer" as an array of strings, or as a single string joined by " and " or a comma. Preserve the question text exactly as EVA spoke it in the transcript.
+5. For the USER answer (answer), normalize it to a clean value:
    - Convert spoken numbers to digits: "twenty dollars" → "20", "one hundred" → "100", "fourteen" → "14"
-   - Format dates properly: "May first twenty twenty six" → "May 1, 2026", "February twenty first two thousand twenty nine" → "February 21, 2029"
+   - Format dates properly: "May first twenty twenty six" → "01/05/2026", "February twenty first two thousand twenty nine" → "21/02/2029"
+   - Format dates as DD-MM-YYYY. If the USER provides multiple dates, normalize each date to DD-MM-YYYY and return them as a single comma-separated string.
+      Example:
+      "January 12 2026 and July 10 2025" → "12-01-2026,10-07-2025"
    - Keep percentages as is or convert: "eighty percent" → "80", "twenty five %" → "25"
    - Remove filler words and normalize: "Uh, it is, uh, two forty-four" → "244"
    - For insurance GROUP NAME questions: extract only the name from conversational answers — "That is My India." → "My India", "That would be My india" → "My India". Do NOT convert group names to numbers.
@@ -1492,13 +1495,16 @@ INSTRUCTIONS:
 6. Do NOT include any field definitions, metadata, markdown, code fences, or extra text.
 7. If a USER response is missing after an EVA question, omit that pair.
 8. Return valid JSON only.
+9. Extract only the questions and answers that are present in the transcript.
+10. Do not infer or generate answers for questions that were not asked.
+11. Preserve the order of the conversation exactly as it appears in the transcript.
 
 EXAMPLE OUTPUT:
 [
-  { "question": "What is the insurance group name?", "answar": "My India" },
-  { "question": "What is the insurance group number?", "answar": "1717" },
-  { "question": "What is the patient's date of birth?", "answar": "March 26, 1984" },
-  { "question": "What is the basic coverage?", "answar": "20" }
+  { "question": "What is the insurance group name?", "answer": "My India" },
+  { "question": "What is the insurance group number?", "answer": "1717" },
+  { "question": "What is the patient's date of birth?", "answer": "March 26, 1984" },
+  { "question": "What is the basic coverage?", "answer": "20" }
 ]`;
 
       const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
@@ -1533,21 +1539,21 @@ EXAMPLE OUTPUT:
             typeof item === 'object' &&
             item !== null &&
             typeof (item as any).question === 'string' &&
-            (typeof (item as any).answar === 'string' ||
-              Array.isArray((item as any).answar)),
+            (typeof (item as any).answer === 'string' ||
+              Array.isArray((item as any).answer)),
         );
 
       const questionAnswerPairs = hasQuestionAnswerPairs
         ? parsedArray.map((item) => {
             const itemObj = item as {
               question: string;
-              answar: string | string[];
+              answer: string | string[];
             };
-            const rawVal = itemObj.answar;
-            let answar: string | string[];
+            const rawVal = itemObj.answer;
+            let answer: string | string[];
             const question = String(itemObj.question);
             if (Array.isArray(rawVal)) {
-              answar = rawVal
+              answer = rawVal
                 .map((v) => String(v).trim())
                 .filter(Boolean)
                 .map((v) =>
@@ -1559,18 +1565,18 @@ EXAMPLE OUTPUT:
             } else {
               const raw = String(rawVal);
               if (AiService.isGroupNameQuestion(question)) {
-                answar = this.extractGroupNameFromAnswer(raw);
+                answer = this.extractGroupNameFromAnswer(raw);
               } else {
                 const parts = raw
                   .split(/\s+and\s+|(?<=\d{4}),\s*/i)
                   .map((s) => s.trim())
                   .filter(Boolean);
-                answar = parts.length > 1 ? parts : raw;
+                answer = parts.length > 1 ? parts : raw;
               }
             }
             return {
               question,
-              answar,
+              answer,
             };
           })
         : [];
@@ -1602,7 +1608,7 @@ EXAMPLE OUTPUT:
       return verificationFields.map((f) => ({
         question: f.question,
         normalizedQuestion: '',
-        answar: '',
+        answer: '',
       }));
     }
   }

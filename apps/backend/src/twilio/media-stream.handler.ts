@@ -1335,7 +1335,7 @@ export class MediaStreamHandlerService {
         const recallReply = getRecallReply(
           userSaid,
           state.extractedData,
-          orderedF,
+          state.orderedFields,
         );
 
         // Identity short-circuit: when the TPA asks a crisp verification question
@@ -1361,7 +1361,7 @@ export class MediaStreamHandlerService {
             ? (() => {
                 const miss = getFirstMissingField(
                   state.extractedData,
-                  orderedF,
+                  state.orderedFields,
                 );
                 return miss ? qField(miss) : pickBriefAcknowledgement();
               })()
@@ -1389,7 +1389,7 @@ export class MediaStreamHandlerService {
             ? (() => {
                 const miss = getFirstMissingField(
                   state.extractedData,
-                  orderedF,
+                  state.orderedFields,
                 );
                 return miss
                   ? `${pickPostValueAcknowledgement()} ${qField(miss)}`
@@ -1410,8 +1410,8 @@ export class MediaStreamHandlerService {
         if (skipLlmDueToNoise) {
           const miss =
             state.lastAskedField ??
-            getFirstMissingField(state.extractedData, orderedF) ??
-            orderedF[0];
+            getFirstMissingField(state.extractedData, state.orderedFields) ??
+            state.orderedFields[0];
           noiseSkipMessage =
             "I'm having trouble hearing you clearly. " +
             qField(miss ?? 'coverage');
@@ -1453,7 +1453,7 @@ export class MediaStreamHandlerService {
           llmMs = 0;
           const missHandoff = getFirstMissingField(
             state.extractedData,
-            orderedF,
+            state.orderedFields,
           );
           if (missHandoff) state.lastAskedField = missHandoff;
         } else if (purposeOnlyReply) {
@@ -1467,7 +1467,10 @@ export class MediaStreamHandlerService {
           extractedUpdates = {};
           endCall = false;
           llmMs = 0;
-          const missYes = getFirstMissingField(state.extractedData, orderedF);
+          const missYes = getFirstMissingField(
+            state.extractedData,
+            state.orderedFields,
+          );
           if (missYes) state.lastAskedField = missYes;
         } else if (earlyAckAfterPurpose) {
           nextMessage = pickBriefAcknowledgement();
@@ -1626,9 +1629,13 @@ export class MediaStreamHandlerService {
           }
         }
 
+        if (state.lastAskedField) {
+          this.injectDependentQuestions(state, state.lastAskedField);
+        }
+
         state.lastAskedField = getFirstMissingField(
           state.extractedData,
-          orderedF,
+          state.orderedFields,
         );
 
         const valueCollectedThisTurn =
@@ -2410,6 +2417,46 @@ export class MediaStreamHandlerService {
         processBuffer(combined);
       }, intervalMs);
     };
+  }
+
+  private answerIsYes(value?: string | null): boolean {
+    if (!value) return false;
+
+    return ['yes', 'y', 'true', 'covered'].includes(value.trim().toLowerCase());
+  }
+
+  private injectDependentQuestions(state: StreamState, currentField: string) {
+    const current = state.callContext?.verificationSteps.find(
+      (x) => x.field === currentField,
+    );
+
+    if (!current) return;
+
+    if (!current.dependencies?.length) return;
+
+    const answer = state.extractedData[currentField];
+
+    if (!this.answerIsYes(answer)) return;
+
+    const insertAfter = state.orderedFields.indexOf(currentField);
+
+    if (insertAfter === -1) return;
+
+    const newFields: string[] = [];
+
+    for (const dependency of current.dependencies) {
+      const step = state.callContext?.verificationSteps.find(
+        (x) => x.procedureCode === dependency,
+      );
+
+      if (!step) continue;
+
+      if (state.orderedFields.includes(step.field)) continue;
+      this.logger.log(`[Dependency] Injecting ${step.field}`);
+
+      newFields.push(step.field);
+    }
+    state.orderedFields.splice(insertAfter + 1, 0, ...newFields);
   }
 
   private ensureTpaIvrState(callSid: string | null): TpaIvrRuntimeState {

@@ -18,6 +18,9 @@ export type PatientVerificationStep = {
   question: string;
   rule: string;
   order: number;
+
+  procedureCode?: string;
+  dependencies?: string[];
 };
 
 /** Full call context pre-loaded at Twilio stream start so EVA can answer
@@ -696,6 +699,12 @@ export class VerificationService {
           question: question || field,
           rule,
           order,
+
+          procedureCode: String(item.procedureCode ?? ''),
+
+          dependencies: Array.isArray(item.dependencies)
+            ? item.dependencies
+            : [],
         });
       }
 
