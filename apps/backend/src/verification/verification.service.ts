@@ -1009,26 +1009,37 @@ export class VerificationService {
     extracted?: Record<string, string | null | undefined>,
   ) {
     const numericFields = new Set([
-      'individualDeductible',
-      'familyDeductible',
-      'yearlyMaxAmount',
-      'preventive',
-      'basic',
-      'major',
-      // Remove this if you don't want numbers only for dates
-      // Add other numeric fields here
+      'IndividualMetAmount',
+      'FamilyMetAmount',
+      'YearlyMaxUsed',
+      'OrthoMaximum',
+      'IndividualDeductible',
+      'FamilyDeductible',
+      'YearlyMaxAmount',
+      'Preventive',
+      'Basic',
+      'Major',
     ]);
 
     const getNumericValue = (value?: string | null): string => {
       if (!value) return '';
 
-      const cleaned = value.replace(/,/g, '');
-      const match = cleaned.match(/\d+(\.\d+)?/);
+      const cleaned = value
+        .toLowerCase()
+        .replace(/,/g, '')
+        .replace(/dollars?|usd|\$/g, '')
+        .trim();
 
-      return match ? match[0] : '';
+      const numeric = cleaned.match(/\d+(\.\d+)?/);
+
+      if (numeric) {
+        return numeric[0];
+      }
+
+      return this.aiService.normalizeMoney(cleaned);
     };
 
-    const mappedBenefits: any = {};
+    const mappedBenefits: Record<string, any> = {};
 
     for (const [key, value] of Object.entries(appointment.benefitsInfo ?? {})) {
       if (key !== 'history') {
@@ -1039,21 +1050,15 @@ export class VerificationService {
         continue;
       }
 
-      // history
-      mappedBenefits.history = [];
-
-      for (const historyItem of value as any[]) {
-        mappedBenefits.history.push({
-          ...historyItem,
-          answer:
-            extracted?.[`history.${historyItem.procedureCode}`] ??
-            extracted?.[`history.${historyItem.procedureCode}`] ??
-            '',
-        });
-      }
+      mappedBenefits.history = (value as any[]).map((item) => ({
+        ...item,
+        // answer: extracted?.[`history.${item.procedureCode}`] ?? '',
+        answer: this.aiService.normalizeHistoryDates(
+          extracted?.[`history.${item.procedureCode}`],
+        ),
+      }));
     }
 
-    // Temporary: Remove unwanted fields
     const {
       benefitsInfo,
       InsuranceCompany_Phone,

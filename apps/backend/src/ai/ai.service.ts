@@ -1049,6 +1049,61 @@ Respond with ONLY a JSON object. No markdown. Format:
     return total > 0 ? total : null;
   }
 
+  public normalizeMoney(value?: string | null): string {
+    if (!value) return '';
+
+    const cleaned = value
+      .toLowerCase()
+      .replace(/,/g, '')
+      .replace(/dollars?|usd|\$/g, '')
+      .trim();
+
+    const numeric = cleaned.match(/\d+(\.\d+)?/);
+    if (numeric) {
+      return numeric[0];
+    }
+
+    const wordNumber = this.wordsToNumber(cleaned);
+    return wordNumber != null ? String(wordNumber) : '';
+  }
+
+  public normalizeHistoryDates(value?: string | null): string {
+    if (!value) return '';
+
+    // Already normalized
+    if (/^\d{2}-\d{2}-\d{4}(,\d{2}-\d{2}-\d{4})*$/.test(value.trim())) {
+      return value.trim();
+    }
+
+    // Extract every date-like phrase from the text
+    const matches =
+      value.match(
+        /\b(?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?(?:,)?\s+\d{4})\b/gi,
+      ) ?? [];
+
+    if (!matches.length) {
+      return value.trim();
+    }
+
+    const dates = matches
+      .map((d) => {
+        const dt = new Date(d);
+
+        if (Number.isNaN(dt.getTime())) {
+          return null;
+        }
+
+        const day = String(dt.getDate()).padStart(2, '0');
+        const month = String(dt.getMonth() + 1).padStart(2, '0');
+        const year = dt.getFullYear();
+
+        return `${day}-${month}-${year}`;
+      })
+      .filter(Boolean);
+
+    return dates.join(',');
+  }
+
   /** Normalize validity to "21st Dec 2028" format. Returns null if not parseable. */
   private normalizeValidity(value: string): string | null {
     const t = value.trim();
@@ -1486,9 +1541,9 @@ INSTRUCTIONS:
   - Convert spoken numbers to digits: "twenty dollars" → "20", "one hundred" → "100", "fourteen" → "14"
   -For history procedure dates:
   - Always return dates in DD-MM-YYYY format.
+  - Always return dates you receive january 31, 2026 as 31-01-2026. if you recive in different format like 31st Jan 2026 or Jan 31, 2026, convert to 31-01-2026.
   - If multiple service dates are provided, return them as a single comma-separated string.
   - Never return only the year or only the month.
-  - If only month and year are provided, return 01-MM-YYYY.
   - Do not convert history dates to numbers.
    - Keep percentages as is or convert: "eighty percent" → "80", "twenty five %" → "25"
    - Remove filler words and normalize: "Uh, it is, uh, two forty-four" → "244"
