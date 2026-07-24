@@ -76,8 +76,8 @@ export interface StreamState {
   /** TPA said they found/located the patient — identity verification treated as done. */
   tpaPatientLocated: boolean;
 
-  verificationStepByField?: Record<string, PatientVerificationStep>;
-  verificationStepByProcedureCode?: Record<string, PatientVerificationStep>;
+  verificationStepByField: Record<string, PatientVerificationStep>;
+  verificationStepByProcedureCode: Record<string, PatientVerificationStep>;
 }
 
 /** Per-call TPA IVR script (Part 1); survives Twilio reconnect after DTMF. */
