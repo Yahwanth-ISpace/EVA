@@ -1483,11 +1483,13 @@ INSTRUCTIONS:
 3. Return a JSON array of objects with exactly two keys: "question" and "answer".
 4. If the USER provided multiple distinct values (e.g., two dates), provide them in "answer" as an array of strings, or as a single string joined by " and " or a comma. Preserve the question text exactly as EVA spoke it in the transcript.
 5. For the USER answer (answer), normalize it to a clean value:
-   - Convert spoken numbers to digits: "twenty dollars" → "20", "one hundred" → "100", "fourteen" → "14"
-   - Format dates properly: "May first twenty twenty six" → "01/05/2026", "February twenty first two thousand twenty nine" → "21/02/2029"
-   - Format dates as DD-MM-YYYY. If the USER provides multiple dates, normalize each date to DD-MM-YYYY and return them as a single comma-separated string.
-      Example:
-      "January 12 2026 and July 10 2025" → "12-01-2026,10-07-2025"
+  - Convert spoken numbers to digits: "twenty dollars" → "20", "one hundred" → "100", "fourteen" → "14"
+  -For history procedure dates:
+  - Always return dates in DD-MM-YYYY format.
+  - If multiple service dates are provided, return them as a single comma-separated string.
+  - Never return only the year or only the month.
+  - If only month and year are provided, return 01-MM-YYYY.
+  - Do not convert history dates to numbers.
    - Keep percentages as is or convert: "eighty percent" → "80", "twenty five %" → "25"
    - Remove filler words and normalize: "Uh, it is, uh, two forty-four" → "244"
    - For insurance GROUP NAME questions: extract only the name from conversational answers — "That is My India." → "My India", "That would be My india" → "My India". Do NOT convert group names to numbers.
