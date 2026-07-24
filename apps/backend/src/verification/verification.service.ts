@@ -1028,13 +1028,30 @@ export class VerificationService {
       return match ? match[0] : '';
     };
 
-    const mappedBenefits = Object.fromEntries(
-      Object.keys(appointment.benefitsInfo ?? {}).map((key) => {
-        const value = extracted?.[key] ?? '';
+    const mappedBenefits: any = {};
 
-        return [key, numericFields.has(key) ? getNumericValue(value) : value];
-      }),
-    );
+    for (const [key, value] of Object.entries(appointment.benefitsInfo ?? {})) {
+      if (key !== 'history') {
+        mappedBenefits[key] = numericFields.has(key)
+          ? getNumericValue(extracted?.[key])
+          : (extracted?.[key] ?? '');
+
+        continue;
+      }
+
+      // history
+      mappedBenefits.history = [];
+
+      for (const historyItem of value as any[]) {
+        mappedBenefits.history.push({
+          ...historyItem,
+          answer:
+            extracted?.[`history.${historyItem.procedureCode}`] ??
+            extracted?.[`history.${historyItem.procedureCode}`] ??
+            '',
+        });
+      }
+    }
 
     // Temporary: Remove unwanted fields
     const {

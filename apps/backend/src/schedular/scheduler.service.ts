@@ -399,11 +399,11 @@ export class SchedulerService {
       order++;
 
       for (const historyItem of appointmentData.history) {
-        if (historyItem.question && historyItem.procedurecode) {
+        if (historyItem.question && historyItem.procedureCode) {
           verificationFields.push({
             question: historyItem.question,
-            field: `history.${historyItem.procedurecode}`,
-            procedureCode: historyItem.procedurecode,
+            field: `history.${historyItem.procedureCode}`,
+            procedureCode: historyItem.procedureCode,
             dependencies: historyItem.dependencies ?? [],
             rule: historyItem.rule ?? '',
             order,
