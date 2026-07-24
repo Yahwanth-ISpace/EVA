@@ -732,7 +732,24 @@ export class VerificationService {
       for (const [field, value] of Object.entries(
         benefitsInfo as Record<string, unknown>,
       )) {
-        if (!value || typeof value !== 'object') continue;
+        if (field === 'history' && Array.isArray(value)) {
+          for (const item of value) {
+            if (!item || typeof item !== 'object') continue;
+
+            steps.push({
+              field: `history.${item.procedureCode}`,
+              question: String(item.question ?? ''),
+              rule: String(item.rule ?? ''),
+              procedureCode: String(item.procedureCode ?? ''),
+              dependencies: Array.isArray(item.dependencies)
+                ? item.dependencies
+                : [],
+              order: order++,
+            });
+          }
+
+          continue;
+        }
 
         const benefit = value as Record<string, unknown>;
 
@@ -824,7 +841,7 @@ export class VerificationService {
       if (!item || typeof item !== 'object') continue;
       const historyItem = item as Record<string, any>;
       if (typeof historyItem.question !== 'string') continue;
-      const hist = historyItem.history;
+      const hist = historyItem.answer;
       if (!Array.isArray(hist) || hist.length === 0) return false;
     }
 

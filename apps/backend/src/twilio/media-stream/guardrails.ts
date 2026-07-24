@@ -585,7 +585,7 @@ export function extractValueForField(
   const dollarMatch = t.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
   const percentMatch = t.match(/(\d+)\s*%|(\d+)\s*percent/i);
   const numberMatch = t.match(/\b(\d+)\b/);
-  if (field === 'history-list') {
+  if (field === 'history') {
     if (/\b(no|none|false|don'?t\s+have|never)\b/i.test(t)) return 'no';
     if (/\b(yes|yeah|yep|yup|true|have)\b/i.test(t)) return 'yes';
     return null;

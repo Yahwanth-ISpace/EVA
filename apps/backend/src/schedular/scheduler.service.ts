@@ -355,6 +355,18 @@ export class SchedulerService {
     for (const [key, value] of Object.entries(appointmentData)) {
       // Skip history (handled separately)
       if (key === 'history') continue;
+      const history = Array.isArray((appointmentData as any).history)
+        ? (appointmentData as any).history
+        : [];
+
+      for (const item of history) {
+        verificationFields.push({
+          field: `history.${item.procedureCode}`,
+          question: item.question,
+          rule: item.rule,
+          order: verificationFields.length + 1,
+        });
+      }
 
       // Old question format
       if (typeof value === 'object' && value !== null && 'question' in value) {
