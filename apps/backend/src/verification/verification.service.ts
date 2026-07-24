@@ -11,6 +11,7 @@ import { TranscriptionService } from 'src/transcription/transcription.service';
 import { MongoService } from 'src/mongo/mongo.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { EligibilityPayloadUtil } from './eligibility-payload.util';
 
 /** One benefit question from the appointment / requirement payload (ask this verbatim). */
 export type PatientVerificationStep = {
@@ -1008,69 +1009,70 @@ export class VerificationService {
     appointment: any,
     extracted?: Record<string, string | null | undefined>,
   ) {
-    const numericFields = new Set([
-      'IndividualMetAmount',
-      'FamilyMetAmount',
-      'YearlyMaxUsed',
-      'OrthoMaximum',
-      'IndividualDeductible',
-      'FamilyDeductible',
-      'YearlyMaxAmount',
-      'Preventive',
-      'Basic',
-      'Major',
-    ]);
+    // const numericFields = new Set([
+    //   'IndividualMetAmount',
+    //   'FamilyMetAmount',
+    //   'YearlyMaxUsed',
+    //   'OrthoMaximum',
+    //   'IndividualDeductible',
+    //   'FamilyDeductible',
+    //   'YearlyMaxAmount',
+    //   'Preventive',
+    //   'Basic',
+    //   'Major',
+    // ]);
 
-    const getNumericValue = (value?: string | null): string => {
-      if (!value) return '';
+    // const getNumericValue = (value?: string | null): string => {
+    //   if (!value) return '';
 
-      const cleaned = value
-        .toLowerCase()
-        .replace(/,/g, '')
-        .replace(/dollars?|usd|\$/g, '')
-        .trim();
+    //   const cleaned = value
+    //     .toLowerCase()
+    //     .replace(/,/g, '')
+    //     .replace(/dollars?|usd|\$/g, '')
+    //     .trim();
 
-      const numeric = cleaned.match(/\d+(\.\d+)?/);
+    //   const numeric = cleaned.match(/\d+(\.\d+)?/);
 
-      if (numeric) {
-        return numeric[0];
-      }
+    //   if (numeric) {
+    //     return numeric[0];
+    //   }
 
-      return this.aiService.normalizeMoney(cleaned);
-    };
+    //   return this.aiService.normalizeMoney(cleaned);
+    // };
 
-    const mappedBenefits: Record<string, any> = {};
+    // const mappedBenefits: Record<string, any> = {};
 
-    for (const [key, value] of Object.entries(appointment.benefitsInfo ?? {})) {
-      if (key !== 'history') {
-        mappedBenefits[key] = numericFields.has(key)
-          ? getNumericValue(extracted?.[key])
-          : (extracted?.[key] ?? '');
+    // for (const [key, value] of Object.entries(appointment.benefitsInfo ?? {})) {
+    //   if (key !== 'history') {
+    //     mappedBenefits[key] = numericFields.has(key)
+    //       ? getNumericValue(extracted?.[key])
+    //       : (extracted?.[key] ?? '');
 
-        continue;
-      }
+    //     continue;
+    //   }
 
-      mappedBenefits.history = (value as any[]).map((item) => ({
-        ...item,
-        // answer: extracted?.[`history.${item.procedureCode}`] ?? '',
-        answer: this.aiService.normalizeHistoryDates(
-          extracted?.[`history.${item.procedureCode}`],
-        ),
-      }));
-    }
+    //   mappedBenefits.history = (value as any[]).map((item) => ({
+    //     ...item,
+    //     // answer: extracted?.[`history.${item.procedureCode}`] ?? '',
+    //     answer: this.aiService.normalizeHistoryDates(
+    //       extracted?.[`history.${item.procedureCode}`],
+    //     ),
+    //   }));
+    // }
 
-    const {
-      benefitsInfo,
-      InsuranceCompany_Phone,
-      InsuranceCompany_Phone_Ext,
-      ...payload
-    } = appointment;
+    // const {
+    //   benefitsInfo,
+    //   InsuranceCompany_Phone,
+    //   InsuranceCompany_Phone_Ext,
+    //   ...payload
+    // } = appointment;
 
-    return {
-      ...payload,
-      insurance: mappedBenefits,
-      benefitsInfo: mappedBenefits,
-    };
+    // return {
+    //   ...payload,
+    //   insurance: mappedBenefits,
+    //   benefitsInfo: mappedBenefits,
+    // };
+    return EligibilityPayloadUtil.build(appointment, extracted, this.aiService);
   }
 
   /**
