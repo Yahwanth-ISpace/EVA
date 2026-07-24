@@ -179,8 +179,8 @@ export class SchedulerService {
           process.env.INSURANCE_COMPANY_PHONENUMBER;
         serviceBusAppointment.InsuranceCompany_Phone_Ext =
           process.env.INSURANCE_COMPANY_PHONENUMBER_EXT;
-        serviceBusAppointment.benefitsInfo = process.env.FIELDS_TO_BE_COLLECTED
-          ? JSON.parse(process.env.FIELDS_TO_BE_COLLECTED)
+        serviceBusAppointment.benefitsInfo = process.env.FIELDS_TO_BE_COLLECTED1
+          ? JSON.parse(process.env.FIELDS_TO_BE_COLLECTED1)
           : {};
 
         return serviceBusAppointment as AppointmentDetailsDto;
