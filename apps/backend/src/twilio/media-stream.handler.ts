@@ -224,6 +224,8 @@ export class MediaStreamHandlerService {
       evaSocialGreetDone: false,
       evaIntroIdentitySaid: false,
       tpaPatientLocated: false,
+      verificationStepByField: {},
+      verificationStepByProcedureCode: {},
     };
 
     const send = (obj: object) => {
@@ -1606,31 +1608,62 @@ export class MediaStreamHandlerService {
 
         const extractedBeforeTurn = { ...state.extractedData };
 
+        // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+        //   for (const [key, val] of Object.entries(extractedUpdates)) {
+        //     if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
+        //   }
+
+        //   // If we just asked "does this patient have any history?" and they said no, skip remaining fields.
+        //   if (state.lastAskedField === 'history') {
+        //     const val = String(
+        //       state.extractedData['history'] ?? '',
+        //     ).toLowerCase();
+        //     if (val.includes('no') || val === 'none' || val === 'false') {
+        //       for (const f of orderedF) {
+        //         if (
+        //           f.includes('history.') &&
+        //           !hasValue(state.extractedData[f] ?? null)
+        //         ) {
+        //           state.extractedData[f] = 'skipped (no history)';
+        //         }
+        //       }
+        //     }
+        //   }
+        // }
+
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
           for (const [key, val] of Object.entries(extractedUpdates)) {
-            if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
-          }
+            if (!hasValue(val ?? null)) continue;
 
-          // If we just asked "does this patient have any history?" and they said no, skip remaining fields.
-          if (state.lastAskedField === 'history-list') {
-            const val = String(
-              state.extractedData['history-list'] ?? '',
-            ).toLowerCase();
-            if (val.includes('no') || val === 'none' || val === 'false') {
-              for (const f of orderedF) {
-                if (
-                  f.includes('history.') &&
-                  !hasValue(state.extractedData[f] ?? null)
-                ) {
-                  state.extractedData[f] = 'skipped (no history)';
-                }
+            state.extractedData[key] = val ?? null;
+
+            const step = state.verificationStepByField[key];
+
+            if (!step?.dependencies?.length) {
+              continue;
+            }
+
+            const answer = String(val).trim().toLowerCase();
+
+            // Only "Yes" follows dependencies.
+            if (answer === 'yes') {
+              continue;
+            }
+
+            // Every other answer skips dependent questions.
+            for (const procedureCode of step.dependencies) {
+              const dependent =
+                state.verificationStepByProcedureCode[
+                  procedureCode.toUpperCase()
+                ];
+
+              if (!dependent) continue;
+
+              if (!hasValue(state.extractedData[dependent.field])) {
+                state.extractedData[dependent.field] = '__SKIPPED__';
               }
             }
           }
-        }
-
-        if (state.lastAskedField) {
-          this.injectDependentQuestions(state, state.lastAskedField);
         }
 
         state.lastAskedField = getFirstMissingField(
@@ -2425,38 +2458,29 @@ export class MediaStreamHandlerService {
     return ['yes', 'y', 'true', 'covered'].includes(value.trim().toLowerCase());
   }
 
-  private injectDependentQuestions(state: StreamState, currentField: string) {
-    const current = state.callContext?.verificationSteps.find(
-      (x) => x.field === currentField,
-    );
+  private processDependencies(
+    state: StreamState,
+    field: string,
+    value: unknown,
+  ) {
+    const step = state.verificationStepByField[field];
 
-    if (!current) return;
-
-    if (!current.dependencies?.length) return;
-
-    const answer = state.extractedData[currentField];
-
-    if (!this.answerIsYes(answer)) return;
-
-    const insertAfter = state.orderedFields.indexOf(currentField);
-
-    if (insertAfter === -1) return;
-
-    const newFields: string[] = [];
-
-    for (const dependency of current.dependencies) {
-      const step = state.callContext?.verificationSteps.find(
-        (x) => x.procedureCode === dependency,
-      );
-
-      if (!step) continue;
-
-      if (state.orderedFields.includes(step.field)) continue;
-      this.logger.log(`[Dependency] Injecting ${step.field}`);
-
-      newFields.push(step.field);
+    if (!step?.dependencies?.length) {
+      return;
     }
-    state.orderedFields.splice(insertAfter + 1, 0, ...newFields);
+
+    if (String(value).trim().toLowerCase() !== 'no') {
+      return;
+    }
+
+    for (const procedureCode of step.dependencies) {
+      const dependent =
+        state.verificationStepByProcedureCode[procedureCode.toUpperCase()];
+
+      if (!dependent) continue;
+
+      state.extractedData[dependent.field] = '__SKIPPED__';
+    }
   }
 
   private ensureTpaIvrState(callSid: string | null): TpaIvrRuntimeState {
