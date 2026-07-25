@@ -56,12 +56,51 @@ describe('EligibilityPayloadUtil', () => {
       OrthoMaximum: '2000',
     });
 
-    expect(payload.history).toEqual([
+    expect(payload.specialities).toEqual({
+      procedures: [
+        {
+          procedureCode: 'D0120',
+          history: '',
+        },
+      ],
+    });
+  });
+
+  it('should move history into specialities and remove history from the top-level payload', () => {
+    const payload = EligibilityPayloadUtil.build(
       {
-        procedureCode: 'D0120',
-        description: 'Periodic Exam',
-        answer: '',
+        PatientID: '12345',
+        benefitsInfo: {
+          history: [
+            {
+              procedureCode: 'D0120',
+              description: 'Periodic Exam',
+              answer: '10-07-2026',
+            },
+            {
+              procedureCode: 'D2391',
+              description: 'Composite Filling',
+              answer: '20-07-2026',
+            },
+          ],
+        },
       },
-    ]);
+      {},
+      aiService as any,
+    );
+
+    expect((payload as any).history).toBeUndefined();
+    expect(payload.specialities).toEqual({
+      procedures: [
+        {
+          procedureCode: 'D0120',
+          history: '10-07-2026',
+        },
+        {
+          procedureCode: 'D2391',
+          history: '20-07-2026',
+        },
+      ],
+    });
   });
 });
