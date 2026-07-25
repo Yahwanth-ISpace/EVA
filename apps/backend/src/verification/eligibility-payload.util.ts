@@ -3,6 +3,33 @@ import type { AiService } from '../ai/ai.service';
 export type EligibilityExtracted = Record<string, string | null | undefined>;
 
 export class EligibilityPayloadUtil {
+  private static buildSpecialitiesFromHistory(
+    historyItems: Array<Record<string, any>> | undefined,
+    extracted?: EligibilityExtracted,
+    aiService?: Pick<AiService, 'normalizeMoney' | 'normalizeHistoryDates'>,
+  ) {
+    const procedures = (historyItems ?? []).map((item) => {
+      const procedureCode = String(item?.procedureCode ?? '').trim();
+      const rawAnswer =
+        item?.answer ??
+        extracted?.[`history.${procedureCode}`] ??
+        extracted?.[procedureCode];
+      const normalizedHistory = aiService?.normalizeHistoryDates(rawAnswer);
+
+      return {
+        procedureCode,
+        history:
+          normalizedHistory != null && String(normalizedHistory).trim() !== ''
+            ? String(normalizedHistory)
+            : null,
+      };
+    });
+
+    return {
+      procedures,
+    };
+  }
+
   static build(
     appointment: Record<string, any>,
     extracted?: EligibilityExtracted,
@@ -37,6 +64,8 @@ export class EligibilityPayloadUtil {
       'Basic(D2160)',
       'Major',
       'Major(D2740)',
+      'carrierName',
+      'network',
     ]);
 
     const getNumericValue = (value?: string | null): string => {
@@ -146,22 +175,17 @@ export class EligibilityPayloadUtil {
     };
 
     const benefitsInfo: Record<string, any> = {};
-    const history: Array<Record<string, any>> = [];
+
+    const rawHistoryItems = Array.isArray(appointment?.history)
+      ? appointment.history
+      : Array.isArray(appointment?.benefitsInfo?.history)
+        ? appointment.benefitsInfo.history
+        : [];
 
     for (const [key, value] of Object.entries(
       appointment?.benefitsInfo ?? {},
     )) {
       if (key === 'history') {
-        const items = Array.isArray(value) ? value : [];
-        for (const item of items) {
-          history.push({
-            ...item,
-            answer: aiService.normalizeHistoryDates(
-              extracted?.[`history.${item?.procedureCode ?? ''}`] ??
-                extracted?.[item?.procedureCode ?? ''],
-            ),
-          });
-        }
         continue;
       }
 
@@ -178,11 +202,19 @@ export class EligibilityPayloadUtil {
     const { InsuranceCompany_Phone, InsuranceCompany_Phone_Ext, ...payload } =
       appointment;
 
+    const specialities = this.buildSpecialitiesFromHistory(
+      rawHistoryItems,
+      extracted,
+      aiService,
+    );
+
     return {
       ...payload,
       insurance,
       benefitsInfo,
-      history,
+      ...(specialities.procedures.length > 0
+        ? { specialities }
+        : { specialities: { procedures: [] } }),
     };
   }
 }
