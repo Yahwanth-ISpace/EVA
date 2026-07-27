@@ -40,16 +40,16 @@ export class EligibilityPayloadUtil {
     }
 
     const numericFields = new Set([
-      'IndividualMetAmount',
-      'FamilyMetAmount',
-      'YearlyMaxUsed',
-      'OrthoMaximum',
-      'IndividualDeductible',
-      'FamilyDeductible',
-      'YearlyMaxAmount',
-      'Preventive',
-      'Basic',
-      'Major',
+      'individualMetAmount',
+      'familyMetAmount',
+      'yearlyMaxUsed',
+      'orthoMaximum',
+      'individualDeductible',
+      'familyDeductible',
+      'yearlyMaxAmount',
+      'preventive',
+      'basic',
+      'major',
     ]);
 
     const insuranceFieldNames = new Set([
