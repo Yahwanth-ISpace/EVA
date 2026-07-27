@@ -50,7 +50,7 @@ export class SchedulerService {
       let appointmentData = await this.getAppointments();
       let finalAppointments: AppointmentDetailsDto;
       this.logger.debug(`Appointment data fetched::: `, appointmentData);
-      if (appointmentData) {
+      if (appointmentData && !(Array.isArray(appointmentData) && appointmentData.length === 0)) {
         await this.saveRawAppointmentDataToMongo(appointmentData);
 
         if (appointmentData.benefitsInfo) {

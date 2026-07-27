@@ -53,17 +53,17 @@ export class EligibilityPayloadUtil {
     ]);
 
     const insuranceFieldNames = new Set([
-      'GroupName',
-      'GroupNumber',
-      'FamilyDeductible',
-      'IndividualDeductible',
-      'YearlyMaxAmount',
-      'Preventive',
-      'Preventive(D0120)',
-      'Basic',
-      'Basic(D2160)',
-      'Major',
-      'Major(D2740)',
+      'groupName',
+      'groupNumber',
+      'familyDeductible',
+      'individualDeductible',
+      'yearlyMaxAmount',
+      'preventive',
+      'preventive(D0120)',
+      'basic',
+      'basic(D2160)',
+      'major',
+      'major(D2740)',
       'carrierName',
       'network',
     ]);
