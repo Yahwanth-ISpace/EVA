@@ -90,8 +90,7 @@ export function tpaIntroducedSelf(userSaid: string): boolean {
   return (
     /\b(my name is|i'?m\s+[a-z][a-z'-]+|i am\s+[a-z][a-z'-]+|this is\s+[a-z][a-z'-]+)\b/.test(
       t,
-    ) &&
-    /\b(from|with|insurance|company|group|department|office)\b/.test(t)
+    ) && /\b(from|with|insurance|company|group|department|office)\b/.test(t)
   );
 }
 
@@ -110,7 +109,9 @@ export function pickReconfirmationAcknowledgement(): string {
 export type TimeOfDayGreeting = 'morning' | 'afternoon' | 'evening';
 
 /** TPA said good morning / afternoon / evening (match their greeting). */
-export function tpaTimeOfDayGreeting(userSaid: string): TimeOfDayGreeting | null {
+export function tpaTimeOfDayGreeting(
+  userSaid: string,
+): TimeOfDayGreeting | null {
   const t = userSaid.trim().toLowerCase();
   if (/\bgood\s+morning\b/.test(t)) return 'morning';
   if (/\bgood\s+afternoon\b/.test(t)) return 'afternoon';
@@ -182,7 +183,10 @@ export function shouldOpenBenefitQna(
   tpaPatientLocated: boolean,
 ): boolean {
   if (isTpaBenefitQnaHandoff(userSaid)) return true;
-  if (isTpaPatientLocated(userSaid) && userAsksPurposeOfCallOrOpening(userSaid)) {
+  if (
+    isTpaPatientLocated(userSaid) &&
+    userAsksPurposeOfCallOrOpening(userSaid)
+  ) {
     return true;
   }
   if (tpaPatientLocated && userAsksPurposeOfCallOrOpening(userSaid)) {
@@ -221,11 +225,7 @@ export function isTpaConfirmingStatedValue(userSaid: string): boolean {
 }
 
 export function replyToValueConfirmation(): string {
-  const options = [
-    "Yes, that's correct.",
-    'Yes, it is.',
-    "That's right.",
-  ];
+  const options = ["Yes, that's correct.", 'Yes, it is.', "That's right."];
   return options[Math.floor(Math.random() * options.length)];
 }
 
@@ -245,7 +245,12 @@ const BENEFIT_FIELD_LABELS: Record<string, string> = {
 export function benefitFieldDisplayName(field: string): string {
   const key = field.trim();
   if (BENEFIT_FIELD_LABELS[key]) return BENEFIT_FIELD_LABELS[key];
-  return key.replace(/([A-Z])/g, ' $1').toLowerCase().trim() || key;
+  return (
+    key
+      .replace(/([A-Z])/g, ' $1')
+      .toLowerCase()
+      .trim() || key
+  );
 }
 
 /** First benefit ask after TPA opens Q&A: "I would need the {field}." + verbatim question. */
@@ -302,6 +307,9 @@ export function scrubRawBenefitValue(
   raw: string,
   userSaid: string,
 ): string {
+  if (field.startsWith('history.')) {
+    return raw.trim();
+  }
   const fromSpeech = extractValueForField(userSaid, field);
   if (fromSpeech) return fromSpeech;
   const v = raw.trim();
@@ -464,7 +472,9 @@ export function isTpaBenefitQnaHandoff(userSaid: string): boolean {
     /\bwhat\s+(?:is\s+)?(?:the\s+)?(?:patient\s+)?details?\b[\s\S]{0,50}\b(?:do you|you)\s+need\b/.test(
       t,
     ) ||
-    /\bwhat\s+(?:patient|member)\s+details?\s+(?:do you|you)\s+need\b/.test(t) ||
+    /\bwhat\s+(?:patient|member)\s+details?\s+(?:do you|you)\s+need\b/.test(
+      t,
+    ) ||
     /\bwhat\s+details?\s+(?:do you|you)\s+need\b/.test(t) ||
     /\bwhat\s+(?:information|info)\s+(?:do you|you)\s+need\b[\s\S]{0,60}\b(?:patient|member|benefit|verify|verification)\b/.test(
       t,
@@ -581,6 +591,9 @@ export function extractValueForField(
   transcript: string,
   field: string,
 ): string | null {
+  if (field === 'history' || field.startsWith('history.')) {
+    return transcript.trim();
+  }
   const t = transcript.trim().toLowerCase();
   const dollarMatch = t.match(/(\d+)\s*dollars?|\$\s*(\d+)|(\d+)\s*\$/i);
   const percentMatch = t.match(/(\d+)\s*%|(\d+)\s*percent/i);
@@ -916,7 +929,9 @@ export type SpellNameTarget =
   | 'subscriber_full';
 
 /** TPA wants the name spelled out (often right after EVA gave the plain name). */
-export function detectSpellNameRequest(userSaid: string): SpellNameTarget | null {
+export function detectSpellNameRequest(
+  userSaid: string,
+): SpellNameTarget | null {
   const t = userSaid.trim().toLowerCase();
   if (t.length < 3) return null;
 

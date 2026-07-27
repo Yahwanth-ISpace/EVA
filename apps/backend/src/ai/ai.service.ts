@@ -1297,11 +1297,11 @@ Respond with ONLY a JSON object. No markdown. Format:
       const raw = extracted[field];
       if (raw == null || String(raw).trim() === '') continue;
       const v = scrubRawBenefitValue(field, String(raw).trim(), userSaid);
-      if (!v?.trim()) continue;
       if (field.startsWith('history.')) {
         out[field] = this.normalizeHistoryDates(v);
         continue;
       }
+      if (!v?.trim()) continue;
       if (field === 'coverage') {
         if (!this.isPercentage(v)) {
           return {
@@ -1642,16 +1642,17 @@ EXAMPLE OUTPUT:
                 answer = parts.length > 1 ? parts : raw;
               }
             }
-            this.logger.log(
-              'Gemini Raw:',
-              JSON.stringify(questionAnswerPairs, null, 2),
-            );
             return {
               question,
               answer,
             };
           })
         : [];
+
+      this.logger.log(
+        'Gemini Raw:',
+        JSON.stringify(questionAnswerPairs, null, 2),
+      );
 
       const parsedRecords = parsedArray.filter(
         (item): item is Record<string, unknown> =>
