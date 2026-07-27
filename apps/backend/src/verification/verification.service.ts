@@ -1204,7 +1204,7 @@ export class VerificationService {
 
     this.logger.log(`Eligibility Payload: ${JSON.stringify(payload, null, 2)}`);
 
-    await firstValueFrom(
+    const response = await firstValueFrom(
       this.httpService.post(
         'https://sabrinauatapi.ispace.com/api/appointments/SaveEligibility',
         payload,
@@ -1212,6 +1212,10 @@ export class VerificationService {
           headers,
         },
       ),
+    );
+
+    this.logger.log(
+      `Eligibility response: ${JSON.stringify(response?.data ?? response, null, 2)}`,
     );
 
     return sabrinaData;

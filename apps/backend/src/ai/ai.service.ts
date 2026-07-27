@@ -1298,7 +1298,10 @@ Respond with ONLY a JSON object. No markdown. Format:
       if (raw == null || String(raw).trim() === '') continue;
       const v = scrubRawBenefitValue(field, String(raw).trim(), userSaid);
       if (!v?.trim()) continue;
-
+      if (field.startsWith('history.')) {
+        out[field] = this.normalizeHistoryDates(v);
+        continue;
+      }
       if (field === 'coverage') {
         if (!this.isPercentage(v)) {
           return {
@@ -1577,6 +1580,8 @@ EXAMPLE OUTPUT:
         `[Gemini] extractVerificationFieldsFromTranscript completed in ${Date.now() - start}ms`,
       );
 
+      this.logger.log('Gemini Parsed Output:', JSON.stringify(result, null, 2));
+
       let jsonString = result.response.text().trim() || '[]';
 
       if (jsonString.startsWith('```')) {
@@ -1637,6 +1642,10 @@ EXAMPLE OUTPUT:
                 answer = parts.length > 1 ? parts : raw;
               }
             }
+            this.logger.log(
+              'Gemini Raw:',
+              JSON.stringify(questionAnswerPairs, null, 2),
+            );
             return {
               question,
               answer,
