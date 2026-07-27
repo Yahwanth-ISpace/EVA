@@ -1539,10 +1539,22 @@ INSTRUCTIONS:
 4. If the USER provided multiple distinct values (e.g., two dates), provide them in "answer" as an array of strings, or as a single string joined by " and " or a comma. Preserve the question text exactly as EVA spoke it in the transcript.
 5. For the USER answer (answer), normalize it to a clean value:
   - Convert spoken numbers to digits: "twenty dollars" → "20", "one hundred" → "100", "fourteen" → "14"
-   - Keep percentages as is or convert: "eighty percent" → "80", "twenty five %" → "25"
-   - Remove filler words and normalize: "Uh, it is, uh, two forty-four" → "244"
-   - For insurance GROUP NAME questions: extract only the name from conversational answers — "That is My India." → "My India", "That would be My india" → "My India". Do NOT convert group names to numbers.
-   - For other text answers, keep as clean text without extra words.
+  - Keep percentages as is or convert: "eighty percent" → "80", "twenty five %" → "25"
+  - Remove filler words and normalize: "Uh, it is, uh, two forty-four" → "244"
+  History procedure questions:
+    - Preserve ALL dates mentioned.
+    - Normalize every date to DD-MM-YYYY.
+    - If multiple service dates are provided,
+      return a single comma separated string.
+      Examples
+      "January 1st 2026 and February 5th 2025"
+      ↓
+      "01-01-2026,05-02-2025"
+    - Never return only the year.
+    - Never return only the month.
+    - Never discard dates.
+  - For insurance GROUP NAME questions: extract only the name from conversational answers — "That is My India." → "My India", "That would be My india" → "My India". Do NOT convert group names to numbers.
+  - For other text answers, keep as clean text without extra words.
 6. Do NOT include any field definitions, metadata, markdown, code fences, or extra text.
 7. If a USER response is missing after an EVA question, omit that pair.
 8. Return valid JSON only.
