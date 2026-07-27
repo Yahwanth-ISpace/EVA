@@ -1539,12 +1539,6 @@ INSTRUCTIONS:
 4. If the USER provided multiple distinct values (e.g., two dates), provide them in "answer" as an array of strings, or as a single string joined by " and " or a comma. Preserve the question text exactly as EVA spoke it in the transcript.
 5. For the USER answer (answer), normalize it to a clean value:
   - Convert spoken numbers to digits: "twenty dollars" → "20", "one hundred" → "100", "fourteen" → "14"
-  -For history procedure dates:
-  - Always return dates in DD-MM-YYYY format.
-  - Always return dates you receive january 31, 2026 as 31-01-2026. if you recive in different format like 31st Jan 2026 or Jan 31, 2026, convert to 31-01-2026.
-  - If multiple service dates are provided, return them as a single comma-separated string.
-  - Never return only the year or only the month.
-  - Do not convert history dates to numbers.
    - Keep percentages as is or convert: "eighty percent" → "80", "twenty five %" → "25"
    - Remove filler words and normalize: "Uh, it is, uh, two forty-four" → "244"
    - For insurance GROUP NAME questions: extract only the name from conversational answers — "That is My India." → "My India", "That would be My india" → "My India". Do NOT convert group names to numbers.
