@@ -44,7 +44,9 @@ export class EligibilityPayloadUtil {
       'familyMetAmount',
       'yearlyMaxUsed',
       'orthoMaximum',
+      'individualDeductibleMet',
       'individualDeductible',
+      'familyDeductibleMet',
       'familyDeductible',
       'yearlyMaxAmount',
       'preventive',
@@ -152,10 +154,7 @@ export class EligibilityPayloadUtil {
         getValueFromSources(['FamilyDeductible', 'familyDeductible']),
       ),
       individualDeductible: getNumericValue(
-        getValueFromSources([
-          'IndividualDeductible',
-          'individualDeductible',
-        ]),
+        getValueFromSources(['IndividualDeductible', 'individualDeductible']),
       ),
       yearlyMaxAmount: getNumericValue(
         getValueFromSources(['YearlyMaxAmount', 'yearlyMaxAmount']),
