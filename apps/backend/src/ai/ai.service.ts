@@ -1070,38 +1070,54 @@ Respond with ONLY a JSON object. No markdown. Format:
   public normalizeHistoryDates(value?: string | null): string {
     if (!value) return '';
 
+    const input = value.trim();
+
     // Already normalized
-    if (/^\d{2}-\d{2}-\d{4}(,\d{2}-\d{2}-\d{4})*$/.test(value.trim())) {
-      return value.trim();
+    if (/^\d{2}-\d{2}-\d{4}(,\d{2}-\d{2}-\d{4})*$/.test(input)) {
+      return input;
     }
 
-    // Extract every date-like phrase from the text
-    const matches =
-      value.match(
-        /\b(?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?(?:,)?\s+\d{4})\b/gi,
-      ) ?? [];
+    // Split on common separators between multiple dates
+    const parts = input
+      .split(/\s*(?:,| and | & )\s*/i)
+      .map((s) => s.trim())
+      .filter(Boolean);
 
-    if (!matches.length) {
-      return value.trim();
-    }
+    const results: string[] = [];
 
-    const dates = matches
-      .map((d) => {
-        const dt = new Date(d);
+    for (const part of parts) {
+      const dt = new Date(part);
 
-        if (Number.isNaN(dt.getTime())) {
-          return null;
-        }
-
+      if (!Number.isNaN(dt.getTime())) {
         const day = String(dt.getDate()).padStart(2, '0');
         const month = String(dt.getMonth() + 1).padStart(2, '0');
         const year = dt.getFullYear();
 
-        return `${day}-${month}-${year}`;
-      })
-      .filter(Boolean);
+        results.push(`${day}-${month}-${year}`);
+        continue;
+      }
 
-    return dates.join(',');
+      // Fallback: extract embedded date phrases
+      const matches =
+        part.match(
+          /\b(?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?(?:,)?\s+\d{4})\b/gi,
+        ) ?? [];
+
+      for (const m of matches) {
+        const d = new Date(m);
+
+        if (!Number.isNaN(d.getTime())) {
+          const day = String(d.getDate()).padStart(2, '0');
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const year = d.getFullYear();
+
+          results.push(`${day}-${month}-${year}`);
+        }
+      }
+    }
+
+    // Remove duplicates while preserving order
+    return [...new Set(results)].join(',');
   }
 
   /** Normalize validity to "21st Dec 2028" format. Returns null if not parseable. */
