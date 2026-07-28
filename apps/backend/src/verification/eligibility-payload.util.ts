@@ -44,8 +44,8 @@ export class EligibilityPayloadUtil {
       'familyMetAmount',
       'yearlyMaxUsed',
       'orthoMaximum',
-      'individualDeductible',
-      'familyDeductible',
+      'individualDeductibleMet',
+      'familyDeductibleMet',
       'yearlyMaxAmount',
       'preventive',
       'basic',
@@ -55,8 +55,8 @@ export class EligibilityPayloadUtil {
     const insuranceFieldNames = new Set([
       'groupName',
       'groupNumber',
-      'familyDeductible',
-      'individualDeductible',
+      'familyDeductibleMet',
+      'individualDeductibleMet',
       'yearlyMaxAmount',
       'preventive',
       'preventive(D0120)',
@@ -148,11 +148,14 @@ export class EligibilityPayloadUtil {
         'Insurance_GroupNumber',
         'groupNumber',
       ]),
-      familyDeductible: getNumericValue(
-        getValueFromSources(['FamilyDeductible', 'familyDeductible']),
+      familyDeductibleMet: getNumericValue(
+        getValueFromSources(['FamilyDeductibleMet', 'familyDeductibleMet']),
       ),
-      individualDeductible: getNumericValue(
-        getValueFromSources(['IndividualDeductible', 'individualDeductible']),
+      individualDeductibleMet: getNumericValue(
+        getValueFromSources([
+          'IndividualDeductibleMet',
+          'individualDeductibleMet',
+        ]),
       ),
       yearlyMaxAmount: getNumericValue(
         getValueFromSources(['YearlyMaxAmount', 'yearlyMaxAmount']),
