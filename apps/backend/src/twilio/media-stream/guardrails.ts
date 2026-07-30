@@ -307,7 +307,7 @@ export function scrubRawBenefitValue(
   raw: string,
   userSaid: string,
 ): string {
-  if (field.startsWith('history.')) {
+  if (field.startsWith('history.') || field === 'EffectiveDate') {
     return raw.trim();
   }
   const fromSpeech = extractValueForField(userSaid, field);

@@ -1313,7 +1313,7 @@ Respond with ONLY a JSON object. No markdown. Format:
       const raw = extracted[field];
       if (raw == null || String(raw).trim() === '') continue;
       const v = scrubRawBenefitValue(field, String(raw).trim(), userSaid);
-      if (field.startsWith('history.')) {
+      if (field.startsWith('history.') || field === 'effectiveDate') {
         out[field] = this.normalizeHistoryDates(v);
         continue;
       }
