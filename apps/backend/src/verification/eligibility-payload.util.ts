@@ -91,43 +91,67 @@ export class EligibilityPayloadUtil {
 
     const getValueFromSources = (keys: string[]): string => {
       for (const key of keys) {
+        // 1. Check extracted values first
         if (extracted && Object.prototype.hasOwnProperty.call(extracted, key)) {
           const value = extracted[key];
+
           if (value != null && String(value).trim() !== '') {
             return String(value);
           }
         }
 
+        // 2. Check benefitsInfo
         const benefitValue = appointment?.benefitsInfo?.[key];
 
-if (benefitValue != null) {
-  // history is handled separately
-  if (key === 'history') {
-    continue;
-  }
+        if (benefitValue == null) {
+          continue;
+        }
 
-  // New Sabrina object format
-  if (
-    typeof benefitValue === 'object' &&
-    !Array.isArray(benefitValue) &&
-    'answer' in benefitValue
-  ) {
-    const answer = (benefitValue as any).answer;
+        // history is handled separately
+        if (key === 'history') {
+          continue;
+        }
 
-    if (Array.isArray(answer)) {
-      return this.aiService.normalizeHistoryDates(answer.join(','));
-    }
+        // New Sabrina format
+        // {
+        //   question: "...",
+        //   rule: "...",
+        //   answer: "..."
+        // }
+        if (
+          typeof benefitValue === 'object' &&
+          !Array.isArray(benefitValue) &&
+          'answer' in benefitValue
+        ) {
+          const answer = (benefitValue as any).answer;
 
-    if (answer != null) {
-      return String(answer);
-    }
-  }
+          if (Array.isArray(answer)) {
+            return aiService.normalizeHistoryDates(answer.join(','));
+          }
 
-  // already plain string
-  if (typeof benefitValue === 'string') {
-    return benefitValue;
-  }
-};
+          if (answer != null) {
+            return String(answer);
+          }
+
+          continue;
+        }
+
+        // Legacy plain string
+        if (typeof benefitValue === 'string') {
+          return benefitValue;
+        }
+
+        // Primitive values
+        if (
+          typeof benefitValue === 'number' ||
+          typeof benefitValue === 'boolean'
+        ) {
+          return String(benefitValue);
+        }
+      }
+
+      return '';
+    };
 
     const insurance = {
       groupName: getValueFromSources([
