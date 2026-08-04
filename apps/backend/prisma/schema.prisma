@@ -21,16 +21,15 @@ model User {
 }
 
 model Payee {
-  id           String        @id @default(uuid()) @map("_id")
-  user         User?         @relation("UserPayee", fields: [userId], references: [id])
-  userId       String?       @unique
-  firstName    String
-  lastName     String
-  dob          DateTime?
-  ssn          String? //make manditory in production (US Citizens)
-  appointments Appointment[]
-  payer        Payer?        @relation(fields: [payerId], references: [id])
-  payerId      String?
+  id        String    @id @default(uuid()) @map("_id")
+  user      User?     @relation("UserPayee", fields: [userId], references: [id])
+  userId    String?   @unique
+  firstName String
+  lastName  String
+  dob       DateTime?
+  ssn       String? //make manditory in production (US Citizens)
+  payer     Payer?    @relation(fields: [payerId], references: [id])
+  payerId   String?
 }
 
 /// Defines which fields to collect during a verification call and in what order.
@@ -66,7 +65,6 @@ model Provider {
   npi          String        @unique
   network      String
   specialty    String
-  appointments Appointment[]
   offices      Office[]
 }
 
@@ -81,7 +79,6 @@ model Office {
   code         String
   provider     Provider      @relation(fields: [providerId], references: [id])
   providerId   String
-  appointments Appointment[]
 }
 
 model Appointment {
@@ -170,6 +167,10 @@ model Appointment {
   // provider   Provider? @relation(fields: [providerId], references: [id])
   // providerId String?
   // office     Office?   @relation(fields: [officeId], references: [id])
+  provider   Provider? @relation(fields: [providerId], references: [id])
+  providerId String?
+  office     Office?   @relation(fields: [officeId], references: [id])
+  officeId   String?
 }
 
 model Verification {
