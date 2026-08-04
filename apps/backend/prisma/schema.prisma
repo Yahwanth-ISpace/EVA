@@ -209,5 +209,6 @@ enum Role {
 
 enum AgentStatus {
   IN_PROGRESS
-  COMPLETED
+  READY
+  SUSPENDED
 }
