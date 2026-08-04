@@ -39,7 +39,7 @@ export class SchedulerService {
     private readonly appointmentService: AppointmentService,
     private readonly mongoService: MongoService,
   ) {}
-  // @Cron(CronExpression.EVERY_MINUTE)
+  @Cron(CronExpression.EVERY_MINUTE)
   async handleCron() {
     if (this.isProcessing) {
       this.logger.debug('Previous job processing, skipping...');
@@ -49,8 +49,12 @@ export class SchedulerService {
     try {
       let appointmentData = await this.getAppointments();
       let finalAppointments: AppointmentDetailsDto;
+      let pendingAppointments: AppointmentDetailsDto[] = [];
       this.logger.debug(`Appointment data fetched::: `, appointmentData);
-      if (appointmentData && !(Array.isArray(appointmentData) && appointmentData.length === 0)) {
+      if (
+        appointmentData &&
+        !(Array.isArray(appointmentData) && appointmentData.length === 0)
+      ) {
         await this.saveRawAppointmentDataToMongo(appointmentData);
 
         if (appointmentData.benefitsInfo) {
@@ -72,44 +76,42 @@ export class SchedulerService {
           appointmentData.patient.patientId,
         );
 
-        // comment below 2 lines after actually calling
-        const response =
-          await this.appointmentService.create(finalAppointments);
-        // this.logger.log(`API Response:::::::: ${JSON.stringify(response)}`);
-        const pendingAppointments = [finalAppointments];
+        pendingAppointments.push(finalAppointments);
       }
 
-      // while (pendingAppointments.length > 0) {
-      //   const agents: AgentDto[] = await this.prisma.agent.findMany({
-      //     where: { status: AgentStatus.COMPLETED },
-      //   });
+      while (pendingAppointments.length > 0) {
+        const agents: AgentDto[] = await this.prisma.agent.findMany({
+          where: { status: AgentStatus.COMPLETED },
+        });
 
-      //   if (agents.length > 0) {
-      //     this.logger.debug(`Fetched ${agents.length} available agents.`);
-      //     const count = Math.min(agents.length, pendingAppointments.length);
+        if (agents.length > 0) {
+          this.logger.debug(`Fetched ${agents.length} available agents.`);
+          const count = Math.min(agents.length, pendingAppointments.length);
 
-      //     for (let i = 0; i < count; i++) {
-      //       const agent = agents[i];
-      //       const appointment = pendingAppointments.shift();
-      //       if (appointment) {
-      //         this.logger.log(
-      //           `Processing appointment for ${appointment.Patient_FirstName} ${appointment.Patient_LastName} with agent ${agent.name}`,
-      //         );
-      //         // un comment below lines  call appointment api for each agent and appointment and update agent status to IN_PROGRESS
-      //         // const response = this.appointmentService.create(appointment);
-      //         // this.logger.log(`API Response:::::::: ${JSON.stringify(response.data)}`);
+          for (let i = 0; i < count; i++) {
+            const agent = agents[i];
+            const appointment = pendingAppointments.shift();
+            if (appointment) {
+              this.logger.log(
+                `Processing appointment for ${appointment.patient.patientName} with agent ${agent.name}`,
+              );
+              // un comment below lines  call appointment api for each agent and appointment and update agent status to IN_PROGRESS
+              const response = this.appointmentService.create(appointment);
+              this.logger.log(
+                `API Response:::::::: ${JSON.stringify(response)}`,
+              );
 
-      //         await this.callAppointmentApi(agent, appointment);
-      //       }
-      //     }
-      //   } else {
-      //     this.logger.debug('No agents available, waiting...');
-      //   }
+              await this.callAppointmentApi(agent, appointment);
+            }
+          }
+        } else {
+          this.logger.debug('No agents available, waiting...');
+        }
 
-      //   if (pendingAppointments.length > 0) {
-      //     await this.delay(30000); // Wait for 30 seconds before checking again
-      //   }
-      // }
+        if (pendingAppointments.length > 0) {
+          await this.delay(30000); // Wait for 30 seconds before checking again
+        }
+      }
     } catch (error) {
       this.logger.error(
         'Failed to call appointment list API',
@@ -129,8 +131,13 @@ export class SchedulerService {
     );
     await this.prisma.agent.update({
       where: { id: agent.id },
-      data: { status: AgentStatus.IN_PROGRESS, startTime: new Date() },
+      data: {
+        status: AgentStatus.IN_PROGRESS,
+        startTime: new Date(),
+      },
     });
+
+    await this.appointmentService.create(appointment);
   }
 
   async loginToSabrina() {
