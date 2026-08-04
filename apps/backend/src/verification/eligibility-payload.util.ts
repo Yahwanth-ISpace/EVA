@@ -48,6 +48,7 @@ export class EligibilityPayloadUtil {
       'individualDeductible',
       'familyDeductibleMet',
       'familyDeductible',
+      'familyMaxUsed',
       'yearlyMaxAmount',
       'preventive',
       'basic',
@@ -98,46 +99,35 @@ export class EligibilityPayloadUtil {
         }
 
         const benefitValue = appointment?.benefitsInfo?.[key];
-        if (
-          benefitValue &&
-          typeof benefitValue === 'object' &&
-          !Array.isArray(benefitValue) &&
-          'answer' in benefitValue
-        ) {
-          const answer = (benefitValue as any).answer;
-          if (answer != null && String(answer).trim() !== '') {
-            return String(answer);
-          }
-        }
 
-        if (benefitValue != null && String(benefitValue).trim() !== '') {
-          return String(benefitValue);
-        }
+if (benefitValue != null) {
+  // history is handled separately
+  if (key === 'history') {
+    continue;
+  }
 
-        if (
-          appointment?.[key] != null &&
-          String(appointment[key]).trim() !== ''
-        ) {
-          return String(appointment[key]);
-        }
+  // New Sabrina object format
+  if (
+    typeof benefitValue === 'object' &&
+    !Array.isArray(benefitValue) &&
+    'answer' in benefitValue
+  ) {
+    const answer = (benefitValue as any).answer;
 
-        if (
-          appointment?.insurance?.[key] != null &&
-          String(appointment.insurance[key]).trim() !== ''
-        ) {
-          return String(appointment.insurance[key]);
-        }
+    if (Array.isArray(answer)) {
+      return this.aiService.normalizeHistoryDates(answer.join(','));
+    }
 
-        if (
-          appointment?.provider?.[key] != null &&
-          String(appointment.provider[key]).trim() !== ''
-        ) {
-          return String(appointment.provider[key]);
-        }
-      }
+    if (answer != null) {
+      return String(answer);
+    }
+  }
 
-      return '';
-    };
+  // already plain string
+  if (typeof benefitValue === 'string') {
+    return benefitValue;
+  }
+};
 
     const insurance = {
       groupName: getValueFromSources([
