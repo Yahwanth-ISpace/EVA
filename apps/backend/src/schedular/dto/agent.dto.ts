@@ -16,7 +16,7 @@ export class AgentDto {
 
   @ApiProperty({
     enum: AgentStatus,
-    example: AgentStatus.COMPLETED,
+    example: AgentStatus.READY,
     description: 'Current status of the agent',
   })
   status: AgentStatus;
