@@ -52,34 +52,44 @@ export class AppointmentController {
   @Post('status-callback')
   @HttpCode(200)
   async statusCallback(@Body() body: any) {
-    this.logger.log(
-      `Call Status: ${body.CallStatus}, CallSid: ${body.CallSid}`,
-    );
+    this.logger.log('==============================');
+    this.logger.log('STATUS CALLBACK RECEIVED');
+    this.logger.log(JSON.stringify(body));
 
-    // Only process completed calls
     if (body.CallStatus !== 'completed') {
+      this.logger.log(`Ignoring status ${body.CallStatus}`);
       return { success: true };
     }
 
-    // Retrieve the context you stored when the call was created
+    this.logger.log('Call completed');
+
     const context = this.twilioService.getStreamContextForCall(body.CallSid);
 
+    this.logger.log(`Context: ${JSON.stringify(context)}`);
+
     if (!context) {
-      this.logger.warn(`No stream context found for CallSid ${body.CallSid}`);
+      this.logger.warn(`No stream context found for ${body.CallSid}`);
       return { success: true };
     }
 
-    await this.prisma.agent.update({
-      where: {
-        id: context ? context.AgentId : '', // or context.AgentId depending on your context type
-      },
-      data: {
-        status: AgentStatus.READY,
-        endTime: new Date(),
-      },
-    });
+    this.logger.log(`Updating agent ${context.AgentId}`);
 
-    this.logger.log(`Agent ${context.AgentId} marked READY`);
+    try {
+      const updated = await this.prisma.agent.update({
+        where: {
+          id: context.AgentId,
+        },
+        data: {
+          status: AgentStatus.READY,
+          endTime: new Date(),
+        },
+      });
+
+      this.logger.log(`Updated Agent: ${JSON.stringify(updated)}`);
+    } catch (err) {
+      this.logger.error('Failed to update agent', err);
+    }
+
     this.twilioService.removeStreamContext(body.CallSid);
 
     return { success: true };
