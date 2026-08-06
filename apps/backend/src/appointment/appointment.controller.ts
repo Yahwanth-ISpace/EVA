@@ -71,7 +71,7 @@ export class AppointmentController {
 
     await this.prisma.agent.update({
       where: {
-        id: context && context.AgentId ? context.AgentId : '',
+        id: context ? context.AgentId : '', // or context.AgentId depending on your context type
       },
       data: {
         status: AgentStatus.READY,
