@@ -34,8 +34,8 @@ export class AppointmentService {
       await this.twilioService.makeCall(
         toPhoneNumber,
         appointment.patient.patientId,
-        String(appointment.appointmentId),
         agentId,
+        String(appointment.appointmentId),
         {
           navigateTpaIvr: process.env.EVA_NAVIGATE_TPA_IVR === 'true',
         },

@@ -20,7 +20,7 @@ const client = twilio(accountSid, authToken);
 export type CallStreamContext = {
   PatientID: string;
   AppointmentID: string | null;
-  AgentId: string | null;
+  AgentId: string;
 };
 
 const callSidToStreamContext = new Map<string, CallStreamContext>();
@@ -94,8 +94,8 @@ export class TwilioService {
   async makeCall(
     to: string,
     PatientID: string,
+    AgentId: string,
     AppointmentID?: string | null,
-    agentID?: string,
     options?: { navigateTpaIvr?: boolean },
   ) {
     if (!fromNumber) {
@@ -120,7 +120,7 @@ export class TwilioService {
       callSidToStreamContext.set(call.sid, {
         PatientID,
         AppointmentID: apptId || null,
-        AgentId: agentID || null, // Store agent ID if provided
+        AgentId: AgentId, // Store agent ID if provided
       });
     }
     return call;
