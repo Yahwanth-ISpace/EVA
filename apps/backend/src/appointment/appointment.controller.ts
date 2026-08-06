@@ -23,6 +23,7 @@ import { TwilioService } from 'src/twilio/twilio.service';
 import { AgentStatus } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AgentDto } from 'src/schedular/dto/agent.dto';
+import { Public } from 'src/auth/decorators/public.decorator';
 
 @ApiTags('appointments')
 @ApiBearerAuth('jwt-auth')
@@ -50,6 +51,7 @@ export class AppointmentController {
   }
 
   @Post('status-callback')
+  @Public()
   @HttpCode(200)
   async statusCallback(@Body() body: any) {
     this.logger.log('==============================');
