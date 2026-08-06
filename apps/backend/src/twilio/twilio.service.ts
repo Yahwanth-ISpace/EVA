@@ -6,6 +6,7 @@ import * as twilio from 'twilio';
 import { v4 as uuidv4 } from 'uuid';
 import * as https from 'https';
 import * as FormData from 'form-data';
+import { AgentDto } from 'src/schedular/dto/agent.dto';
 
 const accountSid = (process.env.TWILIO_ACCOUNT_SID ?? '').trim();
 const authToken = (process.env.TWILIO_AUTH_TOKEN ?? '').trim();
@@ -19,6 +20,7 @@ const client = twilio(accountSid, authToken);
 export type CallStreamContext = {
   PatientID: string;
   AppointmentID: string | null;
+  AgentId: string | null;
 };
 
 const callSidToStreamContext = new Map<string, CallStreamContext>();
@@ -93,6 +95,7 @@ export class TwilioService {
     to: string,
     PatientID: string,
     AppointmentID?: string | null,
+    agentID?: string,
     options?: { navigateTpaIvr?: boolean },
   ) {
     if (!fromNumber) {
@@ -107,12 +110,17 @@ export class TwilioService {
       from: fromNumber,
       url: `${backendBaseUrl}/twilio/inbound-stream?patientId=${encodeURIComponent(PatientID)}${apptQ}${modeQ}`,
       record: true,
+
+      statusCallback: `${backendBaseUrl}/twilio/status-callback`,
+      statusCallbackMethod: 'POST',
+      statusCallbackEvent: ['completed'],
     });
 
     if (call?.sid && PatientID) {
       callSidToStreamContext.set(call.sid, {
         PatientID,
         AppointmentID: apptId || null,
+        AgentId: agentID || null, // Store agent ID if provided
       });
     }
     return call;
