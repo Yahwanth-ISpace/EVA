@@ -40,6 +40,7 @@ export class AppointmentService {
           navigateTpaIvr: process.env.EVA_NAVIGATE_TPA_IVR === 'true',
         },
       );
+      
     } else {
       this.logger.warn(
         `Insurance phone number missing for Patient ${appointment.patient.patientId}`,
