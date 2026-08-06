@@ -66,6 +66,7 @@ model Provider {
   network      String
   specialty    String
   offices      Office[]
+  appointments Appointment[]
 }
 
 model Office {
@@ -79,6 +80,7 @@ model Office {
   code         String
   provider     Provider      @relation(fields: [providerId], references: [id])
   providerId   String
+  appointments Appointment[]
 }
 
 model Appointment {
@@ -188,12 +190,13 @@ model Verification {
 }
 
 model Agent {
-  id                String      @id @default(uuid()) @map("_id")
-  name              String      @unique
-  twilioPhoneNumber String
-  status            AgentStatus
-  startTime         DateTime?   @default(now())
-  endTime           DateTime?   @default(now())
+  id                   String      @id @default(uuid()) @map("_id")
+  name                 String      @unique
+  twilioPhoneNumber    String
+  twilioPhoneNumberExt String
+  status               AgentStatus
+  startTime            DateTime?   @default(now())
+  endTime              DateTime?   @default(now())
 }
 
 model BotTracker {

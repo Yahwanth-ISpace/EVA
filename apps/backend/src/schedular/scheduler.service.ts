@@ -104,6 +104,13 @@ export class SchedulerService {
                 `API Response:::::::: ${JSON.stringify(response)}`,
               );
 
+              appointment.InsuranceCompany_Phone =
+                agent.twilioPhoneNumber ||
+                process.env.INSURANCE_COMPANY_PHONENUMBER;
+
+              appointment.InsuranceCompany_Phone_Ext =
+                agent.twilioPhoneNumberExt ||process.env.INSURANCE_COMPANY_PHONENUMBER_EXT;
+
               await this.callAppointmentApi(agent, appointment);
             }
           }
@@ -185,10 +192,10 @@ export class SchedulerService {
 
       if (serviceBusAppointment) {
         // Configured static for now. Will change this once Sabrina sends this information.
-        serviceBusAppointment.InsuranceCompany_Phone =
-          process.env.INSURANCE_COMPANY_PHONENUMBER;
-        serviceBusAppointment.InsuranceCompany_Phone_Ext =
-          process.env.INSURANCE_COMPANY_PHONENUMBER_EXT;
+        // serviceBusAppointment.InsuranceCompany_Phone =
+        //   process.env.INSURANCE_COMPANY_PHONENUMBER;
+        // serviceBusAppointment.InsuranceCompany_Phone_Ext =
+        //   process.env.INSURANCE_COMPANY_PHONENUMBER_EXT;
         serviceBusAppointment.benefitsInfo = process.env.FIELDS_TO_BE_COLLECTED1
           ? JSON.parse(process.env.FIELDS_TO_BE_COLLECTED1)
           : {};

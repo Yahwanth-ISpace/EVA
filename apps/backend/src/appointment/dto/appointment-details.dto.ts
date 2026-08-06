@@ -120,10 +120,10 @@ export class AppointmentDetailsDto {
   savedAt: string;
 
   @ApiProperty()
-  InsuranceCompany_Phone: string;
+  InsuranceCompany_Phone: string | undefined;
 
   @ApiProperty()
-  InsuranceCompany_Phone_Ext: string;
+  InsuranceCompany_Phone_Ext: string | undefined;
 
   @ApiProperty({
     description: 'Benefit fields to be verified',
