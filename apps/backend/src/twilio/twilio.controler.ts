@@ -368,6 +368,7 @@ export class TwilioController {
     return this.twilioService.makeCall(
       body.to,
       body.payeeId,
+      '',
       body.appointmentId,
       { navigateTpaIvr: body.navigateTpaIvr === true },
     );
