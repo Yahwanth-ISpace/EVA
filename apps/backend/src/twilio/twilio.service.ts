@@ -111,7 +111,7 @@ export class TwilioService {
       url: `${backendBaseUrl}/twilio/inbound-stream?patientId=${encodeURIComponent(PatientID)}${apptQ}${modeQ}`,
       record: true,
 
-      statusCallback: `${backendBaseUrl}/twilio/status-callback`,
+      statusCallback: `${backendBaseUrl}/appointments/status-callback`,
       statusCallbackMethod: 'POST',
       statusCallbackEvent: ['completed'],
     });
