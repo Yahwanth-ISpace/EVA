@@ -7,6 +7,8 @@ import {
   Res,
   BadRequestException,
   UseGuards,
+  HttpCode,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -25,6 +27,8 @@ import {
   TwilioInitiateCallDto,
   TwilioPutOnHoldDto,
 } from './dto/twilio-call.dto';
+import { AgentStatus } from '@prisma/client';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 const backendBaseUrl =
   (process.env.BACKEND_URL || '').trim() ||
@@ -63,7 +67,9 @@ function escapeXmlAttr(value: string): string {
 @ApiTags('twilio')
 @Controller('twilio')
 export class TwilioController {
+  private readonly logger = new Logger(TwilioController.name);
   constructor(
+    private readonly prisma: PrismaService,
     private readonly twilioService: TwilioService,
     private readonly elevenLabsService: ElevenLabsService,
   ) {}
@@ -355,12 +361,38 @@ export class TwilioController {
       'Dials `to` with TwiML that connects media stream for `payeeId` (EVA benefit verification).',
   })
   @Post('status-callback')
+  @HttpCode(200)
   async statusCallback(@Body() body: any) {
-    if (body.CallStatus === 'completed') {
-      // Update agent back to READY
+    this.logger.log(
+      `Call Status: ${body.CallStatus}, CallSid: ${body.CallSid}`,
+    );
+
+    // Only process completed calls
+    if (body.CallStatus !== 'completed') {
+      return { success: true };
     }
 
-    return 'OK';
+    // Retrieve the context you stored when the call was created
+    const context = this.twilioService.getStreamContextForCall(body.CallSid);
+
+    if (!context) {
+      this.logger.warn(`No stream context found for CallSid ${body.CallSid}`);
+      return { success: true };
+    }
+
+    await this.prisma.agent.update({
+      where: {
+        id: context ? context.AgentId : '', // or context.AgentId depending on your context type
+      },
+      data: {
+        status: AgentStatus.READY,
+        endTime: new Date(),
+      },
+    });
+
+    this.logger.log(`Agent ${context.AgentId} marked READY`);
+
+    return { success: true };
   }
 
   @ApiBody({ type: TwilioInitiateCallDto })
