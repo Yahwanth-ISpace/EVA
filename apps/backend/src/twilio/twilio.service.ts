@@ -32,13 +32,15 @@ export class TwilioService {
    * Resolve payeeId + optional appointmentId for an outbound call from its Twilio call SID.
    * Used when the media stream WebSocket URL omits query params.
    */
-  getStreamContextForCall(callSid: string | null): CallStreamContext | null {
+  getStreamContextForCall(callSid: string | null) {
     if (!callSid?.trim()) return null;
+
     return callSidToStreamContext.get(callSid) ?? null;
   }
 
-  removeStreamContext(callSid: string | null): void {
+  removeStreamContext(callSid: string | null) {
     if (!callSid?.trim()) return;
+
     callSidToStreamContext.delete(callSid);
   }
 
@@ -109,6 +111,9 @@ export class TwilioService {
     const apptId = AppointmentID?.trim();
     const apptQ = apptId ? `&appointmentId=${encodeURIComponent(apptId)}` : '';
     const modeQ = options?.navigateTpaIvr === true ? '&mode=tpa-ivr' : '';
+    this.logger.log(
+      `Status Callback URL: ${backendBaseUrl}/appointments/status-callback`,
+    );
     const call = await client.calls.create({
       to,
       from: fromNumber,
