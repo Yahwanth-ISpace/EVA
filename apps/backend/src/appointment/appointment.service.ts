@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TwilioService } from 'src/twilio/twilio.service';
 import { AppointmentDetailsDto } from './dto/appointment-details.dto';
 import { MongoService } from 'src/mongo/mongo.service';
+import { AgentDto } from 'src/schedular/dto/agent.dto';
 
 @Injectable()
 export class AppointmentService {
@@ -20,7 +21,7 @@ export class AppointmentService {
     private readonly mongoService: MongoService,
   ) {}
 
-  async create(appointment: AppointmentDetailsDto) {
+  async create(appointment: AppointmentDetailsDto, agentId: string) {
     this.logger.debug(`Creating appointment: ${JSON.stringify(appointment)}`);
 
     const phone = (appointment.InsuranceCompany_Phone ?? '').trim();
@@ -34,6 +35,7 @@ export class AppointmentService {
         toPhoneNumber,
         appointment.patient.patientId,
         String(appointment.appointmentId),
+        agentId,
         {
           navigateTpaIvr: process.env.EVA_NAVIGATE_TPA_IVR === 'true',
         },

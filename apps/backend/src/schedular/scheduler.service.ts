@@ -99,7 +99,10 @@ export class SchedulerService {
                 `Processing appointment for ${appointment.patient.patientName} with agent ${agent.name}`,
               );
               // un comment below lines  call appointment api for each agent and appointment and update agent status to IN_PROGRESS
-              const response = this.appointmentService.create(appointment);
+              const response = this.appointmentService.create(
+                appointment,
+                agent.id,
+              );
               this.logger.log(
                 `API Response:::::::: ${JSON.stringify(response)}`,
               );
@@ -109,7 +112,8 @@ export class SchedulerService {
                 process.env.INSURANCE_COMPANY_PHONENUMBER;
 
               appointment.InsuranceCompany_Phone_Ext =
-                agent.twilioPhoneNumberExt ||process.env.INSURANCE_COMPANY_PHONENUMBER_EXT;
+                agent.twilioPhoneNumberExt ||
+                process.env.INSURANCE_COMPANY_PHONENUMBER_EXT;
 
               await this.callAppointmentApi(agent, appointment);
             }
@@ -147,7 +151,7 @@ export class SchedulerService {
       },
     });
 
-    await this.appointmentService.create(appointment);
+    await this.appointmentService.create(appointment, agent.id);
   }
 
   async loginToSabrina() {

@@ -26,7 +26,9 @@ import {
   TwilioPutOnHoldDto,
 } from './dto/twilio-call.dto';
 
-const backendBaseUrl = (process.env.BACKEND_URL || '').trim() || `http://localhost:${process.env.PORT ?? 3000}`;
+const backendBaseUrl =
+  (process.env.BACKEND_URL || '').trim() ||
+  `http://localhost:${process.env.PORT ?? 3000}`;
 
 /**
  * Base URL for Twilio Media Stream WebSocket. Twilio requires wss:// in production (1011 invalid url for ws://).
@@ -39,8 +41,10 @@ function getStreamBaseUrl(): string {
     process.env.BACKEND_URL ||
     `http://localhost:${process.env.PORT ?? 3000}`
   ).trim();
-  if (base.startsWith('wss://') || base.startsWith('ws://')) return base.replace(/\/+$/, '');
-  if (base.startsWith('https://')) return base.replace(/^https/, 'wss').replace(/\/+$/, '');
+  if (base.startsWith('wss://') || base.startsWith('ws://'))
+    return base.replace(/\/+$/, '');
+  if (base.startsWith('https://'))
+    return base.replace(/^https/, 'wss').replace(/\/+$/, '');
   return base.replace(/^http/, 'ws').replace(/\/+$/, '');
 }
 
@@ -76,7 +80,10 @@ export class TwilioController {
       'Twilio webhook: plays menu (press 1–4). Configure your Twilio number **Voice webhook** to `POST /twilio/inbound`. Returns `text/xml`.',
   })
   @ApiProduces('text/xml')
-  async handleInbound(@Body() body: Record<string, string>, @Res() res: Response) {
+  async handleInbound(
+    @Body() body: Record<string, string>,
+    @Res() res: Response,
+  ) {
     res.type('text/xml').send(`
       <Response>
         <Gather numDigits="1" action="${backendBaseUrl}/twilio/ivr-menu" method="POST" timeout="5">
@@ -94,10 +101,14 @@ export class TwilioController {
   @Post('ivr-menu')
   @ApiOperation({
     summary: 'IVR digit handler (TwiML)',
-    description: 'Follow-up from Gather on `/twilio/inbound`; branches on Digits 1–4.',
+    description:
+      'Follow-up from Gather on `/twilio/inbound`; branches on Digits 1–4.',
   })
   @ApiProduces('text/xml')
-  async handleIvrMenu(@Body() body: Record<string, string>, @Res() res: Response) {
+  async handleIvrMenu(
+    @Body() body: Record<string, string>,
+    @Res() res: Response,
+  ) {
     const digits = (body?.Digits || body?.digits || '').trim();
     const base = backendBaseUrl;
 
@@ -175,12 +186,17 @@ export class TwilioController {
     required: false,
     example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
   })
-  @ApiQuery({ name: 'payeeId', required: false, example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
+  @ApiQuery({
+    name: 'payeeId',
+    required: false,
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+  })
   @ApiQuery({ name: 'appointmentId', required: false })
   @ApiQuery({
     name: 'mode',
     required: false,
-    description: 'Set `tpa-ivr` to navigate payer phone menus before EVA speaks.',
+    description:
+      'Set `tpa-ivr` to navigate payer phone menus before EVA speaks.',
   })
   @ApiProduces('text/xml')
   async handleInboundStreamPost(
@@ -205,14 +221,17 @@ export class TwilioController {
   }
 
   @Get('inbound-stream')
-  @ApiOperation({ summary: 'Same as POST inbound-stream (GET for some Twilio configs)' })
+  @ApiOperation({
+    summary: 'Same as POST inbound-stream (GET for some Twilio configs)',
+  })
   @ApiQuery({ name: 'patientId', required: false })
   @ApiQuery({ name: 'payeeId', required: false })
   @ApiQuery({ name: 'appointmentId', required: false })
   @ApiQuery({
     name: 'mode',
     required: false,
-    description: 'Set `tpa-ivr` to navigate payer phone menus before EVA speaks.',
+    description:
+      'Set `tpa-ivr` to navigate payer phone menus before EVA speaks.',
   })
   @ApiProduces('text/xml')
   async handleInboundStreamGet(
@@ -242,9 +261,7 @@ export class TwilioController {
       ? '&appointmentId=' + encodeURIComponent(appointmentId.trim())
       : '';
     const modeQ =
-      streamMode === 'tpa-ivr'
-        ? '&mode=' + encodeURIComponent('tpa-ivr')
-        : '';
+      streamMode === 'tpa-ivr' ? '&mode=' + encodeURIComponent('tpa-ivr') : '';
     const streamUrl =
       getStreamBaseUrl() +
       '/twilio/media-stream?patientId=' +
@@ -337,6 +354,15 @@ export class TwilioController {
     description:
       'Dials `to` with TwiML that connects media stream for `payeeId` (EVA benefit verification).',
   })
+  @Post('status-callback')
+  async statusCallback(@Body() body: any) {
+    if (body.CallStatus === 'completed') {
+      // Update agent back to READY
+    }
+
+    return 'OK';
+  }
+
   @ApiBody({ type: TwilioInitiateCallDto })
   async initiateCall(@Body() body: TwilioInitiateCallDto) {
     return this.twilioService.makeCall(
@@ -404,10 +430,14 @@ export class TwilioController {
   @Post('step')
   @ApiOperation({
     summary: 'Legacy IVR step (TwiML)',
-    description: 'Multi-step record flow with `step` and `payeeId` query params. Returns TwiML.',
+    description:
+      'Multi-step record flow with `step` and `payeeId` query params. Returns TwiML.',
   })
   @ApiQuery({ name: 'step', required: false, example: '0' })
-  @ApiQuery({ name: 'payeeId', example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
+  @ApiQuery({
+    name: 'payeeId',
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+  })
   @ApiProduces('text/xml')
   async handleStep(
     @Body() body: any,
@@ -490,7 +520,10 @@ export class TwilioController {
 
   // STEP 3: Explicit recording webhook (optional, still supported)
   @Post('call-recording')
-  @ApiOperation({ summary: 'Recording webhook', description: 'Twilio posts `RecordingUrl`; processes with `payeeId` query.' })
+  @ApiOperation({
+    summary: 'Recording webhook',
+    description: 'Twilio posts `RecordingUrl`; processes with `payeeId` query.',
+  })
   @ApiQuery({ name: 'payeeId', required: true })
   async handleRecording(@Body() body: any, @Query('payeeId') payeeId: string) {
     const recordingUrl = body?.RecordingUrl;
