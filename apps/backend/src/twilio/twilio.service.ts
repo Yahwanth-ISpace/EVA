@@ -1,4 +1,4 @@
-import { HttpException, Injectable } from '@nestjs/common';
+import { HttpException, Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -27,15 +27,19 @@ const callSidToStreamContext = new Map<string, CallStreamContext>();
 
 @Injectable()
 export class TwilioService {
+  private readonly logger = new Logger(TwilioService.name);
   /**
    * Resolve payeeId + optional appointmentId for an outbound call from its Twilio call SID.
    * Used when the media stream WebSocket URL omits query params.
    */
   getStreamContextForCall(callSid: string | null): CallStreamContext | null {
     if (!callSid?.trim()) return null;
-    const ctx = callSidToStreamContext.get(callSid) ?? null;
-    if (ctx) callSidToStreamContext.delete(callSid);
-    return ctx;
+    return callSidToStreamContext.get(callSid) ?? null;
+  }
+
+  removeStreamContext(callSid: string | null): void {
+    if (!callSid?.trim()) return;
+    callSidToStreamContext.delete(callSid);
   }
 
   /** @deprecated Prefer getStreamContextForCall */
@@ -110,7 +114,6 @@ export class TwilioService {
       from: fromNumber,
       url: `${backendBaseUrl}/twilio/inbound-stream?patientId=${encodeURIComponent(PatientID)}${apptQ}${modeQ}`,
       record: true,
-
       statusCallback: `${backendBaseUrl}/appointments/status-callback`,
       statusCallbackMethod: 'POST',
       statusCallbackEvent: ['completed'],
@@ -123,6 +126,7 @@ export class TwilioService {
         AgentId: AgentId, // Store agent ID if provided
       });
     }
+    this.logger.log(`Stored context: CallSid=${call.sid}, AgentId=${AgentId}`);
     return call;
   }
 

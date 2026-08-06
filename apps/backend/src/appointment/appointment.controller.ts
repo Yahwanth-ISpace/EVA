@@ -80,6 +80,7 @@ export class AppointmentController {
     });
 
     this.logger.log(`Agent ${context.AgentId} marked READY`);
+    this.twilioService.removeStreamContext(body.CallSid);
 
     return { success: true };
   }
