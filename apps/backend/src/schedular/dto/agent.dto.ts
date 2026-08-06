@@ -15,6 +15,18 @@ export class AgentDto {
   name: string;
 
   @ApiProperty({
+    example: '2345678190',
+    description: 'Twilio Phone number',
+  })
+  twilioPhoneNumber: string;
+
+  @ApiProperty({
+    example: '+1',
+    description: 'Twilio Phone number extension',
+  })
+  twilioPhoneNumberExt: string;
+
+  @ApiProperty({
     enum: AgentStatus,
     example: AgentStatus.READY,
     description: 'Current status of the agent',
