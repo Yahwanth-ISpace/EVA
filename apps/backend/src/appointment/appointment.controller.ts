@@ -97,17 +97,17 @@ export class AppointmentController {
     return { success: true };
   }
 
-  // @Get()
-  // @ApiOperation({ summary: 'List appointments for current user' })
-  // findAll(@Req() req) {
-  //   const user = req.user;
-  //   return this.appointmentService.findAll(user);
-  // }
+  @Get()
+  @ApiOperation({ summary: 'List appointments for current user' })
+  findAll(@Req() req) {
+    const user = req.user;
+    return this.appointmentService.findAll(user);
+  }
 
-  // @Get(':id')
-  // @ApiOperation({ summary: 'Get appointment by ID' })
-  // @ApiParam({ name: 'id', example: 'appointment-uuid-here' })
-  // findOne(@Param('id') id: string, @Req() req) {
-  //   return this.appointmentService.findOne(id, req.user);
-  // }
+  @Get(':id')
+  @ApiOperation({ summary: 'Get appointment by ID' })
+  @ApiParam({ name: 'id', example: 'appointment-uuid-here' })
+  findOne(@Param('id') id: string, @Req() req) {
+    return this.appointmentService.findOne(id, req.user);
+  }
 }
