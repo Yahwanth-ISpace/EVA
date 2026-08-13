@@ -130,6 +130,7 @@ import {
   userAskedWhoIsCalling,
   verbatimBenefitQuestion,
 } from './media-stream/guardrails';
+import { AppointmentService } from 'src/appointment/appointment.service';
 
 @Injectable()
 export class MediaStreamHandlerService {
@@ -177,6 +178,7 @@ export class MediaStreamHandlerService {
     private readonly botTrackerService: BotTrackerService,
     private readonly twilioService: TwilioService,
     private readonly audioEmotionService: AudioEmotionService,
+    private readonly appointmentService: AppointmentService,
   ) {}
 
   handleConnection(
@@ -289,42 +291,51 @@ export class MediaStreamHandlerService {
       }
     };
 
-    const pushToVerificationService = () => {
+    const updateAppointmentWithCallResult = async () => {
       if (!state.patientId) {
         this.logger.warn(
-          '[MediaStream] Verification NOT saved: patientId is missing. Pass patientId (or payeeId) in the media-stream URL so verification can be stored.',
+          '[MediaStream] Appointment NOT updated: patientId is missing',
         );
         return;
       }
-      const fields = state.orderedFields.length
-        ? state.orderedFields
-        : ['coverage', 'deductible', 'copay', 'validity'];
-      const hasAny = fields.some(
-        (f) =>
-          state.extractedData[f] != null &&
-          String(state.extractedData[f]).trim(),
-      );
-      if (!hasAny) {
+
+      if (!state.appointmentId) {
+        this.logger.warn(
+          '[MediaStream] Appointment NOT updated: appointmentId is missing',
+        );
         return;
       }
+
       const fullTranscript = state.conversationTranscript.length
         ? state.conversationTranscript.join('\n')
-        : undefined;
-      this.aiService
-        .saveCallVerification(
+        : '';
+
+      try {
+        await this.appointmentService.updateEvaVerification(
           state.patientId,
-          state.extractedData,
-          fullTranscript,
-          state.verificationRequirementId,
           state.appointmentId,
-        )
-        .then(() => {})
-        .catch((e) =>
-          this.logger.warn(
-            '[MediaStream] Save verification failed',
-            (e as Error)?.message,
-          ),
+          {
+            status: 'COMPLETED',
+
+            transcript: fullTranscript,
+
+            extractedData: state.extractedData,
+
+            callSid: state.callSid,
+
+            endedAt: new Date(),
+          },
         );
+
+        this.logger.log(
+          `[MediaStream] Appointment ${state.appointmentId} updated with EVA call result`,
+        );
+      } catch (e) {
+        this.logger.warn(
+          '[MediaStream] Failed to update appointment',
+          (e as Error)?.message,
+        );
+      }
     };
 
     const doPostGoodbyeHangUp = () => {
@@ -349,7 +360,7 @@ export class MediaStreamHandlerService {
             state.extractedData[f] != null &&
             String(state.extractedData[f]).trim(),
         );
-      if (hasAny) pushToVerificationService();
+      if (hasAny) updateAppointmentWithCallResult();
       const sid = state.callSid;
       if (sid)
         this.twilioService
@@ -844,7 +855,7 @@ export class MediaStreamHandlerService {
                   state.extractedData[f] != null &&
                   String(state.extractedData[f]).trim(),
               );
-            if (hasAnyData) pushToVerificationService();
+            if (hasAnyData) updateAppointmentWithCallResult();
             const sid = state.callSid;
             if (sid)
               this.twilioService
@@ -904,7 +915,7 @@ export class MediaStreamHandlerService {
                     state.extractedData[f] != null &&
                     String(state.extractedData[f]).trim(),
                 );
-              if (hasAnyData) pushToVerificationService();
+              if (hasAnyData) updateAppointmentWithCallResult();
               if (state.callSid)
                 this.twilioService
                   .hangUp(state.callSid)
@@ -2396,7 +2407,7 @@ export class MediaStreamHandlerService {
               String(state.extractedData[f]).trim(),
           )
         ) {
-          pushToVerificationService();
+          updateAppointmentWithCallResult();
         } else if (!state.patientId) {
           this.logger.warn(
             '[MediaStream] Call stopped but patientId missing — verification NOT saved. Use ?patientId=... or ?payeeId=... in stream URL.',
