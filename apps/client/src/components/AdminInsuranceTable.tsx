@@ -3,7 +3,7 @@ import "react-loading-skeleton/dist/skeleton.css"; // Ensure skeleton CSS is imp
 import { Link } from "react-router-dom";
 import type { VerificationRecord } from "../redux/types/verificationTypes";
 import { getVerificationFieldRows } from "../utils/verificationDisplay";
-import StatusBadge from "./statusBadge";
+import StatusBadge from "./StatusBadges";
 
 interface Props {
   records: VerificationRecord[];
