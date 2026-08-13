@@ -42,6 +42,7 @@ export interface VerificationRecord {
   extractedData?: Record<string, string | null> | null;
   verificationRequirementId?: string | null;
   verificationRequirement?: VerificationRequirementRef | null;
+  status?: string | null;
   /** Legacy API shape; prefer extractedData from backend. */
   coverage?: string;
   copay?: string;
