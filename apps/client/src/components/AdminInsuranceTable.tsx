@@ -3,6 +3,7 @@ import "react-loading-skeleton/dist/skeleton.css"; // Ensure skeleton CSS is imp
 import { Link } from "react-router-dom";
 import type { VerificationRecord } from "../redux/types/verificationTypes";
 import { getVerificationFieldRows } from "../utils/verificationDisplay";
+import StatusBadge from "./statusBadge";
 
 interface Props {
   records: VerificationRecord[];
@@ -12,76 +13,101 @@ interface Props {
 export default function AdminInsuranceTable({ records, loading }: Props) {
   return (
     // Container div with shadow and rounded corners
-    <div className="overflow-x-auto shadow-md rounded-lg">
-      <table className="min-w-full table-auto text-sm text-left text-gray-500">
-        <thead className="bg-indigo-100 text-gray-900">
-          <tr>
-            <th className="px-6 py-3">Name</th>
-            <th className="px-6 py-3">Verification fields</th>
-            <th className="px-6 py-3">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {loading ? (
-            // Skeleton loading rows
-            [...Array(5)].map((_, i) => (
-              <tr key={i} className="border-b bg-white">
-                {[...Array(3)].map((_, j) => (
-                  <td key={j} className="px-6 py-4">
-                    <Skeleton height={20} width="100%" />
-                  </td>
-                ))}
-              </tr>
-            ))
-          ) : records.length === 0 ? (
-            // Display message when no records are available
+    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead className="border-b border-gray-200 bg-gray-50">
             <tr>
-              <td colSpan={3} className="px-6 py-4 text-center text-gray-500">
-                No insurance records found.
-              </td>
+              <th className="whitespace-nowrap px-6 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Patient
+              </th>
+
+              <th className="whitespace-nowrap px-6 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Appointment
+              </th>
+
+              <th className="whitespace-nowrap px-6 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Status
+              </th>
+
+              <th className="whitespace-nowrap px-6 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Verification details
+              </th>
+
+              <th className="px-6 py-3.5 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Action
+              </th>
             </tr>
-          ) : (
-            // Actual data rows
-            records.map((record) => {
+          </thead>
+
+          <tbody className="divide-y divide-gray-100">
+            {records.map((record) => {
               const rows = getVerificationFieldRows(record);
+
               return (
-              <tr
-                key={record.id}
-                className="bg-white border-b hover:bg-indigo-50"
-              >
-                <td className="px-6 py-3">
-                  {record.payee.firstName} {record.payee.lastName}
-                </td>
-                <td className="px-6 py-3 max-w-md">
-                  {rows.length === 0 ? (
-                    <span className="text-gray-400">—</span>
-                  ) : (
-                    <ul className="space-y-1 text-gray-700">
-                      {rows.map((r) => (
-                        <li key={r.key}>
-                          <span className="font-medium text-gray-800">
+                <tr
+                  key={record.id}
+                  className="transition-colors hover:bg-gray-50"
+                >
+                  {/* Patient */}
+                  <td className="whitespace-nowrap px-6 py-4">
+                    <div className="font-medium text-gray-900">
+                      {record.patientName}
+                    </div>
+
+                    <div className="mt-0.5 text-xs text-gray-500">
+                      ID: {record.id}
+                    </div>
+                  </td>
+
+                  {/* Appointment */}
+                  <td className="whitespace-nowrap px-6 py-4 text-gray-600">
+                    #{record.appointmentId}
+                  </td>
+
+                  {/* Status */}
+                  <td className="px-6 py-4">
+                    <StatusBadge status={record.status} />
+                  </td>
+
+                  {/* Verification */}
+                  <td className="px-6 py-4">
+                    <div className="max-w-md space-y-1">
+                      {rows.slice(0, 3).map((r) => (
+                        <div key={r.key} className="text-sm">
+                          <span className="font-medium text-gray-600">
                             {r.label}:
                           </span>{" "}
-                          {r.value || "—"}
-                        </li>
+                          <span className="text-gray-900">
+                            {r.value || "—"}
+                          </span>
+                        </div>
                       ))}
-                    </ul>
-                  )}
-                </td>
-                <td className="px-6 py-3">
-                  <Link
-                    to={`/insurance/${record.id}`}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded-lg"
-                  >
-                    View Details
-                  </Link>
-                </td>
-              </tr>
-            );
-            })
-          )}
-        </tbody>
-      </table>
+
+                      {rows.length > 3 && (
+                        <span className="text-xs font-medium text-indigo-600">
+                          +{rows.length - 3} more
+                        </span>
+                      )}
+                    </div>
+                  </td>
+
+                  {/* Action */}
+                  <td className="whitespace-nowrap px-6 py-4 text-right">
+                    <Link
+                      to={`/insurance/${record.id}`}
+                      className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 hover:text-indigo-600"
+                    >
+                      View details
+                      <span className="ml-1.5">→</span>
+                    </Link>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
