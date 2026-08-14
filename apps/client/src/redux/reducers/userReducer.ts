@@ -1,4 +1,4 @@
-import { User } from "../types/authTypes";
+import type { User } from "../types/authTypes";
 import {
   GET_USERS,
   GET_AGENTS,
@@ -45,7 +45,7 @@ export const userReducer = (state = initialState, action: any): State => {
     case GET_AGENTS:
       return {
         ...state,
-        agents: action.payload.filter((user: User) => user.role === "agent"),
+        agents: action.payload.filter((user: User) => user.role === "ADMIN"),
         loading: false,
         error: null,
         success: null,
@@ -54,9 +54,7 @@ export const userReducer = (state = initialState, action: any): State => {
     case GET_CUSTOMERS:
       return {
         ...state,
-        customers: action.payload.filter(
-          (user: User) => user.role === "customer"
-        ),
+        customers: action.payload.filter((user: User) => user.role === "PAYEE"),
         loading: false,
         error: null,
         success: null,
