@@ -18,7 +18,7 @@ export const useAuth = () => {
 
   const isAuthenticated = !!token;
   const isAdmin = user?.role === "ADMIN";
-  const isPayee = user?.role === "PAYEE";
+  const isPayee = user?.role === "OPERATOR";
 
   return {
     token,

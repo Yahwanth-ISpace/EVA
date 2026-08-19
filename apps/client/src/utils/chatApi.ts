@@ -22,7 +22,7 @@ const handleResponse = async <T>(res: Response): Promise<T> => {
 };
 
 export const chatApi = {
-  get: <T>(url: string) => fetch(`${CHAT_BASE_URL}${url}`, { headers: getAuthHeaders() }).then(handleResponse),
+  get: (url: string) => fetch(`${CHAT_BASE_URL}${url}`, { headers: getAuthHeaders() }).then(handleResponse),
   post: <TResponse, TRequest = unknown>(url: string, body: TRequest) =>
     fetch(`${CHAT_BASE_URL}${url}`, {
       method: "POST",
