@@ -39,7 +39,7 @@ export default function Dashboard() {
             />
           </Role>
 
-          <Role role="PAYEE">
+          <Role role="OPERATOR">
             <PatientTabs />
           </Role>
         </Container>

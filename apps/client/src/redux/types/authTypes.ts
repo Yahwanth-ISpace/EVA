@@ -6,7 +6,7 @@ export const LOGIN_SUCCESS = "LOGIN_SUCCESS";
 export const LOGOUT = "LOGOUT";
 
 // Roles available in your system
-export type UserRole = "ADMIN" | "PAYEE";
+export type UserRole = "ADMIN" | "OPERATOR";
 
 // Core User interface returned from Prisma
 export interface User {
@@ -16,7 +16,7 @@ export interface User {
   email: string;
   dob: Date | null;
   role: UserRole;
-  payeeId?: string; // present only if role === PAYEE
+  payeeId?: string; // present only if role === OPERATOR
 }
 
 // Payload returned after successful registration
