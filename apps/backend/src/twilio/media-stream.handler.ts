@@ -130,11 +130,39 @@ import {
   userAskedWhoIsCalling,
   verbatimBenefitQuestion,
 } from './media-stream/guardrails';
+export enum EvaCallState {
+  LISTENING = 'LISTENING',
+  THINKING = 'THINKING',
+  SPEAKING = 'SPEAKING',
+  INTERRUPTED = 'INTERRUPTED',
+  ENDED = 'ENDED',
+}
+interface StreamSession {
+  state: StreamState;
+  ws: WebSocket;
+  responseGeneration: number;
+  bargeInInProgress: boolean;
+  isSpeaking: boolean;
+  responseAbortController?: AbortController;
+}
+
 import { AppointmentService } from 'src/appointment/appointment.service';
 
 @Injectable()
 export class MediaStreamHandlerService {
   private readonly logger = new Logger(MediaStreamHandlerService.name);
+
+  /**
+   * Active live call sessions used by barge-in.
+   *
+   * Key   = Twilio CallSid
+   * Value = existing StreamState + WebSocket + barge-in runtime state
+   */
+  private readonly callSessions = new Map<string, StreamSession>();
+
+  /**
+   * One line per turn...
+   */
 
   private readonly tpaIvrByCallSid = new Map<string, TpaIvrRuntimeState>();
 

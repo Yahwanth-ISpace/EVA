@@ -17,6 +17,7 @@ import { VerificationRequirementModule } from './verification-requirement/verifi
 import { ChatModule } from './chat/chat.module';
 import { SchedulerModule } from './schedular/scheduler.module';
 import { BotTrackerModule } from './bot-tracker/bot-tracker.module';
+import { BargeInModule } from './barge-in/barge-in.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { BotTrackerModule } from './bot-tracker/bot-tracker.module';
     ChatModule,
     SchedulerModule,
     BotTrackerModule,
+    BargeInModule,
   ],
 })
 export class AppModule {}
