@@ -27,7 +27,7 @@ export class AuthService {
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
-    const role = dto.role || 'PAYEE';
+    const role = dto.role || 'OPERATOR';
 
     const user = await this.prisma.user.create({
       data: {
@@ -38,7 +38,7 @@ export class AuthService {
         firstName: dto.firstName,
         lastName: dto.lastName,
         payee:
-          role === 'PAYEE'
+          role === 'OPERATOR'
             ? {
                 create: {
                   firstName: dto.firstName,
@@ -58,8 +58,8 @@ export class AuthService {
       user: {
         id: user.id,
         firstName:
-          user.role === 'PAYEE' ? user.payee?.firstName : user.firstName,
-        lastName: user.role === 'PAYEE' ? user.payee?.lastName : user.lastName,
+          user.role === 'OPERATOR' ? user.payee?.firstName : user.firstName,
+        lastName: user.role === 'OPERATOR' ? user.payee?.lastName : user.lastName,
         email: user.email,
         dob: user.dob,
         role: user.role,
@@ -99,9 +99,9 @@ export class AuthService {
         dob: user.dob ?? user.payee?.dob,
         email: user.email,
         role: user.role,
-        ...(user.role === 'PAYEE' &&
+        ...(user.role === 'OPERATOR' &&
           user.payee?.id && { payeeId: user.payee.id }),
-        ...(user.role === 'PAYEE' && { payee: user.payee }),
+        ...(user.role === 'OPERATOR' && { payee: user.payee }),
       },
     };
   }

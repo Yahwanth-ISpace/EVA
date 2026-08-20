@@ -15,7 +15,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export enum Role {
   ADMIN = 'ADMIN',
-  PAYEE = 'PAYEE',
+  OPERATOR = 'OPERATOR',
 }
 
 export class PayerDto {
@@ -75,21 +75,21 @@ export class RegisterDto {
   @IsString()
   lastName: string;
 
-  @ApiProperty({ enum: Role, example: Role.PAYEE })
+  @ApiProperty({ enum: Role, example: Role.OPERATOR })
   @IsEnum(Role)
   role: Role;
 
-  @ApiPropertyOptional({ example: '1990-05-15', description: 'Required context for PAYEE role.' })
-  @ValidateIf((o) => o.role === Role.PAYEE)
+  @ApiPropertyOptional({ example: '1990-05-15', description: 'Required context for OPERATOR role.' })
+  @ValidateIf((o) => o.role === Role.OPERATOR)
   @IsOptional()
   dob?: Date;
 
-  @ApiPropertyOptional({ example: '123-45-6789', description: 'PAYEE only.' })
-  @ValidateIf((o) => o.role === Role.PAYEE)
+  @ApiPropertyOptional({ example: '123-45-6789', description: 'OPERATOR only.' })
+  @ValidateIf((o) => o.role === Role.OPERATOR)
   ssn?: string;
 
-  @ApiPropertyOptional({ type: PayerDto, description: 'Required when role is PAYEE.' })
-  @ValidateIf((o) => o.role === Role.PAYEE)
+  @ApiPropertyOptional({ type: PayerDto, description: 'Required when role is OPERATOR.' })
+  @ValidateIf((o) => o.role === Role.OPERATOR)
   @IsNotEmpty()
   @IsObject()
   @ValidateNested()
