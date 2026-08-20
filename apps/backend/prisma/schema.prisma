@@ -208,7 +208,7 @@ model BotTracker {
 
 enum Role {
   ADMIN
-  PAYEE
+  OPERATOR
 }
 
 enum AgentStatus {

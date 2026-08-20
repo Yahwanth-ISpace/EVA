@@ -29,7 +29,7 @@ export class PayeeController {
   @ApiOperation({
     summary: 'Create payee',
     description:
-      'Creates a patient payee (user + payee record). Same shape as register PAYEE; requires JWT (typically ADMIN).',
+      'Creates a patient payee (user + payee record). Same shape as register OPERATOR; requires JWT (typically ADMIN).',
   })
   @ApiResponse({ status: 201, description: 'Payee created.' })
   create(@Body() dto: CreatePayeeDto) {

@@ -14,7 +14,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Register a new user',
     description:
-      'Creates ADMIN or PAYEE user. PAYEE requires `payer` object and typically `dob` / `ssn`. Returns JWT on success.',
+      'Creates ADMIN or OPERATOR user. OPERATOR requires `payer` object and typically `dob` / `ssn`. Returns JWT on success.',
   })
   @ApiResponse({ status: 201, description: 'User created; returns tokens and user payload.' })
   @ApiResponse({ status: 400, description: 'Validation error.' })
@@ -35,7 +35,7 @@ export class AuthController {
     schema: {
       example: {
         access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-        user: { id: '...', email: 'patient@example.com', role: 'PAYEE' },
+        user: { id: '...', email: 'patient@example.com', role: 'OPERATOR' },
       },
     },
   })
