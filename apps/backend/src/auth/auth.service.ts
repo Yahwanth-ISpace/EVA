@@ -6,6 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { Prisma, Role as PrismaRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
@@ -27,7 +28,10 @@ export class AuthService {
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
-    const role = dto.role || 'OPERATOR';
+
+    const role: PrismaRole = dto.role
+      ? (dto.role as PrismaRole)
+      : PrismaRole.OPERATOR;
 
     const user = await this.prisma.user.create({
       data: {
@@ -37,8 +41,9 @@ export class AuthService {
         dob: dto.dob ? new Date(dto.dob) : null,
         firstName: dto.firstName,
         lastName: dto.lastName,
+
         payee:
-          role === 'OPERATOR'
+          role === PrismaRole.OPERATOR
             ? {
                 create: {
                   firstName: dto.firstName,
@@ -57,9 +62,17 @@ export class AuthService {
       message: 'User registered successfully',
       user: {
         id: user.id,
+
         firstName:
-          user.role === 'OPERATOR' ? user.payee?.firstName : user.firstName,
-        lastName: user.role === 'OPERATOR' ? user.payee?.lastName : user.lastName,
+          user.role === PrismaRole.OPERATOR
+            ? user.payee?.firstName
+            : user.firstName,
+
+        lastName:
+          user.role === PrismaRole.OPERATOR
+            ? user.payee?.lastName
+            : user.lastName,
+
         email: user.email,
         dob: user.dob,
         role: user.role,
@@ -71,15 +84,21 @@ export class AuthService {
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
-      include: { payee: true }, // we include it, but conditionally expose it
+      include: {
+        payee: true,
+      },
     });
 
-    if (!user) throw new UnauthorizedException('Invalid credentials');
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
 
     const isValid = await bcrypt.compare(dto.password, user.password);
-    if (!isValid) throw new UnauthorizedException('Invalid credentials');
 
-    // Prepare the token payload (clean and lean)
+    if (!isValid) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
     const token = this.jwtService.sign({
       sub: user.id,
       email: user.email,
@@ -89,9 +108,9 @@ export class AuthService {
       dob: user.dob ?? user.payee?.dob,
     });
 
-    // Return cleaned response
     return {
       access_token: token,
+
       user: {
         id: user.id,
         firstName: user.firstName,
@@ -99,14 +118,22 @@ export class AuthService {
         dob: user.dob ?? user.payee?.dob,
         email: user.email,
         role: user.role,
-        ...(user.role === 'OPERATOR' &&
-          user.payee?.id && { payeeId: user.payee.id }),
-        ...(user.role === 'OPERATOR' && { payee: user.payee }),
+
+        ...(user.role === PrismaRole.OPERATOR &&
+          user.payee?.id && {
+            payeeId: user.payee.id,
+          }),
+
+        ...(user.role === PrismaRole.OPERATOR && {
+          payee: user.payee,
+        }),
       },
     };
   }
 
   async validateUser(userId: string) {
-    return this.prisma.user.findUnique({ where: { id: userId } });
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+    });
   }
 }
