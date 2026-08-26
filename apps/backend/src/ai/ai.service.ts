@@ -1173,12 +1173,20 @@ Respond with ONLY a JSON object. No markdown. Format:
 
     const raw = String(value).toLowerCase().replace(/,/g, '').trim();
 
-    // -----------------------------------------
-    // Numeric dollars + cents
-    // "10 dollars 7 cents" -> 10.7
-    // "10 dollars and 7 cents" -> 10.7
-    // "10 dollars 50 cents" -> 10.5
-    // -----------------------------------------
+    // 12.07 -> 12.7
+    // 14.07 -> 14.7
+    // 25.07 -> 25.7
+    // 18.07 -> 18.7
+    const decimalMoney = raw.match(/^(\d+)\.(\d{2})$/);
+
+    if (decimalMoney) {
+      const dollars = decimalMoney[1];
+      const cents = Number(decimalMoney[2]);
+
+      return `${dollars}.${cents / 10}`;
+    }
+
+    // 10 dollars 7 cents -> 10.7
     const numericDollarCents = raw.match(
       /^(\d+(?:\.\d+)?)\s*dollars?\s*(?:and\s*)?(\d+)\s*cents?$/,
     );
@@ -1187,72 +1195,26 @@ Respond with ONLY a JSON object. No markdown. Format:
       const dollars = Number(numericDollarCents[1]);
       const cents = Number(numericDollarCents[2]);
 
-      return String(dollars + Number(`0.${cents}`));
+      return `${dollars}.${cents / 10}`;
     }
 
-    // -----------------------------------------
-    // Numeric cents only
-    // "7 cents" -> 0.7
-    // "50 cents" -> 0.5
-    // -----------------------------------------
+    // 7 cents -> 0.7
     const numericCents = raw.match(/^(\d+)\s*cents?$/);
 
     if (numericCents) {
       const cents = Number(numericCents[1]);
 
-      return String(Number(`0.${cents}`));
+      return String(cents / 10);
     }
 
-    // -----------------------------------------
-    // Word dollars + cents
-    // "ten dollars seven cents" -> 10.7
-    // "ten dollars fifty cents" -> 10.5
-    // -----------------------------------------
-    const wordDollarCents = raw.match(
-      /^(.+?)\s+dollars?\s*(?:and\s*)?(.+?)\s+cents?$/,
-    );
-
-    if (wordDollarCents) {
-      const dollars = this.wordsToNumber(wordDollarCents[1]);
-      const cents = this.wordsToNumber(wordDollarCents[2]);
-
-      if (dollars != null && cents != null) {
-        return String(dollars + Number(`0.${cents}`));
-      }
-    }
-
-    // -----------------------------------------
-    // Word cents only
-    // "seven cents" -> 0.7
-    // "fifty cents" -> 0.5
-    // -----------------------------------------
-    const wordCents = raw.match(/^(.+?)\s+cents?$/);
-
-    if (wordCents) {
-      const cents = this.wordsToNumber(wordCents[1]);
-
-      if (cents != null) {
-        return String(Number(`0.${cents}`));
-      }
-    }
-
-    // -----------------------------------------
-    // Remove currency words/symbols
-    // -----------------------------------------
     const cleaned = raw.replace(/dollars?|usd|\$/g, '').trim();
 
-    // -----------------------------------------
-    // Numeric amount
-    // -----------------------------------------
     const numeric = cleaned.match(/\d+(?:\.\d+)?/);
 
     if (numeric) {
-      return String(Number(numeric[0]));
+      return numeric[0];
     }
 
-    // -----------------------------------------
-    // Spelled-out number
-    // -----------------------------------------
     const wordNumber = this.wordsToNumber(cleaned);
 
     return wordNumber != null ? String(wordNumber) : '';
