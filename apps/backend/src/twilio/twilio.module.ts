@@ -10,10 +10,12 @@ import { VerificationModule } from '../verification/verification.module';
 import { VerificationRequirementModule } from '../verification-requirement/verification-requirement.module';
 import { BotTrackerModule } from '../bot-tracker/bot-tracker.module';
 import { AudioEmotionModule } from '../audio-emotion/audio-emotion.module';
+import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
   imports: [
     MulterModule.register(),
+    PrismaModule,
     VoiceModule,
     AiModule,
     TranscriptionModule,
