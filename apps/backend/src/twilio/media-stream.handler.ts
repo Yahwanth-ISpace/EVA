@@ -1436,9 +1436,30 @@ export class MediaStreamHandlerService {
             ? pickPurposeOfCallPhrase()
             : null;
 
+        const currentField = state.lastAskedField;
+
+        const currentStep = currentField
+          ? state.verificationStepByField[currentField]
+          : null;
+
+        const isConditionalYesNoField =
+          !!currentStep &&
+          ((currentStep.dependencies?.length ?? 0) > 0 ||
+            /yes\s+or\s+no/i.test(currentStep.rule ?? ''));
+
+        this.logger.log(
+          `[ConditionalDebug] field=${state.lastAskedField} ` +
+            `answer="${userSaid}" ` +
+            `step=${JSON.stringify(
+              state.lastAskedField
+                ? state.verificationStepByField[state.lastAskedField]
+                : null,
+            )}`,
+        );
         const bareYesAdvanceReply =
           state.tpaBenefitQnaOpen &&
           isTpaBareAffirmative(userSaid) &&
+          !isConditionalYesNoField &&
           !recallReply &&
           !identityDirectReply &&
           !valueConfirmReply &&
@@ -1449,6 +1470,7 @@ export class MediaStreamHandlerService {
                   state.extractedData,
                   state.orderedFields,
                 );
+
                 return miss
                   ? `${pickPostValueAcknowledgement()} ${qField(miss)}`
                   : pickPostValueAcknowledgement();
@@ -1565,6 +1587,7 @@ export class MediaStreamHandlerService {
 
         const hasValue = (v: string | null) =>
           v != null && String(v).trim().length > 0;
+
         // After-hold safeguard: we were asking for lastAskedField; if user gave a value but AI put
         // it in the wrong field, assign to lastAskedField only — UNLESS the transcript is clearly
         // a different type than the expected field (e.g. expected=validity but TPA said "twenty-four
@@ -1594,8 +1617,12 @@ export class MediaStreamHandlerService {
           );
           if (!hasExpected) {
             const corrected = extractValueForField(userSaid, expectedField);
+
             if (corrected) {
-              extractedUpdates = { [expectedField]: corrected };
+              extractedUpdates = {
+                ...extractedUpdates,
+                [expectedField]: corrected,
+              };
             }
           }
         }
@@ -1691,36 +1718,73 @@ export class MediaStreamHandlerService {
           for (const [key, val] of Object.entries(extractedUpdates)) {
             if (!hasValue(val ?? null)) continue;
 
-            state.extractedData[key] = val ?? null;
+            let normalizedValue = String(val).trim();
 
-            const step = state.verificationStepByField[key];
-
-            if (!step?.dependencies?.length) {
-              continue;
+            // Normalize YES/NO answers.
+            if (this.answerIsYes(normalizedValue)) {
+              normalizedValue = 'yes';
+            } else if (this.answerIsNo(normalizedValue)) {
+              normalizedValue = 'no';
             }
 
-            const answer = String(val).trim().toLowerCase();
+            state.extractedData[key] = normalizedValue;
 
-            // Only "Yes" follows dependencies.
-            if (answer === 'yes') {
-              continue;
-            }
-
-            // Every other answer skips dependent questions.
-            for (const procedureCode of step.dependencies) {
-              const dependent =
-                state.verificationStepByProcedureCode[
-                  procedureCode.toUpperCase()
-                ];
-
-              if (!dependent) continue;
-
-              if (!hasValue(state.extractedData[dependent.field])) {
-                state.extractedData[dependent.field] = '__SKIPPED__';
-              }
-            }
+            // IMPORTANT:
+            // Process dependency rules immediately after storing the value.
+            this.processDependencies(state, key, normalizedValue);
           }
         }
+
+        // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+        //   for (const [key, val] of Object.entries(extractedUpdates)) {
+        //     if (!hasValue(val ?? null)) continue;
+
+        //     state.extractedData[key] = val ?? null;
+
+        //     const step = state.verificationStepByField[key];
+
+        //     if (!step?.dependencies?.length) {
+        //       continue;
+        //     }
+
+        //     const answer = String(val).trim().toLowerCase();
+
+        //     if (this.answerIsYes(answer)) {
+        //       continue;
+        //     }
+
+        //     if (!this.answerIsNo(answer)) {
+        //       for (const procedureCode of step.dependencies) {
+        //         const dependent =
+        //           state.verificationStepByProcedureCode[
+        //             procedureCode.toUpperCase()
+        //           ];
+
+        //         if (!dependent) continue;
+
+        //         if (!hasValue(state.extractedData[dependent.field])) {
+        //           state.extractedData[dependent.field] = '__SKIPPED__';
+        //         }
+        //       }
+
+        //       continue;
+        //     }
+
+        //     // Every other answer skips dependent questions.
+        //     for (const procedureCode of step.dependencies) {
+        //       const dependent =
+        //         state.verificationStepByProcedureCode[
+        //           procedureCode.toUpperCase()
+        //         ];
+
+        //       if (!dependent) continue;
+
+        //       if (!hasValue(state.extractedData[dependent.field])) {
+        //         state.extractedData[dependent.field] = '__SKIPPED__';
+        //       }
+        //     }
+        //   }
+        // }
 
         state.lastAskedField = getFirstMissingField(
           state.extractedData,
@@ -2524,32 +2588,86 @@ export class MediaStreamHandlerService {
   private answerIsYes(value?: string | null): boolean {
     if (!value) return false;
 
-    return ['yes', 'y', 'true', 'covered'].includes(value.trim().toLowerCase());
+    return ['yes', 'y', 'yeah', 'yep', 'yup', 'true', 'covered'].includes(
+      value.trim().toLowerCase(),
+    );
+  }
+
+  private hasValue(value: string | null | undefined): boolean {
+    return value != null && String(value).trim().length > 0;
+  }
+
+  private answerIsNo(value?: string | null): boolean {
+    if (!value) return false;
+
+    return ['no', 'n', 'nope', 'nah', 'false', 'not covered', 'none'].includes(
+      value.trim().toLowerCase(),
+    );
   }
 
   private processDependencies(
     state: StreamState,
     field: string,
     value: unknown,
-  ) {
+  ): void {
     const step = state.verificationStepByField[field];
 
     if (!step?.dependencies?.length) {
       return;
     }
 
-    if (String(value).trim().toLowerCase() !== 'no') {
+    const answer = String(value ?? '')
+      .trim()
+      .toLowerCase();
+
+    // YES:
+    // Keep all dependency fields active.
+    // If they were previously skipped, make them available again.
+    if (this.answerIsYes(answer)) {
+      for (const procedureCode of step.dependencies) {
+        const dependent =
+          state.verificationStepByProcedureCode[procedureCode.toUpperCase()];
+
+        if (!dependent) continue;
+
+        if (state.extractedData[dependent.field] === '__SKIPPED__') {
+          delete state.extractedData[dependent.field];
+        }
+      }
+
+      this.logger.log(
+        `[MediaStream] Dependency YES: ${field}=${answer}; dependencies remain active: ${step.dependencies.join(', ')}`,
+      );
+
       return;
     }
 
-    for (const procedureCode of step.dependencies) {
-      const dependent =
-        state.verificationStepByProcedureCode[procedureCode.toUpperCase()];
+    // NO:
+    // Skip all dependency fields.
+    if (this.answerIsNo(answer)) {
+      for (const procedureCode of step.dependencies) {
+        const dependent =
+          state.verificationStepByProcedureCode[procedureCode.toUpperCase()];
 
-      if (!dependent) continue;
+        if (!dependent) continue;
 
-      state.extractedData[dependent.field] = '__SKIPPED__';
+        if (!this.hasValue(state.extractedData[dependent.field])) {
+          state.extractedData[dependent.field] = '__SKIPPED__';
+        }
+      }
+
+      this.logger.log(
+        `[MediaStream] Dependency NO: ${field}=${answer}; skipping dependencies: ${step.dependencies.join(', ')}`,
+      );
+
+      return;
     }
+
+    // Unknown answer:
+    // Do NOT skip anything.
+    this.logger.warn(
+      `[MediaStream] Dependency answer unclear: field=${field}, value=${String(value)}`,
+    );
   }
 
   private ensureTpaIvrState(callSid: string | null): TpaIvrRuntimeState {
