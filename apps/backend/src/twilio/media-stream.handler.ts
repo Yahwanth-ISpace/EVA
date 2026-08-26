@@ -1456,6 +1456,7 @@ export class MediaStreamHandlerService {
                 : null,
             )}`,
         );
+
         const bareYesAdvanceReply =
           state.tpaBenefitQnaOpen &&
           isTpaBareAffirmative(userSaid) &&
@@ -1480,7 +1481,7 @@ export class MediaStreamHandlerService {
         let nextMessage = '';
         let extractedUpdates: Record<string, string | null> = {};
         let endCall = false;
-
+        
         const skipLlmDueToNoise =
           !recallReply &&
           !identityDirectReply &&
@@ -1691,49 +1692,49 @@ export class MediaStreamHandlerService {
 
         const extractedBeforeTurn = { ...state.extractedData };
 
-        // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
-        //   for (const [key, val] of Object.entries(extractedUpdates)) {
-        //     if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
-        //   }
-
-        //   // If we just asked "does this patient have any history?" and they said no, skip remaining fields.
-        //   if (state.lastAskedField === 'history') {
-        //     const val = String(
-        //       state.extractedData['history'] ?? '',
-        //     ).toLowerCase();
-        //     if (val.includes('no') || val === 'none' || val === 'false') {
-        //       for (const f of orderedF) {
-        //         if (
-        //           f.includes('history.') &&
-        //           !hasValue(state.extractedData[f] ?? null)
-        //         ) {
-        //           state.extractedData[f] = 'skipped (no history)';
-        //         }
-        //       }
-        //     }
-        //   }
-        // }
-
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
           for (const [key, val] of Object.entries(extractedUpdates)) {
-            if (!hasValue(val ?? null)) continue;
+            if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
+          }
 
-            let normalizedValue = String(val).trim();
-
-            // Normalize YES/NO answers.
-            if (this.answerIsYes(normalizedValue)) {
-              normalizedValue = 'yes';
-            } else if (this.answerIsNo(normalizedValue)) {
-              normalizedValue = 'no';
+          // If we just asked "does this patient have any history?" and they said no, skip remaining fields.
+          if (state.lastAskedField === 'history') {
+            const val = String(
+              state.extractedData['history'] ?? '',
+            ).toLowerCase();
+            if (val.includes('no') || val === 'none' || val === 'false') {
+              for (const f of orderedF) {
+                if (
+                  f.includes('history.') &&
+                  !hasValue(state.extractedData[f] ?? null)
+                ) {
+                  state.extractedData[f] = 'skipped (no history)';
+                }
+              }
             }
-
-            state.extractedData[key] = normalizedValue;
-
-            // IMPORTANT:
-            // Process dependency rules immediately after storing the value.
-            this.processDependencies(state, key, normalizedValue);
           }
         }
+
+        // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+        //   for (const [key, val] of Object.entries(extractedUpdates)) {
+        //     if (!hasValue(val ?? null)) continue;
+
+        //     let normalizedValue = String(val).trim();
+
+        //     // Normalize YES/NO answers.
+        //     if (this.answerIsYes(normalizedValue)) {
+        //       normalizedValue = 'yes';
+        //     } else if (this.answerIsNo(normalizedValue)) {
+        //       normalizedValue = 'no';
+        //     }
+
+        //     state.extractedData[key] = normalizedValue;
+
+        //     // IMPORTANT:
+        //     // Process dependency rules immediately after storing the value.
+        //     this.processDependencies(state, key, normalizedValue);
+        //   }
+        // }
 
         // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
         //   for (const [key, val] of Object.entries(extractedUpdates)) {
