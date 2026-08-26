@@ -333,7 +333,7 @@ export class MediaStreamHandlerService {
         );
         return;
       }
-      
+
       const fields = state.orderedFields.length
         ? state.orderedFields
         : ['coverage', 'deductible', 'copay', 'validity'];
@@ -1482,7 +1482,7 @@ export class MediaStreamHandlerService {
         let nextMessage = '';
         let extractedUpdates: Record<string, string | null> = {};
         let endCall = false;
-        
+
         const skipLlmDueToNoise =
           !recallReply &&
           !identityDirectReply &&
@@ -1693,49 +1693,74 @@ export class MediaStreamHandlerService {
 
         const extractedBeforeTurn = { ...state.extractedData };
 
+        // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+        //   for (const [key, val] of Object.entries(extractedUpdates)) {
+        //     if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
+        //   }
+
+        //   // If we just asked "does this patient have any history?" and they said no, skip remaining fields.
+        //   if (state.lastAskedField === 'history') {
+        //     const val = String(
+        //       state.extractedData['history'] ?? '',
+        //     ).toLowerCase();
+        //     if (val.includes('no') || val === 'none' || val === 'false') {
+        //       for (const f of orderedF) {
+        //         if (
+        //           f.includes('history.') &&
+        //           !hasValue(state.extractedData[f] ?? null)
+        //         ) {
+        //           state.extractedData[f] = 'skipped (no history)';
+        //         }
+        //       }
+        //     }
+        //   }
+        // }
+
+        // 1. Store + normalize extracted values
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
           for (const [key, val] of Object.entries(extractedUpdates)) {
-            if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
-          }
+            if (!hasValue(val ?? null)) continue;
 
-          // If we just asked "does this patient have any history?" and they said no, skip remaining fields.
-          if (state.lastAskedField === 'history') {
-            const val = String(
-              state.extractedData['history'] ?? '',
-            ).toLowerCase();
-            if (val.includes('no') || val === 'none' || val === 'false') {
-              for (const f of orderedF) {
+            let normalizedValue = String(val).trim();
+
+            if (this.answerIsYes(normalizedValue)) {
+              normalizedValue = 'yes';
+            } else if (this.answerIsNo(normalizedValue)) {
+              normalizedValue = 'no';
+            }
+
+            state.extractedData[key] = normalizedValue;
+
+            // 2. Dependency processing
+            this.processDependencies(state, key, normalizedValue);
+
+            // 3. NO on a history question = finish history
+            if (
+              key.startsWith('history.') &&
+              this.answerIsNo(normalizedValue)
+            ) {
+              for (const field of orderedF) {
                 if (
-                  f.includes('history.') &&
-                  !hasValue(state.extractedData[f] ?? null)
+                  field.startsWith('history.') &&
+                  !hasValue(state.extractedData[field] ?? null)
                 ) {
-                  state.extractedData[f] = 'skipped (no history)';
+                  state.extractedData[field] = '__SKIPPED__';
                 }
               }
+
+              state.lastAskedField = null;
+              state.justCompletedAllFields = true;
             }
           }
         }
 
-        // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
-        //   for (const [key, val] of Object.entries(extractedUpdates)) {
-        //     if (!hasValue(val ?? null)) continue;
-
-        //     let normalizedValue = String(val).trim();
-
-        //     // Normalize YES/NO answers.
-        //     if (this.answerIsYes(normalizedValue)) {
-        //       normalizedValue = 'yes';
-        //     } else if (this.answerIsNo(normalizedValue)) {
-        //       normalizedValue = 'no';
-        //     }
-
-        //     state.extractedData[key] = normalizedValue;
-
-        //     // IMPORTANT:
-        //     // Process dependency rules immediately after storing the value.
-        //     this.processDependencies(state, key, normalizedValue);
-        //   }
-        // }
+        // 4. Normal next-field calculation for YES / normal answers
+        if (!state.justCompletedAllFields) {
+          state.lastAskedField = getFirstMissingField(
+            state.extractedData,
+            state.orderedFields,
+          );
+        }
 
         // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
         //   for (const [key, val] of Object.entries(extractedUpdates)) {
