@@ -76,6 +76,8 @@ export interface StreamState {
   /** TPA said they found/located the patient — identity verification treated as done. */
   tpaPatientLocated: boolean;
 
+  agentId: string | null;
+
   verificationStepByField: Record<string, PatientVerificationStep>;
   verificationStepByProcedureCode: Record<string, PatientVerificationStep>;
 }

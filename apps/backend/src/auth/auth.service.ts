@@ -32,7 +32,7 @@ export class AuthService {
     const role: PrismaRole = dto.role
       ? (dto.role as PrismaRole)
       : PrismaRole.OPERATOR;
-
+ 
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,

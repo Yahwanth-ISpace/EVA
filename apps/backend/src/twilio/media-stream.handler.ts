@@ -13,6 +13,8 @@
  * - `logging.ts` — log line truncation
  */
 import { Injectable, Logger } from '@nestjs/common';
+import { AgentStatus } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -177,7 +179,41 @@ export class MediaStreamHandlerService {
     private readonly botTrackerService: BotTrackerService,
     private readonly twilioService: TwilioService,
     private readonly audioEmotionService: AudioEmotionService,
+    private readonly prisma: PrismaService,
   ) {}
+
+  private async releaseAgent(
+    agentId: string | null,
+    reason: string,
+  ): Promise<void> {
+    if (!agentId) {
+      this.logger.warn(
+        `[AgentStatus] Cannot reset agent to READY — agentId is missing. reason=${reason}`,
+      );
+      return;
+    }
+
+    try {
+      await this.prisma.agent.update({
+        where: {
+          id: agentId,
+        },
+        data: {
+          status: AgentStatus.READY,
+          startTime: null,
+        },
+      });
+
+      this.logger.log(
+        `[AgentStatus] Agent ${agentId} → READY. reason=${reason}`,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `[AgentStatus] Failed to reset agent ${agentId} → READY. reason=${reason}`,
+        error?.message,
+      );
+    }
+  }
 
   handleConnection(
     ws: WebSocket,
@@ -224,6 +260,7 @@ export class MediaStreamHandlerService {
       evaSocialGreetDone: false,
       evaIntroIdentitySaid: false,
       tpaPatientLocated: false,
+      agentId: null,
       verificationStepByField: {},
       verificationStepByProcedureCode: {},
     };
@@ -329,19 +366,24 @@ export class MediaStreamHandlerService {
 
     const doPostGoodbyeHangUp = () => {
       if (state.callEnded) return;
+
       state.callEnded = true;
       state.postGoodbyeUntil = null;
+
       if (state.postGoodbyeTimeoutId) {
         clearTimeout(state.postGoodbyeTimeoutId);
         state.postGoodbyeTimeoutId = null;
       }
+
       if (state.fallbackTimer) {
         clearInterval(state.fallbackTimer);
         state.fallbackTimer = null;
       }
+
       const fields = state.orderedFields.length
         ? state.orderedFields
         : ['coverage', 'deductible', 'copay', 'validity'];
+
       const hasAny =
         state.patientId &&
         fields.some(
@@ -349,9 +391,14 @@ export class MediaStreamHandlerService {
             state.extractedData[f] != null &&
             String(state.extractedData[f]).trim(),
         );
-      if (hasAny) pushToVerificationService();
+
+      if (hasAny) {
+        pushToVerificationService();
+      }
+
       const sid = state.callSid;
-      if (sid)
+
+      if (sid) {
         this.twilioService
           .hangUp(sid)
           .catch((e) =>
@@ -359,7 +406,16 @@ export class MediaStreamHandlerService {
               '[MediaStream] Hang up failed',
               (e as Error)?.message,
             ),
-          );
+          )
+          .finally(() => {
+            void this.releaseAgent(state.agentId, 'normal call completion');
+          });
+      } else {
+        void this.releaseAgent(
+          state.agentId,
+          'normal call completion - no callSid',
+        );
+      }
     };
 
     const tryTriggerProcess = () => {
@@ -2241,6 +2297,12 @@ export class MediaStreamHandlerService {
       if (event === 'start') {
         state.streamSid = msg?.streamSid ?? msg?.start?.streamSid ?? null;
         state.callSid = msg?.start?.callSid ?? msg?.callSid ?? null;
+        const agentId =
+          msg?.start?.customParameters?.AgentId ??
+          msg?.start?.customParameters?.agentId ??
+          null;
+
+        state.agentId = agentId;
         this.logCallEvent(
           state.callSid,
           `start mode=${state.mode} patientId=${state.patientId ?? 'none'}`,
@@ -2402,6 +2464,7 @@ export class MediaStreamHandlerService {
             '[MediaStream] Call stopped but patientId missing — verification NOT saved. Use ?patientId=... or ?payeeId=... in stream URL.',
           );
         }
+        void this.releaseAgent(state.agentId, 'Twilio media stream stopped');
       }
     });
 
@@ -2418,10 +2481,16 @@ export class MediaStreamHandlerService {
         clearTimeout(state.postGoodbyeTimeoutId);
         state.postGoodbyeTimeoutId = null;
       }
+
+      void this.releaseAgent(state.agentId, 'WebSocket closed');
     });
 
     ws.on('error', (err) => {
       this.logger.warn('[MediaStream] WebSocket error', err?.message);
+      void this.releaseAgent(
+        state.agentId,
+        `WebSocket error: ${err?.message ?? 'unknown'}`,
+      );
     });
 
     // Fallback: if we never detect silence but have enough audio, process every N seconds
