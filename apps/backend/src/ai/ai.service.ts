@@ -1710,9 +1710,46 @@ INSTRUCTIONS:
 3. Return a JSON array of objects with exactly two keys: "question" and "answer".
 4. If the USER provided multiple distinct values (e.g., two dates), provide them in "answer" as an array of strings, or as a single string joined by " and " or a comma. Preserve the question text exactly as EVA spoke it in the transcript.
 5. For the USER answer (answer), normalize it to a clean value:
-  - Convert spoken numbers to digits: "twenty dollars" → "20", "one hundred" → "100", "fourteen" → "14"
-  - Keep percentages as is or convert: "eighty percent" → "80", "twenty five %" → "25"
-  - Remove filler words and normalize: "Uh, it is, uh, two forty-four" → "244"
+
+  - Convert spoken numbers to digits:
+    "twenty" → "20"
+    "one hundred" → "100"
+    "fourteen" → "14"
+
+  - MONEY / DOLLAR VALUES:
+    - Preserve the complete dollar and cents value as one numeric value.
+    - When both dollars and cents are spoken, do NOT split them.
+    - Use standard decimal notation when extracting the raw value:
+      "ten dollars" → "10"
+      "ten dollars seven cents" → "10.07"
+      "ten dollars and seven cents" → "10.07"
+      "ten dollars fifty cents" → "10.50"
+      "ten dollars and fifty cents" → "10.50"
+      "seven cents" → "0.07"
+      "fifty cents" → "0.50"
+      "twelve dollars seven cents" → "12.07"
+      "fourteen dollars seven cents" → "14.07"
+    - Do NOT return only the cents portion when dollars and cents are both spoken.
+    - Do NOT convert "seven cents" to "07".
+    - If the USER already gives a numeric monetary value such as "12.07", preserve it as "12.07".
+    
+  - Percentages:
+    "eighty percent" → "80"
+    "twenty five %" → "25"
+
+  - Remove filler words and normalize:
+    "Uh, it is, uh, two forty-four" → "244"
+
+  - IMPORTANT:
+    If EVA's question contains a value and the USER confirms it with "Yes", "Correct", etc., the answer must remain the confirmation:
+    EVA: "So the yearly maximum amount is seventeen point five dollars"
+    USER: "Yes"
+    → answer: "Yes"
+    Do NOT extract "17.5" from EVA's question as the USER answer.
+- Do NOT split dollars and cents into separate values.
+- Do NOT return only the cents portion when both dollars and cents are spoken.
+- Do NOT interpret "seven cents" as "07"; return "0.7".
+- For an already numeric monetary value such as "12.07", preserve it as "12.07" for downstream normalization.
   History procedure questions:
     - Preserve ALL dates mentioned.
     - Normalize every date to DD-MM-YYYY.
