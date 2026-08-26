@@ -333,6 +333,7 @@ export class MediaStreamHandlerService {
         );
         return;
       }
+      
       const fields = state.orderedFields.length
         ? state.orderedFields
         : ['coverage', 'deductible', 'copay', 'validity'];
