@@ -978,18 +978,89 @@ Respond with ONLY a JSON object. No markdown. Format:
     return /\d+\s*%|\d+\s*percent|%\s*\d+/.test(t);
   }
 
+  private normalizeDollarAmount(value: string | number | null): string | null {
+    if (value === null || value === undefined) return null;
+
+    const raw = String(value).trim().toLowerCase();
+
+    // Already numeric
+    if (/^\d+(?:\.\d+)?$/.test(raw)) {
+      return raw;
+    }
+
+    // Handle "17 dollars and 50 cents"
+    const dollarCentsMatch = raw.match(
+      /(\d+(?:\.\d+)?)\s*(?:dollars?|bucks?)\s*(?:and\s*)?(\d+)\s*cents?/i,
+    );
+
+    if (dollarCentsMatch) {
+      const dollars = Number(dollarCentsMatch[1]);
+      const cents = Number(dollarCentsMatch[2]);
+
+      return (dollars + cents / 100).toString();
+    }
+
+    // Handle "17 dollars"
+    const dollarsMatch = raw.match(/(\d+(?:\.\d+)?)\s*(?:dollars?|bucks?)/i);
+
+    if (dollarsMatch) {
+      return Number(dollarsMatch[1]).toString();
+    }
+
+    return raw;
+  }
+
   private isDollars(s: string): boolean {
     const t = String(s).trim().toLowerCase();
-    if (/\d+\s*dollars?|\$\s*\d+|\d+\s*\$|dollar\s*\d+/.test(t)) return true;
+
     // Percent sign disqualifies.
     if (/%/.test(t)) return false;
-    // Bare integer (or decimal with $ optional) — the TPA was asked a dollar question
-    // so "24", "$24", "2500.00" are all acceptable dollar amounts.
-    if (/^\$?\d{1,6}(\.\d{1,2})?$/.test(t)) return true;
-    // Spelled-out numbers like "twenty-four dollars", "fourteen dollars", "one hundred dollars".
-    // STT often produces this when the TPA says numbers aloud and the LLM passes it through.
-    // If the phrase ends with "dollar(s)" and contains a known number word, accept it.
-    if (/\bdollars?\b/.test(t) && this.wordsToNumber(t) != null) return true;
+
+    // Dollar + cents:
+    // "17 dollars and 50 cents"
+    // "seventeen dollars and fifty cents"
+    if (/\bdollars?\b.*\bcents?\b/.test(t)) {
+      return true;
+    }
+
+    // Explicit dollar indicators:
+    // "$17"
+    // "17 dollars"
+    // "17 dollar"
+    // "17 usd"
+    if (
+      /\$\s*\d+/.test(t) ||
+      /\d+(?:\.\d+)?\s*dollars?\b/.test(t) ||
+      /\b\d+(?:\.\d+)?\s*usd\b/.test(t)
+    ) {
+      return true;
+    }
+
+    // Bare integer/decimal.
+    // Since this function is called for a dollar question,
+    // "24", "$24", "2500.00" are valid.
+    if (/^\$?\d{1,6}(?:\.\d{1,2})?$/.test(t)) {
+      return true;
+    }
+
+    // Spelled-out dollar amount:
+    // "twenty-four dollars"
+    // "fourteen dollars"
+    // "one hundred dollars"
+    if (/\bdollars?\b/.test(t) && this.wordsToNumber(t) != null) {
+      return true;
+    }
+
+    // Spelled-out dollar + cents:
+    // "seventeen dollars and fifty cents"
+    if (
+      /\bdollars?\b/.test(t) &&
+      /\bcents?\b/.test(t) &&
+      this.parseMoneyWords(t) != null
+    ) {
+      return true;
+    }
+
     return false;
   }
 
@@ -1028,6 +1099,7 @@ Respond with ONLY a JSON object. No markdown. Format:
       hundred: 100,
       thousand: 1000,
     };
+
     const tokens = phrase
       .toLowerCase()
       .replace(/[^a-z0-9\s-]/g, ' ')
@@ -1049,21 +1121,103 @@ Respond with ONLY a JSON object. No markdown. Format:
     return total > 0 ? total : null;
   }
 
+  private parseMoneyWords(value: string): number | null {
+    const t = String(value)
+      .toLowerCase()
+      .replace(/-/g, ' ')
+      .replace(/,/g, ' ')
+      .trim();
+
+    // "seventeen dollars and fifty cents"
+    const dollarCentsMatch = t.match(
+      /^(.+?)\s+dollars?\s+(?:and\s+)?(.+?)\s+cents?$/,
+    );
+
+    if (dollarCentsMatch) {
+      const dollars = this.wordsToNumber(dollarCentsMatch[1]);
+      const cents = this.wordsToNumber(dollarCentsMatch[2]);
+
+      if (dollars != null && cents != null) {
+        return dollars + cents / 100;
+      }
+    }
+
+    // "17 dollars and 50 cents"
+    const numericDollarCentsMatch = t.match(
+      /^(\d+(?:\.\d+)?)\s+dollars?\s+(?:and\s+)?(\d+)\s+cents?$/,
+    );
+
+    if (numericDollarCentsMatch) {
+      const dollars = Number(numericDollarCentsMatch[1]);
+      const cents = Number(numericDollarCentsMatch[2]);
+
+      return dollars + cents / 100;
+    }
+
+    // "seventeen dollars"
+    const dollarWordMatch = t.match(/^(.+?)\s+dollars?$/);
+
+    if (dollarWordMatch) {
+      const dollars = this.wordsToNumber(dollarWordMatch[1]);
+
+      if (dollars != null) {
+        return dollars;
+      }
+    }
+
+    return null;
+  }
+
   public normalizeMoney(value?: string | null): string {
     if (!value) return '';
 
-    const cleaned = value
-      .toLowerCase()
-      .replace(/,/g, '')
-      .replace(/dollars?|usd|\$/g, '')
-      .trim();
+    const raw = String(value).toLowerCase().replace(/,/g, '').trim();
 
-    const numeric = cleaned.match(/\d+(\.\d+)?/);
+    // -----------------------------------------
+    // Dollar + cents
+    // -----------------------------------------
+
+    // "17 dollars and 50 cents"
+    const numericDollarCents = raw.match(
+      /(\d+(?:\.\d+)?)\s*dollars?\s*(?:and\s*)?(\d+)\s*cents?/,
+    );
+
+    if (numericDollarCents) {
+      const dollars = Number(numericDollarCents[1]);
+      const cents = Number(numericDollarCents[2]);
+
+      return String(dollars + cents / 100);
+    }
+
+    // "seventeen dollars and fifty cents"
+    const wordMoney = this.parseMoneyWords(raw);
+
+    if (wordMoney != null) {
+      return String(wordMoney);
+    }
+
+    // -----------------------------------------
+    // Remove currency words/symbols
+    // -----------------------------------------
+
+    const cleaned = raw.replace(/dollars?|usd|\$/g, '').trim();
+
+    // -----------------------------------------
+    // Numeric amount
+    // -----------------------------------------
+
+    const numeric = cleaned.match(/\d+(?:\.\d+)?/);
+
     if (numeric) {
       return numeric[0];
     }
 
+    // -----------------------------------------
+    // Spelled-out number
+    // -----------------------------------------
+
     const wordNumber = this.wordsToNumber(cleaned);
+
     return wordNumber != null ? String(wordNumber) : '';
   }
 
