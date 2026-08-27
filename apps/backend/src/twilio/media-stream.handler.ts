@@ -1575,7 +1575,95 @@ export class MediaStreamHandlerService {
         let gateQuestionAnsweredYes = false;
         let gateNextDependentField: string | null = null;
 
-        if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+        // ---------------------------------------------------------------------------
+        // DIRECT GATE ANSWER DETECTION
+        //
+        // If the field we asked is a gate question, do NOT depend on the LLM to
+        // extract "Yes"/"No". The gate answer controls the state transition directly.
+        //
+        // This prevents the first "Yes" from being treated as an ordinary response
+        // and causing the gate question to be repeated.
+        // ---------------------------------------------------------------------------
+        const expectedGateField = state.lastAskedField
+          ? state.verificationStepByField[state.lastAskedField]
+          : undefined;
+
+        const expectedGateHasDependencies =
+          (expectedGateField?.dependencies?.length ?? 0) > 0;
+
+        if (
+          expectedGateField &&
+          expectedGateHasDependencies &&
+          userSaid &&
+          this.answerIsYes(userSaid)
+        ) {
+          const gateField = expectedGateField.field;
+
+          gateQuestionAnswered = gateField;
+          gateQuestionAnsweredYes = true;
+
+          state.extractedData[gateField] = 'yes';
+
+          this.processDependencies(state, gateField, 'yes');
+
+          for (const procedureCode of expectedGateField.dependencies ?? []) {
+            const dependent =
+              state.verificationStepByProcedureCode[
+                procedureCode.toUpperCase()
+              ];
+
+            if (!dependent) {
+              this.logger.warn(
+                `[MediaStream] Direct Gate YES: dependency ${procedureCode} not found`,
+              );
+              continue;
+            }
+
+            const existingValue = state.extractedData[dependent.field];
+
+            if (existingValue == null || String(existingValue).trim() === '') {
+              gateNextDependentField = dependent.field;
+              break;
+            }
+          }
+
+          this.logger.log(
+            `[MediaStream] DIRECT GATE YES: ` +
+              `gate=${gateField} ` +
+              `next=${gateNextDependentField ?? 'NONE'}`,
+          );
+
+          // Do not let the LLM's extractedUpdates compete with the direct gate answer.
+          extractedUpdates = {};
+        }
+
+        if (
+          expectedGateField &&
+          expectedGateHasDependencies &&
+          userSaid &&
+          this.answerIsNo(userSaid)
+        ) {
+          const gateField = expectedGateField.field;
+
+          gateQuestionAnswered = gateField;
+          answerIsNoOnGateQuestion = true;
+
+          state.extractedData[gateField] = 'no';
+
+          this.processDependencies(state, gateField, 'no');
+
+          this.logger.log(
+            `[MediaStream] DIRECT GATE NO: gate=${gateField}; ending call`,
+          );
+
+          extractedUpdates = {};
+        }
+
+        if (
+          !gateQuestionAnswered &&
+          extractedUpdates &&
+          Object.keys(extractedUpdates).length > 0
+        ) {
           for (const [key, val] of Object.entries(extractedUpdates)) {
             if (!hasValue(val ?? null)) continue;
 
