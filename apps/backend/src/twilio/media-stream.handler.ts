@@ -1693,6 +1693,26 @@ export class MediaStreamHandlerService {
 
         const extractedBeforeTurn = { ...state.extractedData };
 
+        // Works for ANY gate question with dependencies
+        if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+          for (const [key, val] of Object.entries(extractedUpdates)) {
+            if (!hasValue(val ?? null)) continue;
+
+            // Normalize yes/no
+            let normalizedValue = String(val).trim();
+            if (this.answerIsYes(normalizedValue)) {
+              normalizedValue = 'yes';
+            } else if (this.answerIsNo(normalizedValue)) {
+              normalizedValue = 'no';
+            }
+
+            state.extractedData[key] = normalizedValue;
+
+            // Generic: works for any field with dependencies
+            this.processDependencies(state, key, normalizedValue);
+          }
+        }
+
         // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
         //   for (const [key, val] of Object.entries(extractedUpdates)) {
         //     if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
@@ -1717,50 +1737,50 @@ export class MediaStreamHandlerService {
         // }
 
         // 1. Store + normalize extracted values
-        if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
-          for (const [key, val] of Object.entries(extractedUpdates)) {
-            if (!hasValue(val ?? null)) continue;
+        // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+        //   for (const [key, val] of Object.entries(extractedUpdates)) {
+        //     if (!hasValue(val ?? null)) continue;
 
-            let normalizedValue = String(val).trim();
+        //     let normalizedValue = String(val).trim();
 
-            if (this.answerIsYes(normalizedValue)) {
-              normalizedValue = 'yes';
-            } else if (this.answerIsNo(normalizedValue)) {
-              normalizedValue = 'no';
-            }
+        //     if (this.answerIsYes(normalizedValue)) {
+        //       normalizedValue = 'yes';
+        //     } else if (this.answerIsNo(normalizedValue)) {
+        //       normalizedValue = 'no';
+        //     }
 
-            state.extractedData[key] = normalizedValue;
+        //     state.extractedData[key] = normalizedValue;
 
-            // 2. Dependency processing
-            this.processDependencies(state, key, normalizedValue);
+        //     // 2. Dependency processing
+        //     this.processDependencies(state, key, normalizedValue);
 
-            // 3. NO on a history question = finish history
-            if (
-              key.startsWith('history.') &&
-              this.answerIsNo(normalizedValue)
-            ) {
-              for (const field of orderedF) {
-                if (
-                  field.startsWith('history.') &&
-                  !hasValue(state.extractedData[field] ?? null)
-                ) {
-                  state.extractedData[field] = '__SKIPPED__';
-                }
-              }
+        //     // 3. NO on a history question = finish history
+        //     if (
+        //       key.startsWith('history.') &&
+        //       this.answerIsNo(normalizedValue)
+        //     ) {
+        //       for (const field of orderedF) {
+        //         if (
+        //           field.startsWith('history.') &&
+        //           !hasValue(state.extractedData[field] ?? null)
+        //         ) {
+        //           state.extractedData[field] = '__SKIPPED__';
+        //         }
+        //       }
 
-              state.lastAskedField = null;
-              state.justCompletedAllFields = true;
-            }
-          }
-        }
+        //       state.lastAskedField = null;
+        //       state.justCompletedAllFields = true;
+        //     }
+        //   }
+        // }
 
-        // 4. Normal next-field calculation for YES / normal answers
-        if (!state.justCompletedAllFields) {
-          state.lastAskedField = getFirstMissingField(
-            state.extractedData,
-            state.orderedFields,
-          );
-        }
+        // // 4. Normal next-field calculation for YES / normal answers
+        // if (!state.justCompletedAllFields) {
+        //   state.lastAskedField = getFirstMissingField(
+        //     state.extractedData,
+        //     state.orderedFields,
+        //   );
+        // }
 
         // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
         //   for (const [key, val] of Object.entries(extractedUpdates)) {
@@ -2637,8 +2657,10 @@ export class MediaStreamHandlerService {
     field: string,
     value: unknown,
   ): void {
+    // Get the verification step for this field
     const step = state.verificationStepByField[field];
 
+    // No dependencies? Nothing to do
     if (!step?.dependencies?.length) {
       return;
     }
@@ -2647,9 +2669,7 @@ export class MediaStreamHandlerService {
       .trim()
       .toLowerCase();
 
-    // YES:
-    // Keep all dependency fields active.
-    // If they were previously skipped, make them available again.
+    // YES: Keep all dependency fields active
     if (this.answerIsYes(answer)) {
       for (const procedureCode of step.dependencies) {
         const dependent =
@@ -2657,6 +2677,7 @@ export class MediaStreamHandlerService {
 
         if (!dependent) continue;
 
+        // If previously skipped, reactivate it
         if (state.extractedData[dependent.field] === '__SKIPPED__') {
           delete state.extractedData[dependent.field];
         }
@@ -2665,12 +2686,10 @@ export class MediaStreamHandlerService {
       this.logger.log(
         `[MediaStream] Dependency YES: ${field}=${answer}; dependencies remain active: ${step.dependencies.join(', ')}`,
       );
-
       return;
     }
 
-    // NO:
-    // Skip all dependency fields.
+    // NO: Skip all dependency fields
     if (this.answerIsNo(answer)) {
       for (const procedureCode of step.dependencies) {
         const dependent =
@@ -2678,6 +2697,7 @@ export class MediaStreamHandlerService {
 
         if (!dependent) continue;
 
+        // Only skip if not already answered
         if (!this.hasValue(state.extractedData[dependent.field])) {
           state.extractedData[dependent.field] = '__SKIPPED__';
         }
@@ -2686,12 +2706,10 @@ export class MediaStreamHandlerService {
       this.logger.log(
         `[MediaStream] Dependency NO: ${field}=${answer}; skipping dependencies: ${step.dependencies.join(', ')}`,
       );
-
       return;
     }
 
-    // Unknown answer:
-    // Do NOT skip anything.
+    // Ambiguous: Do nothing (LLM will re-ask via the rule)
     this.logger.warn(
       `[MediaStream] Dependency answer unclear: field=${field}, value=${String(value)}`,
     );
