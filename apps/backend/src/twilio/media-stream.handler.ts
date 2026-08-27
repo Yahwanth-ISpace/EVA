@@ -1569,6 +1569,7 @@ export class MediaStreamHandlerService {
         // =========================================================================
         const gateExtracted: Record<string, string | null> = {};
         const benefitExtracted: Record<string, string | null> = {};
+
         let answerIsNoOnGateQuestion = false;
         let gateQuestionAnswered: string | null = null;
         let gateQuestionAnsweredYes = false;
@@ -1588,29 +1589,30 @@ export class MediaStreamHandlerService {
                 normalizedValue = 'yes';
               } else if (this.answerIsNo(normalizedValue)) {
                 normalizedValue = 'no';
-              }
-
-              // Only accept an actual Yes/No for a gate question.
-              if (normalizedValue !== 'yes' && normalizedValue !== 'no') {
-                this.logger.warn(
-                  `[MediaStream] Gate answer is not a valid Yes/No: field=${key} value=${normalizedValue}`,
-                );
+              } else {
                 continue;
               }
 
               gateExtracted[key] = normalizedValue;
               gateQuestionAnswered = key;
 
-              // Store normalized gate answer.
+              // Store the gate answer.
               state.extractedData[key] = normalizedValue;
 
-              // Process dependency state.
+              // Update dependency state.
               this.processDependencies(state, key, normalizedValue);
+
+              if (normalizedValue === 'no') {
+                answerIsNoOnGateQuestion = true;
+              }
 
               if (normalizedValue === 'yes') {
                 gateQuestionAnsweredYes = true;
 
-                // Find the FIRST dependency that still needs to be answered.
+                // IMPORTANT:
+                // Select the first dependency from the gate's dependency list
+                // that is actually present in the verification steps and has
+                // not already been collected.
                 for (const procedureCode of step.dependencies ?? []) {
                   const dependent =
                     state.verificationStepByProcedureCode[
@@ -1618,6 +1620,9 @@ export class MediaStreamHandlerService {
                     ];
 
                   if (!dependent) {
+                    this.logger.warn(
+                      `[MediaStream] Gate YES: dependency ${procedureCode} was not found in verificationStepByProcedureCode`,
+                    );
                     continue;
                   }
 
@@ -1625,8 +1630,7 @@ export class MediaStreamHandlerService {
 
                   if (
                     existingValue == null ||
-                    String(existingValue).trim() === '' ||
-                    existingValue === '__SKIPPED__'
+                    String(existingValue).trim() === ''
                   ) {
                     gateNextDependentField = dependent.field;
                     break;
@@ -1634,28 +1638,31 @@ export class MediaStreamHandlerService {
                 }
 
                 this.logger.log(
-                  `[MediaStream] Gate YES: ${key}=yes; next dependent field=${gateNextDependentField ?? 'none'}`,
+                  `[MediaStream] Gate YES DEBUG: ` +
+                    `gate=${key} ` +
+                    `dependencies=${JSON.stringify(step.dependencies)} ` +
+                    `mappedNext=${gateNextDependentField} ` +
+                    `mappedProcedure=${
+                      gateNextDependentField
+                        ? state.verificationStepByField[gateNextDependentField]
+                            ?.procedureCode
+                        : 'NONE'
+                    }`,
                 );
-              }
-
-              if (normalizedValue === 'no') {
-                answerIsNoOnGateQuestion = true;
 
                 this.logger.log(
-                  `[MediaStream] Gate NO: ${key}=no; ending call immediately`,
+                  `[MediaStream] Gate YES: ${key}=yes; next dependent=${gateNextDependentField ?? 'NONE'}`,
                 );
               }
 
               this.logger.log(
-                `[MediaStream] Gate question answered: ${key}=${normalizedValue} (dependencies: ${step.dependencies?.join(', ') ?? 'none'})`,
+                `[MediaStream] Gate question answered: ${key}=${normalizedValue} dependencies=${step.dependencies?.join(', ') ?? 'none'}`,
               );
             } else {
-              // Normal benefit field.
               benefitExtracted[key] = val ?? null;
             }
           }
         }
-
         // =========================================================================
         // STEP 2: VALIDATE ONLY BENEFIT FIELDS (coverage %, deductible $, etc.)
         // Gate questions already handled, so don't pass them to validation
@@ -1720,10 +1727,18 @@ export class MediaStreamHandlerService {
         // Do NOT run normal field-order / LLM continuation logic after a gate answer.
         // =========================================================================
 
-        state.lastAskedField = getFirstMissingField(
-          state.extractedData,
-          orderedF,
-        );
+        if (gateQuestionAnsweredYes && gateNextDependentField) {
+          state.lastAskedField = gateNextDependentField;
+
+          this.logger.log(
+            `[MediaStream] Gate YES transition: lastAskedField=${state.lastAskedField}`,
+          );
+        } else {
+          state.lastAskedField = getFirstMissingField(
+            state.extractedData,
+            orderedF,
+          );
+        }
 
         if (answerIsNoOnGateQuestion) {
           this.logger.log(
@@ -1827,6 +1842,20 @@ export class MediaStreamHandlerService {
         const goodbye =
           CLOSING_PHRASES[Math.floor(Math.random() * CLOSING_PHRASES.length)];
         let toSpeak = (nextMessage ?? '').trim();
+        const gateYesTransition =
+          gateQuestionAnsweredYes && !!gateNextDependentField;
+
+        if (gateYesTransition) {
+          toSpeak = qField(gateNextDependentField!);
+
+          state.lastAskedField = gateNextDependentField;
+
+          shouldEndCall = false;
+
+          this.logger.log(
+            `[MediaStream] Gate YES HARD TRANSITION: asking ${gateNextDependentField}`,
+          );
+        }
         // Never confirm a validity date the user didn't say: if we were asking for validity and they didn't give a date, only ask for validity (no "is it July 17 2025 right?")
         const userSaidDate =
           /\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}/i.test(
@@ -2217,6 +2246,7 @@ export class MediaStreamHandlerService {
         }
         // After a value is stored: always ack and ask the next field (do not stop on "thanks" alone).
         if (
+          !gateYesTransition &&
           !gateQuestionAnswered &&
           valueCollectedThisTurn &&
           state.tpaBenefitQnaOpen &&
@@ -2226,6 +2256,7 @@ export class MediaStreamHandlerService {
         ) {
           toSpeak = `${pickPostValueAcknowledgement()} ${qField(state.lastAskedField)}`;
         } else if (
+          !gateYesTransition &&
           !gateQuestionAnswered &&
           benefitQnaHandoffThisTurn &&
           state.tpaBenefitQnaOpen &&
@@ -2240,6 +2271,7 @@ export class MediaStreamHandlerService {
             state.lastAskedField = miss;
           }
         } else if (
+          !gateYesTransition &&
           !gateQuestionAnswered &&
           state.tpaBenefitQnaOpen &&
           !state.firstBenefitSoINeedPrefixUsed &&
@@ -2256,6 +2288,28 @@ export class MediaStreamHandlerService {
           if (firstMissing === state.lastAskedField) {
             toSpeak = qField(firstMissing);
           }
+        }
+
+        // ---------------------------------------------------------------------------
+        // FINAL GATE YES OVERRIDE
+        //
+        // A gate YES is a hard state transition.
+        // Do not allow the LLM, field-order enforcement, or value-collected
+        // acknowledgement logic to replace the dependency selected above.
+        // ---------------------------------------------------------------------------
+        if (gateQuestionAnsweredYes && gateNextDependentField) {
+          state.lastAskedField = gateNextDependentField;
+          toSpeak = qField(gateNextDependentField);
+          shouldEndCall = false;
+
+          this.logger.log(
+            `[MediaStream] FINAL GATE YES OVERRIDE: ` +
+              `${gateQuestionAnswered} -> ${gateNextDependentField}`,
+          );
+        }
+
+        if (/I would need the/i.test(toSpeak ?? '')) {
+          state.firstBenefitSoINeedPrefixUsed = true;
         }
 
         if (/I would need the/i.test(toSpeak ?? '')) {
