@@ -2301,13 +2301,21 @@ export class MediaStreamHandlerService {
         // thank-you / acknowledgement, then the next turn will play the final goodbye.
         // ---------------------------------------------------------------------------
         if (state.justCompletedAllFields && !state.allDoneAnnounced) {
-          toSpeak = "That's all I have. Thank you for your help.";
+          toSpeak = "Thank you, that's all I got.";
+
           state.allDoneAnnounced = true;
           state.justCompletedAllFields = false;
-          shouldEndCall = false;
+
+          // Do NOT hang up immediately.
+          // After TTS completes, enter the 4-second post-goodbye window.
+          shouldEndCall = true;
+
+          this.logger.log(
+            `[MediaStream] All verification fields collected — sending final message and waiting up to 4s for TPA goodbye.`,
+          );
         }
 
-        if (shouldEndCall) {
+        if (shouldEndCall && !state.allDoneAnnounced) {
           // Always use a short, no-intro closing — never repeat introduction at end of call.
           toSpeak = goodbye;
           // Will enter post-goodbye below: stay on line briefly in case user responds, then hang up
