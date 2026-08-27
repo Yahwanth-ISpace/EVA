@@ -13,8 +13,6 @@
  * - `logging.ts` — log line truncation
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { AgentStatus } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -179,45 +177,11 @@ export class MediaStreamHandlerService {
     private readonly botTrackerService: BotTrackerService,
     private readonly twilioService: TwilioService,
     private readonly audioEmotionService: AudioEmotionService,
-    private readonly prisma: PrismaService,
   ) {}
-
-  private async releaseAgent(
-    agentId: string | null,
-    reason: string,
-  ): Promise<void> {
-    if (!agentId) {
-      this.logger.warn(
-        `[AgentStatus] Cannot reset agent to READY — agentId is missing. reason=${reason}`,
-      );
-      return;
-    }
-
-    try {
-      await this.prisma.agent.update({
-        where: {
-          id: agentId,
-        },
-        data: {
-          status: AgentStatus.READY,
-          startTime: null,
-        },
-      });
-
-      this.logger.log(
-        `[AgentStatus] Agent ${agentId} → READY. reason=${reason}`,
-      );
-    } catch (error: any) {
-      this.logger.error(
-        `[AgentStatus] Failed to reset agent ${agentId} → READY. reason=${reason}`,
-        error?.message,
-      );
-    }
-  }
 
   handleConnection(
     ws: WebSocket,
-    patientId?: string | null,
+    PatientID?: string | null,
     mode?: string | null,
     AppointmentID?: string | null,
   ): void {
@@ -228,7 +192,7 @@ export class MediaStreamHandlerService {
       callSid: null,
       processing: false,
       fallbackTimer: null,
-      patientId: patientId ?? null,
+      patientId: PatientID ?? null,
       patientInfo: null,
       callContext: null,
       extractedData: {},
@@ -333,7 +297,6 @@ export class MediaStreamHandlerService {
         );
         return;
       }
-
       const fields = state.orderedFields.length
         ? state.orderedFields
         : ['coverage', 'deductible', 'copay', 'validity'];
@@ -367,24 +330,19 @@ export class MediaStreamHandlerService {
 
     const doPostGoodbyeHangUp = () => {
       if (state.callEnded) return;
-
       state.callEnded = true;
       state.postGoodbyeUntil = null;
-
       if (state.postGoodbyeTimeoutId) {
         clearTimeout(state.postGoodbyeTimeoutId);
         state.postGoodbyeTimeoutId = null;
       }
-
       if (state.fallbackTimer) {
         clearInterval(state.fallbackTimer);
         state.fallbackTimer = null;
       }
-
       const fields = state.orderedFields.length
         ? state.orderedFields
         : ['coverage', 'deductible', 'copay', 'validity'];
-
       const hasAny =
         state.patientId &&
         fields.some(
@@ -392,14 +350,9 @@ export class MediaStreamHandlerService {
             state.extractedData[f] != null &&
             String(state.extractedData[f]).trim(),
         );
-
-      if (hasAny) {
-        pushToVerificationService();
-      }
-
+      if (hasAny) pushToVerificationService();
       const sid = state.callSid;
-
-      if (sid) {
+      if (sid)
         this.twilioService
           .hangUp(sid)
           .catch((e) =>
@@ -407,16 +360,7 @@ export class MediaStreamHandlerService {
               '[MediaStream] Hang up failed',
               (e as Error)?.message,
             ),
-          )
-          .finally(() => {
-            void this.releaseAgent(state.agentId, 'normal call completion');
-          });
-      } else {
-        void this.releaseAgent(
-          state.agentId,
-          'normal call completion - no callSid',
-        );
-      }
+          );
     };
 
     const tryTriggerProcess = () => {
@@ -1394,7 +1338,7 @@ export class MediaStreamHandlerService {
         const recallReply = getRecallReply(
           userSaid,
           state.extractedData,
-          state.orderedFields,
+          orderedF,
         );
 
         // Identity short-circuit: when the TPA asks a crisp verification question
@@ -1420,7 +1364,7 @@ export class MediaStreamHandlerService {
             ? (() => {
                 const miss = getFirstMissingField(
                   state.extractedData,
-                  state.orderedFields,
+                  orderedF,
                 );
                 return miss ? qField(miss) : pickBriefAcknowledgement();
               })()
@@ -1437,31 +1381,9 @@ export class MediaStreamHandlerService {
             ? pickPurposeOfCallPhrase()
             : null;
 
-        const currentField = state.lastAskedField;
-
-        const currentStep = currentField
-          ? state.verificationStepByField[currentField]
-          : null;
-
-        const isConditionalYesNoField =
-          !!currentStep &&
-          ((currentStep.dependencies?.length ?? 0) > 0 ||
-            /yes\s+or\s+no/i.test(currentStep.rule ?? ''));
-
-        this.logger.log(
-          `[ConditionalDebug] field=${state.lastAskedField} ` +
-            `answer="${userSaid}" ` +
-            `step=${JSON.stringify(
-              state.lastAskedField
-                ? state.verificationStepByField[state.lastAskedField]
-                : null,
-            )}`,
-        );
-
         const bareYesAdvanceReply =
           state.tpaBenefitQnaOpen &&
           isTpaBareAffirmative(userSaid) &&
-          !isConditionalYesNoField &&
           !recallReply &&
           !identityDirectReply &&
           !valueConfirmReply &&
@@ -1470,9 +1392,8 @@ export class MediaStreamHandlerService {
             ? (() => {
                 const miss = getFirstMissingField(
                   state.extractedData,
-                  state.orderedFields,
+                  orderedF,
                 );
-
                 return miss
                   ? `${pickPostValueAcknowledgement()} ${qField(miss)}`
                   : pickPostValueAcknowledgement();
@@ -1492,8 +1413,8 @@ export class MediaStreamHandlerService {
         if (skipLlmDueToNoise) {
           const miss =
             state.lastAskedField ??
-            getFirstMissingField(state.extractedData, state.orderedFields) ??
-            state.orderedFields[0];
+            getFirstMissingField(state.extractedData, orderedF) ??
+            orderedF[0];
           noiseSkipMessage =
             "I'm having trouble hearing you clearly. " +
             qField(miss ?? 'coverage');
@@ -1535,7 +1456,7 @@ export class MediaStreamHandlerService {
           llmMs = 0;
           const missHandoff = getFirstMissingField(
             state.extractedData,
-            state.orderedFields,
+            orderedF,
           );
           if (missHandoff) state.lastAskedField = missHandoff;
         } else if (purposeOnlyReply) {
@@ -1549,10 +1470,7 @@ export class MediaStreamHandlerService {
           extractedUpdates = {};
           endCall = false;
           llmMs = 0;
-          const missYes = getFirstMissingField(
-            state.extractedData,
-            state.orderedFields,
-          );
+          const missYes = getFirstMissingField(state.extractedData, orderedF);
           if (missYes) state.lastAskedField = missYes;
         } else if (earlyAckAfterPurpose) {
           nextMessage = pickBriefAcknowledgement();
@@ -1589,7 +1507,6 @@ export class MediaStreamHandlerService {
 
         const hasValue = (v: string | null) =>
           v != null && String(v).trim().length > 0;
-
         // After-hold safeguard: we were asking for lastAskedField; if user gave a value but AI put
         // it in the wrong field, assign to lastAskedField only — UNLESS the transcript is clearly
         // a different type than the expected field (e.g. expected=validity but TPA said "twenty-four
@@ -1619,12 +1536,8 @@ export class MediaStreamHandlerService {
           );
           if (!hasExpected) {
             const corrected = extractValueForField(userSaid, expectedField);
-
             if (corrected) {
-              extractedUpdates = {
-                ...extractedUpdates,
-                [expectedField]: corrected,
-              };
+              extractedUpdates = { [expectedField]: corrected };
             }
           }
         }
@@ -1646,23 +1559,79 @@ export class MediaStreamHandlerService {
           extractedUpdates = cleaned;
         }
 
-        // Data validation: coverage = %, deductible/copay = $, validity = date (month and year). Polite correction if wrong type.
+        const extractedBeforeTurn = { ...state.extractedData };
+
+        // =========================================================================
+        // STEP 1: PROCESS GATE QUESTIONS FIRST (before standard benefit validation)
+        // Gate questions have dependencies (e.g. "Is Orthodontics covered?")
+        // Their answers are YES/NO, not benefit values, so skip standard validation
+        // =========================================================================
+        const gateExtracted: Record<string, string | null> = {};
+        const benefitExtracted: Record<string, string | null> = {};
+        let answerIsNoOnGateQuestion = false;
+        let gateQuestionAnswered: string | null = null;
+
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+          for (const [key, val] of Object.entries(extractedUpdates)) {
+            if (!hasValue(val ?? null)) continue;
+
+            const step = state.verificationStepByField[key];
+            const hasGateDependencies = step?.dependencies?.length ?? 0 > 0;
+
+            if (hasGateDependencies) {
+              // This is a gate question — normalize yes/no and process immediately
+              let normalizedValue = String(val).trim();
+              if (this.answerIsYes(normalizedValue)) {
+                normalizedValue = 'yes';
+              } else if (this.answerIsNo(normalizedValue)) {
+                normalizedValue = 'no';
+              }
+
+              gateExtracted[key] = normalizedValue;
+              gateQuestionAnswered = key;
+
+              // Store it immediately
+              state.extractedData[key] = normalizedValue;
+
+              // Process dependencies: YES keeps them active, NO marks __SKIPPED__
+              this.processDependencies(state, key, normalizedValue);
+
+              // Track if we got a NO on a gate question
+              if (this.answerIsNo(normalizedValue)) {
+                answerIsNoOnGateQuestion = true;
+              }
+
+              this.logger.log(
+                `[MediaStream] Gate question answered: ${key}=${normalizedValue} (dependencies: ${step?.dependencies?.join(', ') ?? 'none'})`,
+              );
+            } else {
+              // Benefit field — will validate later
+              benefitExtracted[key] = val ?? null;
+            }
+          }
+        }
+
+        // =========================================================================
+        // STEP 2: VALIDATE ONLY BENEFIT FIELDS (coverage %, deductible $, etc.)
+        // Gate questions already handled, so don't pass them to validation
+        // =========================================================================
+        if (Object.keys(benefitExtracted).length > 0) {
           const scrubbed: Record<string, string | null> = {};
-          for (const [k, v] of Object.entries(extractedUpdates)) {
+          for (const [k, v] of Object.entries(benefitExtracted)) {
             if (v != null && String(v).trim() && orderedF.includes(k)) {
               scrubbed[k] = scrubRawBenefitValue(k, String(v), userSaid);
             } else if (v != null) {
               scrubbed[k] = v;
             }
           }
-          extractedUpdates = scrubbed;
+
           const validation =
             this.aiService.validateAndNormalizeBenefitExtracted(
-              extractedUpdates,
+              scrubbed,
               userSaid,
               orderedF,
             );
+
           if (!validation.ok) {
             const vmsg = validation.correctionMessage ?? '';
             if (
@@ -1688,155 +1657,37 @@ export class MediaStreamHandlerService {
             state.processing = false;
             return;
           }
-          extractedUpdates = validation.normalized;
-        }
 
-        const extractedBeforeTurn = { ...state.extractedData };
-
-        // Works for ANY gate question with dependencies
-        if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
-          for (const [key, val] of Object.entries(extractedUpdates)) {
-            if (!hasValue(val ?? null)) continue;
-
-            // Normalize yes/no
-            let normalizedValue = String(val).trim();
-            if (this.answerIsYes(normalizedValue)) {
-              normalizedValue = 'yes';
-            } else if (this.answerIsNo(normalizedValue)) {
-              normalizedValue = 'no';
-            }
-
-            state.extractedData[key] = normalizedValue;
-
-            // Generic: works for any field with dependencies
-            this.processDependencies(state, key, normalizedValue);
+          // Store validated benefit fields
+          for (const [k, v] of Object.entries(validation.normalized)) {
+            state.extractedData[k] = v ?? null;
           }
         }
 
-        // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
-        //   for (const [key, val] of Object.entries(extractedUpdates)) {
-        //     if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
-        //   }
-
-        //   // If we just asked "does this patient have any history?" and they said no, skip remaining fields.
-        //   if (state.lastAskedField === 'history') {
-        //     const val = String(
-        //       state.extractedData['history'] ?? '',
-        //     ).toLowerCase();
-        //     if (val.includes('no') || val === 'none' || val === 'false') {
-        //       for (const f of orderedF) {
-        //         if (
-        //           f.includes('history.') &&
-        //           !hasValue(state.extractedData[f] ?? null)
-        //         ) {
-        //           state.extractedData[f] = 'skipped (no history)';
-        //         }
-        //       }
-        //     }
-        //   }
-        // }
-
-        // 1. Store + normalize extracted values
-        // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
-        //   for (const [key, val] of Object.entries(extractedUpdates)) {
-        //     if (!hasValue(val ?? null)) continue;
-
-        //     let normalizedValue = String(val).trim();
-
-        //     if (this.answerIsYes(normalizedValue)) {
-        //       normalizedValue = 'yes';
-        //     } else if (this.answerIsNo(normalizedValue)) {
-        //       normalizedValue = 'no';
-        //     }
-
-        //     state.extractedData[key] = normalizedValue;
-
-        //     // 2. Dependency processing
-        //     this.processDependencies(state, key, normalizedValue);
-
-        //     // 3. NO on a history question = finish history
-        //     if (
-        //       key.startsWith('history.') &&
-        //       this.answerIsNo(normalizedValue)
-        //     ) {
-        //       for (const field of orderedF) {
-        //         if (
-        //           field.startsWith('history.') &&
-        //           !hasValue(state.extractedData[field] ?? null)
-        //         ) {
-        //           state.extractedData[field] = '__SKIPPED__';
-        //         }
-        //       }
-
-        //       state.lastAskedField = null;
-        //       state.justCompletedAllFields = true;
-        //     }
-        //   }
-        // }
-
-        // // 4. Normal next-field calculation for YES / normal answers
-        // if (!state.justCompletedAllFields) {
-        //   state.lastAskedField = getFirstMissingField(
-        //     state.extractedData,
-        //     state.orderedFields,
-        //   );
-        // }
-
-        // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
-        //   for (const [key, val] of Object.entries(extractedUpdates)) {
-        //     if (!hasValue(val ?? null)) continue;
-
-        //     state.extractedData[key] = val ?? null;
-
-        //     const step = state.verificationStepByField[key];
-
-        //     if (!step?.dependencies?.length) {
-        //       continue;
-        //     }
-
-        //     const answer = String(val).trim().toLowerCase();
-
-        //     if (this.answerIsYes(answer)) {
-        //       continue;
-        //     }
-
-        //     if (!this.answerIsNo(answer)) {
-        //       for (const procedureCode of step.dependencies) {
-        //         const dependent =
-        //           state.verificationStepByProcedureCode[
-        //             procedureCode.toUpperCase()
-        //           ];
-
-        //         if (!dependent) continue;
-
-        //         if (!hasValue(state.extractedData[dependent.field])) {
-        //           state.extractedData[dependent.field] = '__SKIPPED__';
-        //         }
-        //       }
-
-        //       continue;
-        //     }
-
-        //     // Every other answer skips dependent questions.
-        //     for (const procedureCode of step.dependencies) {
-        //       const dependent =
-        //         state.verificationStepByProcedureCode[
-        //           procedureCode.toUpperCase()
-        //         ];
-
-        //       if (!dependent) continue;
-
-        //       if (!hasValue(state.extractedData[dependent.field])) {
-        //         state.extractedData[dependent.field] = '__SKIPPED__';
-        //       }
-        //     }
-        //   }
-        // }
-
+        // =========================================================================
+        // STEP 3: CHECK IF WE'RE DONE AFTER GATE ANSWER
+        // If NO was answered on a gate question, all dependents are __SKIPPED__
+        // If all fields are now collected/skipped, trigger immediate close
+        // =========================================================================
         state.lastAskedField = getFirstMissingField(
           state.extractedData,
-          state.orderedFields,
+          orderedF,
         );
+
+        const allCollectedOrSkipped = orderedF.every((f) => {
+          const val = state.extractedData[f];
+          return val != null && String(val).trim().length > 0;
+        });
+
+        // If user answered NO on a gate question and all fields are now collected/skipped
+        if (answerIsNoOnGateQuestion && allCollectedOrSkipped) {
+          this.logger.log(
+            `[MediaStream] Gate question answered NO (${gateQuestionAnswered}); all dependent fields skipped; closing call immediately`,
+          );
+          state.allDoneAnnounced = true;
+          state.justCompletedAllFields = true;
+          endCall = true; // Signal to end the call
+        }
 
         const valueCollectedThisTurn =
           state.tpaBenefitQnaOpen &&
@@ -2408,12 +2259,6 @@ export class MediaStreamHandlerService {
       if (event === 'start') {
         state.streamSid = msg?.streamSid ?? msg?.start?.streamSid ?? null;
         state.callSid = msg?.start?.callSid ?? msg?.callSid ?? null;
-        const agentId =
-          msg?.start?.customParameters?.AgentId ??
-          msg?.start?.customParameters?.agentId ??
-          null;
-
-        state.agentId = agentId;
         this.logCallEvent(
           state.callSid,
           `start mode=${state.mode} patientId=${state.patientId ?? 'none'}`,
@@ -2425,7 +2270,6 @@ export class MediaStreamHandlerService {
               state.callSid,
             );
             if (ctx) {
-              this.logger.log(`this is the CTX::: ${JSON.stringify(ctx)}`);
               if (!state.patientId?.trim()) state.patientId = ctx.PatientID;
               if (!state.appointmentId?.trim() && ctx.AppointmentID) {
                 state.appointmentId = ctx.AppointmentID;
@@ -2454,10 +2298,9 @@ export class MediaStreamHandlerService {
               });
             if (ctx) {
               state.callContext = ctx;
-              const nameSlice = ctx.patient.fullName.split(/\s+/);
               state.patientInfo = {
-                firstName: nameSlice[0] ?? '',
-                lastName: nameSlice.slice(1).join(' '),
+                firstName: ctx.patient.firstName,
+                lastName: ctx.patient.lastName,
                 fullName: ctx.patient.fullName,
                 dobFormatted: ctx.patient.dobFormatted,
                 ssn: ctx.patient.ssn,
@@ -2487,7 +2330,6 @@ export class MediaStreamHandlerService {
             }
 
             const ctx = await contextPromise;
-            this.logger.log('the output needed:', ctx);
             if (ctx) {
               state.callContext = ctx;
               state.patientInfo = {
@@ -2575,7 +2417,6 @@ export class MediaStreamHandlerService {
             '[MediaStream] Call stopped but patientId missing — verification NOT saved. Use ?patientId=... or ?payeeId=... in stream URL.',
           );
         }
-        void this.releaseAgent(state.agentId, 'Twilio media stream stopped');
       }
     });
 
@@ -2592,16 +2433,10 @@ export class MediaStreamHandlerService {
         clearTimeout(state.postGoodbyeTimeoutId);
         state.postGoodbyeTimeoutId = null;
       }
-
-      void this.releaseAgent(state.agentId, 'WebSocket closed');
     });
 
     ws.on('error', (err) => {
       this.logger.warn('[MediaStream] WebSocket error', err?.message);
-      void this.releaseAgent(
-        state.agentId,
-        `WebSocket error: ${err?.message ?? 'unknown'}`,
-      );
     });
 
     // Fallback: if we never detect silence but have enough audio, process every N seconds
@@ -2640,16 +2475,16 @@ export class MediaStreamHandlerService {
     );
   }
 
-  private hasValue(value: string | null | undefined): boolean {
-    return value != null && String(value).trim().length > 0;
-  }
-
   private answerIsNo(value?: string | null): boolean {
     if (!value) return false;
 
     return ['no', 'n', 'nope', 'nah', 'false', 'not covered', 'none'].includes(
       value.trim().toLowerCase(),
     );
+  }
+
+  private hasValue(value: string | null | undefined): boolean {
+    return value != null && String(value).trim().length > 0;
   }
 
   private processDependencies(
@@ -2783,7 +2618,6 @@ export class MediaStreamHandlerService {
     state.evaIntroIdentitySaid = false;
 
     const ctx = await contextPromise;
-    this.logger.log(`[EVA] Patient Context: ${JSON.stringify(ctx, null, 2)}`);
     if (ctx) {
       state.callContext = ctx;
       state.patientInfo = {
@@ -2794,9 +2628,6 @@ export class MediaStreamHandlerService {
         ssn: ctx.patient.ssn,
       };
       applyVerificationStepsToStreamState(state, ctx);
-      this.logger.log(
-        `[EVA] state.patientInfo = ${JSON.stringify(state.patientInfo, null, 2)}`,
-      );
       this.logger.log(
         `[MediaStream] Call context loaded after ${sourceLabel}: patient=${ctx.patient.fullName}`,
       );
