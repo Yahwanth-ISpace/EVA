@@ -1403,6 +1403,7 @@ export class MediaStreamHandlerService {
         let nextMessage = '';
         let extractedUpdates: Record<string, string | null> = {};
         let endCall = false;
+        let terminateAfterGateNo = false;
 
         const skipLlmDueToNoise =
           !recallReply &&
@@ -1570,42 +1571,86 @@ export class MediaStreamHandlerService {
         const benefitExtracted: Record<string, string | null> = {};
         let answerIsNoOnGateQuestion = false;
         let gateQuestionAnswered: string | null = null;
+        let gateQuestionAnsweredYes = false;
+        let gateNextDependentField: string | null = null;
 
         if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
           for (const [key, val] of Object.entries(extractedUpdates)) {
             if (!hasValue(val ?? null)) continue;
 
             const step = state.verificationStepByField[key];
-            const hasGateDependencies = step?.dependencies?.length ?? 0 > 0;
+            const hasGateDependencies = (step?.dependencies?.length ?? 0) > 0;
 
             if (hasGateDependencies) {
-              // This is a gate question — normalize yes/no and process immediately
               let normalizedValue = String(val).trim();
+
               if (this.answerIsYes(normalizedValue)) {
                 normalizedValue = 'yes';
               } else if (this.answerIsNo(normalizedValue)) {
                 normalizedValue = 'no';
               }
 
+              // Only accept an actual Yes/No for a gate question.
+              if (normalizedValue !== 'yes' && normalizedValue !== 'no') {
+                this.logger.warn(
+                  `[MediaStream] Gate answer is not a valid Yes/No: field=${key} value=${normalizedValue}`,
+                );
+                continue;
+              }
+
               gateExtracted[key] = normalizedValue;
               gateQuestionAnswered = key;
 
-              // Store it immediately
+              // Store normalized gate answer.
               state.extractedData[key] = normalizedValue;
 
-              // Process dependencies: YES keeps them active, NO marks __SKIPPED__
+              // Process dependency state.
               this.processDependencies(state, key, normalizedValue);
 
-              // Track if we got a NO on a gate question
-              if (this.answerIsNo(normalizedValue)) {
+              if (normalizedValue === 'yes') {
+                gateQuestionAnsweredYes = true;
+
+                // Find the FIRST dependency that still needs to be answered.
+                for (const procedureCode of step.dependencies ?? []) {
+                  const dependent =
+                    state.verificationStepByProcedureCode[
+                      procedureCode.toUpperCase()
+                    ];
+
+                  if (!dependent) {
+                    continue;
+                  }
+
+                  const existingValue = state.extractedData[dependent.field];
+
+                  if (
+                    existingValue == null ||
+                    String(existingValue).trim() === '' ||
+                    existingValue === '__SKIPPED__'
+                  ) {
+                    gateNextDependentField = dependent.field;
+                    break;
+                  }
+                }
+
+                this.logger.log(
+                  `[MediaStream] Gate YES: ${key}=yes; next dependent field=${gateNextDependentField ?? 'none'}`,
+                );
+              }
+
+              if (normalizedValue === 'no') {
                 answerIsNoOnGateQuestion = true;
+
+                this.logger.log(
+                  `[MediaStream] Gate NO: ${key}=no; ending call immediately`,
+                );
               }
 
               this.logger.log(
-                `[MediaStream] Gate question answered: ${key}=${normalizedValue} (dependencies: ${step?.dependencies?.join(', ') ?? 'none'})`,
+                `[MediaStream] Gate question answered: ${key}=${normalizedValue} (dependencies: ${step.dependencies?.join(', ') ?? 'none'})`,
               );
             } else {
-              // Benefit field — will validate later
+              // Normal benefit field.
               benefitExtracted[key] = val ?? null;
             }
           }
@@ -1665,28 +1710,56 @@ export class MediaStreamHandlerService {
         }
 
         // =========================================================================
-        // STEP 3: CHECK IF WE'RE DONE AFTER GATE ANSWER
-        // If NO was answered on a gate question, all dependents are __SKIPPED__
-        // If all fields are now collected/skipped, trigger immediate close
+        // STEP 3: GATE QUESTION CONTROL FLOW
+        //
+        // Gate questions are hard branching points:
+        //
+        // YES -> immediately ask the first active dependent question.
+        // NO  -> immediately close the call.
+        //
+        // Do NOT run normal field-order / LLM continuation logic after a gate answer.
         // =========================================================================
+
         state.lastAskedField = getFirstMissingField(
           state.extractedData,
           orderedF,
         );
 
-        const allCollectedOrSkipped = orderedF.every((f) => {
-          const val = state.extractedData[f];
-          return val != null && String(val).trim().length > 0;
-        });
-
-        // If user answered NO on a gate question and all fields are now collected/skipped
-        if (answerIsNoOnGateQuestion && allCollectedOrSkipped) {
+        if (answerIsNoOnGateQuestion) {
           this.logger.log(
-            `[MediaStream] Gate question answered NO (${gateQuestionAnswered}); all dependent fields skipped; closing call immediately`,
+            `[MediaStream] Gate NO (${gateQuestionAnswered}); terminating verification flow.`,
           );
-          state.allDoneAnnounced = true;
-          state.justCompletedAllFields = true;
-          endCall = true; // Signal to end the call
+
+          endCall = true;
+        }
+
+        if (gateQuestionAnsweredYes && gateNextDependentField) {
+          state.lastAskedField = gateNextDependentField;
+
+          this.logger.log(
+            `[MediaStream] Gate YES (${gateQuestionAnswered}); advancing directly to dependent field=${gateNextDependentField}`,
+          );
+        }
+
+        let gateForcedResponse: string | null = null;
+
+        if (gateQuestionAnsweredYes && gateNextDependentField) {
+          gateForcedResponse = qField(gateNextDependentField);
+          nextMessage = gateForcedResponse;
+          extractedUpdates = {};
+          endCall = false;
+          llmMs = 0;
+
+          state.lastAskedField = gateNextDependentField;
+        }
+
+        if (answerIsNoOnGateQuestion) {
+          terminateAfterGateNo = true;
+          gateForcedResponse = "Thanks, that's all I got.";
+          nextMessage = gateForcedResponse;
+          extractedUpdates = {};
+          endCall = true;
+          llmMs = 0;
         }
 
         const valueCollectedThisTurn =
@@ -1708,14 +1781,17 @@ export class MediaStreamHandlerService {
         }
         // Only end when AI explicitly set endCall true (e.g. after user said thank you). When AI said "That's all I need, thank you" it sets endCall false — do not end yet.
         let shouldEndCall = endCall === true;
-        if (shouldEndCall && !allCollected) {
+
+        if (shouldEndCall && !answerIsNoOnGateQuestion && !allCollected) {
           const missing = orderedF.filter(
             (f) => !hasValue(state.extractedData[f] ?? null),
           );
+
           this.logger.warn(
             '[MediaStream] AI returned endCall but not all fields collected; will not end. Missing: ' +
               missing.join(', '),
           );
+
           shouldEndCall = false;
         }
         // NEVER end on the turn we just finished collecting — we want the explicit
@@ -1997,6 +2073,33 @@ export class MediaStreamHandlerService {
         }
 
         // ---------------------------------------------------------------------------
+        // HARD GATE FLOW OVERRIDE
+        //
+        // A gate question is a branching decision, not a normal benefit field.
+        // Once the TPA answers Yes/No, never allow the LLM or normal field-order
+        // logic to decide the next question.
+        //
+        // YES -> ask first active dependency.
+        // NO  -> close immediately.
+        // ---------------------------------------------------------------------------
+        if (gateQuestionAnsweredYes && gateNextDependentField) {
+          toSpeak = qField(gateNextDependentField);
+          state.lastAskedField = gateNextDependentField;
+          shouldEndCall = false;
+
+          this.logger.log(
+            `[MediaStream] Gate flow override YES: asking dependent=${gateNextDependentField}`,
+          );
+        } else if (answerIsNoOnGateQuestion) {
+          toSpeak = "Thanks, that's all I got.";
+          shouldEndCall = false;
+
+          this.logger.log(
+            `[MediaStream] Gate flow override NO: closing call after gate=${gateQuestionAnswered}`,
+          );
+        }
+
+        // ---------------------------------------------------------------------------
         // FIELD-ORDER ENFORCEMENT
         // The LLM frequently drifts — it says "Can I get the deductible?" when the
         // actual next missing field is validity, or acknowledges ("Got it, thanks")
@@ -2114,6 +2217,7 @@ export class MediaStreamHandlerService {
         }
         // After a value is stored: always ack and ask the next field (do not stop on "thanks" alone).
         if (
+          !gateQuestionAnswered &&
           valueCollectedThisTurn &&
           state.tpaBenefitQnaOpen &&
           !allCollected &&
@@ -2122,6 +2226,7 @@ export class MediaStreamHandlerService {
         ) {
           toSpeak = `${pickPostValueAcknowledgement()} ${qField(state.lastAskedField)}`;
         } else if (
+          !gateQuestionAnswered &&
           benefitQnaHandoffThisTurn &&
           state.tpaBenefitQnaOpen &&
           !state.allDoneAnnounced &&
@@ -2129,11 +2234,13 @@ export class MediaStreamHandlerService {
         ) {
           const miss =
             getFirstMissingField(state.extractedData, orderedF) ?? orderedF[0];
+
           if (miss) {
             toSpeak = qField(miss);
             state.lastAskedField = miss;
           }
         } else if (
+          !gateQuestionAnswered &&
           state.tpaBenefitQnaOpen &&
           !state.firstBenefitSoINeedPrefixUsed &&
           !allCollected &&
@@ -2145,6 +2252,7 @@ export class MediaStreamHandlerService {
             state.extractedData,
             orderedF,
           );
+
           if (firstMissing === state.lastAskedField) {
             toSpeak = qField(firstMissing);
           }
@@ -2203,14 +2311,37 @@ export class MediaStreamHandlerService {
           });
         }
 
-        if (shouldEndCall) {
-          // Post-goodbye: already said short closing (e.g. "Got you. Have a good day.") — stay on line briefly in case user responds
+        if (terminateAfterGateNo) {
+          this.logger.log(
+            `[MediaStream] Gate NO completed — hanging up after closing message`,
+          );
+
+          state.callEnded = true;
+
+          if (state.fallbackTimer) {
+            clearInterval(state.fallbackTimer);
+            state.fallbackTimer = null;
+          }
+
+          const sid = state.callSid;
+
+          if (sid) {
+            this.twilioService
+              .hangUp(sid)
+              .catch((e) =>
+                this.logger.warn(
+                  '[MediaStream] Gate NO hang up failed',
+                  (e as Error)?.message,
+                ),
+              );
+          }
+        } else if (shouldEndCall) {
           state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
           state.postGoodbyeTimeoutId = setTimeout(
             doPostGoodbyeHangUp,
             POST_GOODBYE_LISTEN_MS,
           );
-          startFallbackTimer(); // keep processing buffer so we hear if user says something or thank you
+          startFallbackTimer();
         }
       } catch (err: any) {
         this.logger.warn('[MediaStream] Process buffer failed', err?.message);
