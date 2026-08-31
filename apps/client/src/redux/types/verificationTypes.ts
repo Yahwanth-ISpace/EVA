@@ -36,11 +36,13 @@ export interface VerificationRecord {
   payeeId?: string;
   /** When set, this verification belongs to a specific appointment visit. */
   appointmentId?: string | null;
+  patientName: string;
   transcript: string;
   createdAt?: string;
   extractedData?: Record<string, string | null> | null;
   verificationRequirementId?: string | null;
   verificationRequirement?: VerificationRequirementRef | null;
+  status?: string | null;
   /** Legacy API shape; prefer extractedData from backend. */
   coverage?: string;
   copay?: string;

@@ -313,7 +313,7 @@ const svgIcons: Record<string, (color: string, size: string) => JSX.Element> = {
       </g>
     </svg>
   ),
-  delete: (color, size) => (
+  delete: (size) => (
     <svg
       width={size}
       height={size}

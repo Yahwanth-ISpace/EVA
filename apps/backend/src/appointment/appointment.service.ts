@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -40,7 +41,6 @@ export class AppointmentService {
           navigateTpaIvr: process.env.EVA_NAVIGATE_TPA_IVR === 'true',
         },
       );
-      
     } else {
       this.logger.warn(
         `Insurance phone number missing for Patient ${appointment.patient.patientId}`,
@@ -164,5 +164,71 @@ export class AppointmentService {
     }
 
     return doc;
+  }
+  async updateEvaVerification(
+    patientId: string,
+    appointmentId: string,
+    data: {
+      extractedData?: Record<string, any>;
+      transcript?: string;
+      status?: string;
+      callSid?: string | null;
+      startedAt?: Date | null;
+      endedAt?: Date | null;
+      duration?: number | null;
+    },
+  ) {
+    if (!patientId) {
+      throw new BadRequestException('patientId is required');
+    }
+
+    if (!appointmentId) {
+      throw new BadRequestException('appointmentId is required');
+    }
+
+    const col = await this.mongoService.appointmentsCollection();
+
+    const appointment = await col.findOne({
+      'patient.patientId': patientId,
+      appointmentId: Number(appointmentId),
+    });
+
+    if (!appointment) {
+      throw new NotFoundException(
+        'Appointment not found for patient and appointmentId',
+      );
+    }
+
+    const currentEva = appointment.eva ?? {};
+
+    const currentExtracted = currentEva.extractedData ?? {};
+
+    const mergedExtracted = {
+      ...currentExtracted,
+      ...(data.extractedData ?? {}),
+    };
+
+    const evaUpdate = {
+      ...currentEva,
+      ...data,
+      extractedData: mergedExtracted,
+    };
+
+    delete (evaUpdate as any).appointmentId;
+
+    await col.updateOne(
+      {
+        _id: appointment._id,
+      },
+      {
+        $set: {
+          eva: evaUpdate,
+        },
+      },
+    );
+
+    return col.findOne({
+      _id: appointment._id,
+    });
   }
 }

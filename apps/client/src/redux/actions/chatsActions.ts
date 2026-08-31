@@ -3,7 +3,6 @@ import { chatApi } from "../../utils/chatApi";
 import chatTypes, {
   type ChatMessage,
   // type ChatResponse,
-} from "../types/chatsTypes";
 
 const withLoading = async <T>(
   dispatch: Dispatch,

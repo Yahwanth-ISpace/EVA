@@ -23,6 +23,7 @@ import { PrismaModule } from '../prisma/prisma.module';
     VerificationRequirementModule,
     BotTrackerModule,
     AudioEmotionModule,
+    AppointmentModule,
   ],
   controllers: [TwilioController],
   providers: [TwilioService, MediaStreamHandlerService],
