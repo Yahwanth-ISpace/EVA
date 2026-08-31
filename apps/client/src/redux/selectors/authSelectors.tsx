@@ -9,4 +9,4 @@ export const isAuthenticated = (state: AppState) =>
 export const isAdmin = (state: AppState) =>
   state.authState.user?.role === "ADMIN";
 export const isPayee = (state: AppState) =>
-  state.authState.user?.role === "PAYEE";
+  state.authState.user?.role === "OPERATOR";

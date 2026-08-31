@@ -978,18 +978,89 @@ Respond with ONLY a JSON object. No markdown. Format:
     return /\d+\s*%|\d+\s*percent|%\s*\d+/.test(t);
   }
 
+  private normalizeDollarAmount(value: string | number | null): string | null {
+    if (value === null || value === undefined) return null;
+
+    const raw = String(value).trim().toLowerCase();
+
+    // Already numeric
+    if (/^\d+(?:\.\d+)?$/.test(raw)) {
+      return raw;
+    }
+
+    // Handle "17 dollars and 50 cents"
+    const dollarCentsMatch = raw.match(
+      /(\d+(?:\.\d+)?)\s*(?:dollars?|bucks?)\s*(?:and\s*)?(\d+)\s*cents?/i,
+    );
+
+    if (dollarCentsMatch) {
+      const dollars = Number(dollarCentsMatch[1]);
+      const cents = Number(dollarCentsMatch[2]);
+
+      return (dollars + cents / 100).toString();
+    }
+
+    // Handle "17 dollars"
+    const dollarsMatch = raw.match(/(\d+(?:\.\d+)?)\s*(?:dollars?|bucks?)/i);
+
+    if (dollarsMatch) {
+      return Number(dollarsMatch[1]).toString();
+    }
+
+    return raw;
+  }
+
   private isDollars(s: string): boolean {
     const t = String(s).trim().toLowerCase();
-    if (/\d+\s*dollars?|\$\s*\d+|\d+\s*\$|dollar\s*\d+/.test(t)) return true;
+
     // Percent sign disqualifies.
     if (/%/.test(t)) return false;
-    // Bare integer (or decimal with $ optional) — the TPA was asked a dollar question
-    // so "24", "$24", "2500.00" are all acceptable dollar amounts.
-    if (/^\$?\d{1,6}(\.\d{1,2})?$/.test(t)) return true;
-    // Spelled-out numbers like "twenty-four dollars", "fourteen dollars", "one hundred dollars".
-    // STT often produces this when the TPA says numbers aloud and the LLM passes it through.
-    // If the phrase ends with "dollar(s)" and contains a known number word, accept it.
-    if (/\bdollars?\b/.test(t) && this.wordsToNumber(t) != null) return true;
+
+    // Dollar + cents:
+    // "17 dollars and 50 cents"
+    // "seventeen dollars and fifty cents"
+    if (/\bdollars?\b.*\bcents?\b/.test(t)) {
+      return true;
+    }
+
+    // Explicit dollar indicators:
+    // "$17"
+    // "17 dollars"
+    // "17 dollar"
+    // "17 usd"
+    if (
+      /\$\s*\d+/.test(t) ||
+      /\d+(?:\.\d+)?\s*dollars?\b/.test(t) ||
+      /\b\d+(?:\.\d+)?\s*usd\b/.test(t)
+    ) {
+      return true;
+    }
+
+    // Bare integer/decimal.
+    // Since this function is called for a dollar question,
+    // "24", "$24", "2500.00" are valid.
+    if (/^\$?\d{1,6}(?:\.\d{1,2})?$/.test(t)) {
+      return true;
+    }
+
+    // Spelled-out dollar amount:
+    // "twenty-four dollars"
+    // "fourteen dollars"
+    // "one hundred dollars"
+    if (/\bdollars?\b/.test(t) && this.wordsToNumber(t) != null) {
+      return true;
+    }
+
+    // Spelled-out dollar + cents:
+    // "seventeen dollars and fifty cents"
+    if (
+      /\bdollars?\b/.test(t) &&
+      /\bcents?\b/.test(t) &&
+      this.parseMoneyWords(t) != null
+    ) {
+      return true;
+    }
+
     return false;
   }
 
@@ -1028,6 +1099,7 @@ Respond with ONLY a JSON object. No markdown. Format:
       hundred: 100,
       thousand: 1000,
     };
+
     const tokens = phrase
       .toLowerCase()
       .replace(/[^a-z0-9\s-]/g, ' ')
@@ -1049,21 +1121,102 @@ Respond with ONLY a JSON object. No markdown. Format:
     return total > 0 ? total : null;
   }
 
+  private parseMoneyWords(value: string): number | null {
+    const t = String(value)
+      .toLowerCase()
+      .replace(/-/g, ' ')
+      .replace(/,/g, ' ')
+      .trim();
+
+    // "seventeen dollars and fifty cents"
+    const dollarCentsMatch = t.match(
+      /^(.+?)\s+dollars?\s+(?:and\s+)?(.+?)\s+cents?$/,
+    );
+
+    if (dollarCentsMatch) {
+      const dollars = this.wordsToNumber(dollarCentsMatch[1]);
+      const cents = this.wordsToNumber(dollarCentsMatch[2]);
+
+      if (dollars != null && cents != null) {
+        return dollars + cents / 100;
+      }
+    }
+
+    // "17 dollars and 50 cents"
+    const numericDollarCentsMatch = t.match(
+      /^(\d+(?:\.\d+)?)\s+dollars?\s+(?:and\s+)?(\d+)\s+cents?$/,
+    );
+
+    if (numericDollarCentsMatch) {
+      const dollars = Number(numericDollarCentsMatch[1]);
+      const cents = Number(numericDollarCentsMatch[2]);
+
+      return dollars + cents / 100;
+    }
+
+    // "seventeen dollars"
+    const dollarWordMatch = t.match(/^(.+?)\s+dollars?$/);
+
+    if (dollarWordMatch) {
+      const dollars = this.wordsToNumber(dollarWordMatch[1]);
+
+      if (dollars != null) {
+        return dollars;
+      }
+    }
+
+    return null;
+  }
+
   public normalizeMoney(value?: string | null): string {
     if (!value) return '';
 
-    const cleaned = value
-      .toLowerCase()
-      .replace(/,/g, '')
-      .replace(/dollars?|usd|\$/g, '')
-      .trim();
+    const raw = String(value).toLowerCase().replace(/,/g, '').trim();
 
-    const numeric = cleaned.match(/\d+(\.\d+)?/);
+    // 12.07 -> 12.7
+    // 14.07 -> 14.7
+    // 25.07 -> 25.7
+    // 18.07 -> 18.7
+    const decimalMoney = raw.match(/^(\d+)\.(\d{2})$/);
+
+    if (decimalMoney) {
+      const dollars = decimalMoney[1];
+      const cents = Number(decimalMoney[2]);
+
+      return `${dollars}.${cents / 10}`;
+    }
+
+    // 10 dollars 7 cents -> 10.7
+    const numericDollarCents = raw.match(
+      /^(\d+(?:\.\d+)?)\s*dollars?\s*(?:and\s*)?(\d+)\s*cents?$/,
+    );
+
+    if (numericDollarCents) {
+      const dollars = Number(numericDollarCents[1]);
+      const cents = Number(numericDollarCents[2]);
+
+      return `${dollars}.${cents / 10}`;
+    }
+
+    // 7 cents -> 0.7
+    const numericCents = raw.match(/^(\d+)\s*cents?$/);
+
+    if (numericCents) {
+      const cents = Number(numericCents[1]);
+
+      return String(cents / 10);
+    }
+
+    const cleaned = raw.replace(/dollars?|usd|\$/g, '').trim();
+
+    const numeric = cleaned.match(/\d+(?:\.\d+)?/);
+
     if (numeric) {
       return numeric[0];
     }
 
     const wordNumber = this.wordsToNumber(cleaned);
+
     return wordNumber != null ? String(wordNumber) : '';
   }
 
@@ -1120,6 +1273,7 @@ Respond with ONLY a JSON object. No markdown. Format:
     return [...new Set(results)].join(',');
   }
 
+  
   /** Normalize validity to "21st Dec 2028" format. Returns null if not parseable. */
   private normalizeValidity(value: string): string | null {
     const t = value.trim();
@@ -1557,9 +1711,46 @@ INSTRUCTIONS:
 3. Return a JSON array of objects with exactly two keys: "question" and "answer".
 4. If the USER provided multiple distinct values (e.g., two dates), provide them in "answer" as an array of strings, or as a single string joined by " and " or a comma. Preserve the question text exactly as EVA spoke it in the transcript.
 5. For the USER answer (answer), normalize it to a clean value:
-  - Convert spoken numbers to digits: "twenty dollars" → "20", "one hundred" → "100", "fourteen" → "14"
-  - Keep percentages as is or convert: "eighty percent" → "80", "twenty five %" → "25"
-  - Remove filler words and normalize: "Uh, it is, uh, two forty-four" → "244"
+
+  - Convert spoken numbers to digits:
+    "twenty" → "20"
+    "one hundred" → "100"
+    "fourteen" → "14"
+
+  - MONEY / DOLLAR VALUES:
+    - Preserve the complete dollar and cents value as one numeric value.
+    - When both dollars and cents are spoken, do NOT split them.
+    - Use standard decimal notation when extracting the raw value:
+      "ten dollars" → "10"
+      "ten dollars seven cents" → "10.07"
+      "ten dollars and seven cents" → "10.07"
+      "ten dollars fifty cents" → "10.50"
+      "ten dollars and fifty cents" → "10.50"
+      "seven cents" → "0.07"
+      "fifty cents" → "0.50"
+      "twelve dollars seven cents" → "12.07"
+      "fourteen dollars seven cents" → "14.07"
+    - Do NOT return only the cents portion when dollars and cents are both spoken.
+    - Do NOT convert "seven cents" to "07".
+    - If the USER already gives a numeric monetary value such as "12.07", preserve it as "12.07".
+    
+  - Percentages:
+    "eighty percent" → "80"
+    "twenty five %" → "25"
+
+  - Remove filler words and normalize:
+    "Uh, it is, uh, two forty-four" → "244"
+
+  - IMPORTANT:
+    If EVA's question contains a value and the USER confirms it with "Yes", "Correct", etc., the answer must remain the confirmation:
+    EVA: "So the yearly maximum amount is seventeen point five dollars"
+    USER: "Yes"
+    → answer: "Yes"
+    Do NOT extract "17.5" from EVA's question as the USER answer.
+- Do NOT split dollars and cents into separate values.
+- Do NOT return only the cents portion when both dollars and cents are spoken.
+- Do NOT interpret "seven cents" as "07"; return "0.7".
+- For an already numeric monetary value such as "12.07", preserve it as "12.07" for downstream normalization.
   History procedure questions:
     - Preserve ALL dates mentioned.
     - Normalize every date to DD-MM-YYYY.

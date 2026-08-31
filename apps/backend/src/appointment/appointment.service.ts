@@ -54,7 +54,7 @@ export class AppointmentService {
     return d.toISOString().slice(0, 10);
   }
 
-  async findAll(user: { userId: string; role: 'ADMIN' | 'PAYEE' }) {
+  async findAll(user: { userId: string; role: 'ADMIN' | 'OPERATOR' }) {
     const col = await this.mongoService.appointmentsCollection();
 
     if (user.role === 'ADMIN') {
@@ -105,7 +105,7 @@ export class AppointmentService {
       .toArray();
   }
 
-  async findOne(id: string, user: { userId: string; role: 'ADMIN' | 'PAYEE' }) {
+  async findOne(id: string, user: { userId: string; role: 'ADMIN' | 'OPERATOR' }) {
     const col = await this.mongoService.appointmentsCollection();
 
     const doc =
@@ -131,7 +131,7 @@ export class AppointmentService {
       throw new NotFoundException('Appointment not found');
     }
 
-    if (user.role === 'PAYEE') {
+    if (user.role === 'OPERATOR') {
       const dbUser = await this.prisma.user.findUnique({
         where: {
           id: user.userId,

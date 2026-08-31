@@ -74,19 +74,7 @@ export class EligibilityPayloadUtil {
     const getNumericValue = (value?: string | null): string => {
       if (!value) return '';
 
-      const cleaned = value
-        .toLowerCase()
-        .replace(/,/g, '')
-        .replace(/dollars?|usd|\$/g, '')
-        .trim();
-
-      const numeric = cleaned.match(/\d+(\.\d+)?/);
-
-      if (numeric) {
-        return numeric[0];
-      }
-
-      return aiService.normalizeMoney(cleaned);
+      return aiService.normalizeMoney(String(value));
     };
 
     const getValueFromSources = (keys: string[]): string => {

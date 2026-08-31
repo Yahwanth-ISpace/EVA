@@ -54,7 +54,7 @@ export const userReducer = (state = initialState, action: any): State => {
     case GET_CUSTOMERS:
       return {
         ...state,
-        customers: action.payload.filter((user: User) => user.role === "PAYEE"),
+        customers: action.payload.filter((user: User) => user.role === "OPERATOR"),
         loading: false,
         error: null,
         success: null,

@@ -211,7 +211,7 @@ export class MediaStreamHandlerService {
 
   handleConnection(
     ws: WebSocket,
-    patientId?: string | null,
+    PatientID?: string | null,
     mode?: string | null,
     AppointmentID?: string | null,
   ): void {
@@ -222,7 +222,7 @@ export class MediaStreamHandlerService {
       callSid: null,
       processing: false,
       fallbackTimer: null,
-      patientId: patientId ?? null,
+      patientId: PatientID ?? null,
       patientInfo: null,
       callContext: null,
       extractedData: {},
@@ -254,6 +254,7 @@ export class MediaStreamHandlerService {
       evaSocialGreetDone: false,
       evaIntroIdentitySaid: false,
       tpaPatientLocated: false,
+      agentId: null,
       verificationStepByField: {},
       verificationStepByProcedureCode: {},
     };
@@ -1376,7 +1377,7 @@ export class MediaStreamHandlerService {
         const recallReply = getRecallReply(
           userSaid,
           state.extractedData,
-          state.orderedFields,
+          orderedF,
         );
 
         // Identity short-circuit: when the TPA asks a crisp verification question
@@ -1402,7 +1403,7 @@ export class MediaStreamHandlerService {
             ? (() => {
                 const miss = getFirstMissingField(
                   state.extractedData,
-                  state.orderedFields,
+                  orderedF,
                 );
                 return miss ? qField(miss) : pickBriefAcknowledgement();
               })()
@@ -1430,7 +1431,7 @@ export class MediaStreamHandlerService {
             ? (() => {
                 const miss = getFirstMissingField(
                   state.extractedData,
-                  state.orderedFields,
+                  orderedF,
                 );
                 return miss
                   ? `${pickPostValueAcknowledgement()} ${qField(miss)}`
@@ -1441,6 +1442,7 @@ export class MediaStreamHandlerService {
         let nextMessage = '';
         let extractedUpdates: Record<string, string | null> = {};
         let endCall = false;
+        let terminateAfterGateNo = false;
 
         const skipLlmDueToNoise =
           !recallReply &&
@@ -1451,8 +1453,8 @@ export class MediaStreamHandlerService {
         if (skipLlmDueToNoise) {
           const miss =
             state.lastAskedField ??
-            getFirstMissingField(state.extractedData, state.orderedFields) ??
-            state.orderedFields[0];
+            getFirstMissingField(state.extractedData, orderedF) ??
+            orderedF[0];
           noiseSkipMessage =
             "I'm having trouble hearing you clearly. " +
             qField(miss ?? 'coverage');
@@ -1494,7 +1496,7 @@ export class MediaStreamHandlerService {
           llmMs = 0;
           const missHandoff = getFirstMissingField(
             state.extractedData,
-            state.orderedFields,
+            orderedF,
           );
           if (missHandoff) state.lastAskedField = missHandoff;
         } else if (purposeOnlyReply) {
@@ -1508,10 +1510,7 @@ export class MediaStreamHandlerService {
           extractedUpdates = {};
           endCall = false;
           llmMs = 0;
-          const missYes = getFirstMissingField(
-            state.extractedData,
-            state.orderedFields,
-          );
+          const missYes = getFirstMissingField(state.extractedData, orderedF);
           if (missYes) state.lastAskedField = missYes;
         } else if (earlyAckAfterPurpose) {
           nextMessage = pickBriefAcknowledgement();
@@ -1600,23 +1599,218 @@ export class MediaStreamHandlerService {
           extractedUpdates = cleaned;
         }
 
-        // Data validation: coverage = %, deductible/copay = $, validity = date (month and year). Polite correction if wrong type.
-        if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
+        const extractedBeforeTurn = { ...state.extractedData };
+
+        // =========================================================================
+        // STEP 1: PROCESS GATE QUESTIONS FIRST (before standard benefit validation)
+        // Gate questions have dependencies (e.g. "Is Orthodontics covered?")
+        // Their answers are YES/NO, not benefit values, so skip standard validation
+        // =========================================================================
+        const gateExtracted: Record<string, string | null> = {};
+        const benefitExtracted: Record<string, string | null> = {};
+
+        let answerIsNoOnGateQuestion = false;
+        let gateQuestionAnswered: string | null = null;
+        let gateQuestionAnsweredYes = false;
+        let gateNextDependentField: string | null = null;
+
+        // ---------------------------------------------------------------------------
+        // DIRECT GATE ANSWER DETECTION
+        //
+        // If the field we asked is a gate question, do NOT depend on the LLM to
+        // extract "Yes"/"No". The gate answer controls the state transition directly.
+        //
+        // This prevents the first "Yes" from being treated as an ordinary response
+        // and causing the gate question to be repeated.
+        // ---------------------------------------------------------------------------
+        const expectedGateField = state.lastAskedField
+          ? state.verificationStepByField[state.lastAskedField]
+          : undefined;
+
+        const expectedGateHasDependencies =
+          (expectedGateField?.dependencies?.length ?? 0) > 0;
+
+        if (
+          expectedGateField &&
+          expectedGateHasDependencies &&
+          userSaid &&
+          this.answerIsYes(userSaid)
+        ) {
+          const gateField = expectedGateField.field;
+
+          gateQuestionAnswered = gateField;
+          gateQuestionAnsweredYes = true;
+
+          state.extractedData[gateField] = 'yes';
+
+          this.processDependencies(state, gateField, 'yes');
+
+          for (const procedureCode of expectedGateField.dependencies ?? []) {
+            const dependent =
+              state.verificationStepByProcedureCode[
+                procedureCode.toUpperCase()
+              ];
+
+            if (!dependent) {
+              this.logger.warn(
+                `[MediaStream] Direct Gate YES: dependency ${procedureCode} not found`,
+              );
+              continue;
+            }
+
+            const existingValue = state.extractedData[dependent.field];
+
+            if (existingValue == null || String(existingValue).trim() === '') {
+              gateNextDependentField = dependent.field;
+              break;
+            }
+          }
+
+          this.logger.log(
+            `[MediaStream] DIRECT GATE YES: ` +
+              `gate=${gateField} ` +
+              `next=${gateNextDependentField ?? 'NONE'}`,
+          );
+
+          // Do not let the LLM's extractedUpdates compete with the direct gate answer.
+          extractedUpdates = {};
+        }
+
+        if (
+          expectedGateField &&
+          expectedGateHasDependencies &&
+          userSaid &&
+          this.answerIsNo(userSaid)
+        ) {
+          const gateField = expectedGateField.field;
+
+          gateQuestionAnswered = gateField;
+          answerIsNoOnGateQuestion = true;
+
+          state.extractedData[gateField] = 'no';
+
+          this.processDependencies(state, gateField, 'no');
+
+          this.logger.log(
+            `[MediaStream] DIRECT GATE NO: gate=${gateField}; ending call`,
+          );
+
+          extractedUpdates = {};
+        }
+
+        if (
+          !gateQuestionAnswered &&
+          extractedUpdates &&
+          Object.keys(extractedUpdates).length > 0
+        ) {
+          for (const [key, val] of Object.entries(extractedUpdates)) {
+            if (!hasValue(val ?? null)) continue;
+
+            const step = state.verificationStepByField[key];
+            const hasGateDependencies = (step?.dependencies?.length ?? 0) > 0;
+
+            if (hasGateDependencies) {
+              let normalizedValue = String(val).trim();
+
+              if (this.answerIsYes(normalizedValue)) {
+                normalizedValue = 'yes';
+              } else if (this.answerIsNo(normalizedValue)) {
+                normalizedValue = 'no';
+              } else {
+                continue;
+              }
+
+              gateExtracted[key] = normalizedValue;
+              gateQuestionAnswered = key;
+
+              // Store the gate answer.
+              state.extractedData[key] = normalizedValue;
+
+              // Update dependency state.
+              this.processDependencies(state, key, normalizedValue);
+
+              if (normalizedValue === 'no') {
+                answerIsNoOnGateQuestion = true;
+              }
+
+              if (normalizedValue === 'yes') {
+                gateQuestionAnsweredYes = true;
+
+                // IMPORTANT:
+                // Select the first dependency from the gate's dependency list
+                // that is actually present in the verification steps and has
+                // not already been collected.
+                for (const procedureCode of step.dependencies ?? []) {
+                  const dependent =
+                    state.verificationStepByProcedureCode[
+                      procedureCode.toUpperCase()
+                    ];
+
+                  if (!dependent) {
+                    this.logger.warn(
+                      `[MediaStream] Gate YES: dependency ${procedureCode} was not found in verificationStepByProcedureCode`,
+                    );
+                    continue;
+                  }
+
+                  const existingValue = state.extractedData[dependent.field];
+
+                  if (
+                    existingValue == null ||
+                    String(existingValue).trim() === ''
+                  ) {
+                    gateNextDependentField = dependent.field;
+                    break;
+                  }
+                }
+
+                this.logger.log(
+                  `[MediaStream] Gate YES DEBUG: ` +
+                    `gate=${key} ` +
+                    `dependencies=${JSON.stringify(step.dependencies)} ` +
+                    `mappedNext=${gateNextDependentField} ` +
+                    `mappedProcedure=${
+                      gateNextDependentField
+                        ? state.verificationStepByField[gateNextDependentField]
+                            ?.procedureCode
+                        : 'NONE'
+                    }`,
+                );
+
+                this.logger.log(
+                  `[MediaStream] Gate YES: ${key}=yes; next dependent=${gateNextDependentField ?? 'NONE'}`,
+                );
+              }
+
+              this.logger.log(
+                `[MediaStream] Gate question answered: ${key}=${normalizedValue} dependencies=${step.dependencies?.join(', ') ?? 'none'}`,
+              );
+            } else {
+              benefitExtracted[key] = val ?? null;
+            }
+          }
+        }
+        // =========================================================================
+        // STEP 2: VALIDATE ONLY BENEFIT FIELDS (coverage %, deductible $, etc.)
+        // Gate questions already handled, so don't pass them to validation
+        // =========================================================================
+        if (Object.keys(benefitExtracted).length > 0) {
           const scrubbed: Record<string, string | null> = {};
-          for (const [k, v] of Object.entries(extractedUpdates)) {
+          for (const [k, v] of Object.entries(benefitExtracted)) {
             if (v != null && String(v).trim() && orderedF.includes(k)) {
               scrubbed[k] = scrubRawBenefitValue(k, String(v), userSaid);
             } else if (v != null) {
               scrubbed[k] = v;
             }
           }
-          extractedUpdates = scrubbed;
+
           const validation =
             this.aiService.validateAndNormalizeBenefitExtracted(
-              extractedUpdates,
+              scrubbed,
               userSaid,
               orderedF,
             );
+
           if (!validation.ok) {
             const vmsg = validation.correctionMessage ?? '';
             if (
@@ -1642,73 +1836,73 @@ export class MediaStreamHandlerService {
             state.processing = false;
             return;
           }
-          extractedUpdates = validation.normalized;
-        }
 
-        const extractedBeforeTurn = { ...state.extractedData };
-
-        // if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
-        //   for (const [key, val] of Object.entries(extractedUpdates)) {
-        //     if (hasValue(val ?? null)) state.extractedData[key] = val ?? null;
-        //   }
-
-        //   // If we just asked "does this patient have any history?" and they said no, skip remaining fields.
-        //   if (state.lastAskedField === 'history') {
-        //     const val = String(
-        //       state.extractedData['history'] ?? '',
-        //     ).toLowerCase();
-        //     if (val.includes('no') || val === 'none' || val === 'false') {
-        //       for (const f of orderedF) {
-        //         if (
-        //           f.includes('history.') &&
-        //           !hasValue(state.extractedData[f] ?? null)
-        //         ) {
-        //           state.extractedData[f] = 'skipped (no history)';
-        //         }
-        //       }
-        //     }
-        //   }
-        // }
-
-        if (extractedUpdates && Object.keys(extractedUpdates).length > 0) {
-          for (const [key, val] of Object.entries(extractedUpdates)) {
-            if (!hasValue(val ?? null)) continue;
-
-            state.extractedData[key] = val ?? null;
-
-            const step = state.verificationStepByField[key];
-
-            if (!step?.dependencies?.length) {
-              continue;
-            }
-
-            const answer = String(val).trim().toLowerCase();
-
-            // Only "Yes" follows dependencies.
-            if (answer === 'yes') {
-              continue;
-            }
-
-            // Every other answer skips dependent questions.
-            for (const procedureCode of step.dependencies) {
-              const dependent =
-                state.verificationStepByProcedureCode[
-                  procedureCode.toUpperCase()
-                ];
-
-              if (!dependent) continue;
-
-              if (!hasValue(state.extractedData[dependent.field])) {
-                state.extractedData[dependent.field] = '__SKIPPED__';
-              }
-            }
+          // Store validated benefit fields
+          for (const [k, v] of Object.entries(validation.normalized)) {
+            state.extractedData[k] = v ?? null;
           }
         }
 
-        state.lastAskedField = getFirstMissingField(
-          state.extractedData,
-          state.orderedFields,
-        );
+        // =========================================================================
+        // STEP 3: GATE QUESTION CONTROL FLOW
+        //
+        // Gate questions are hard branching points:
+        //
+        // YES -> immediately ask the first active dependent question.
+        // NO  -> immediately close the call.
+        //
+        // Do NOT run normal field-order / LLM continuation logic after a gate answer.
+        // =========================================================================
+
+        if (gateQuestionAnsweredYes && gateNextDependentField) {
+          state.lastAskedField = gateNextDependentField;
+
+          this.logger.log(
+            `[MediaStream] Gate YES transition: lastAskedField=${state.lastAskedField}`,
+          );
+        } else {
+          state.lastAskedField = getFirstMissingField(
+            state.extractedData,
+            orderedF,
+          );
+        }
+
+        if (answerIsNoOnGateQuestion) {
+          this.logger.log(
+            `[MediaStream] Gate NO (${gateQuestionAnswered}); terminating verification flow.`,
+          );
+
+          endCall = true;
+        }
+
+        if (gateQuestionAnsweredYes && gateNextDependentField) {
+          state.lastAskedField = gateNextDependentField;
+
+          this.logger.log(
+            `[MediaStream] Gate YES (${gateQuestionAnswered}); advancing directly to dependent field=${gateNextDependentField}`,
+          );
+        }
+
+        let gateForcedResponse: string | null = null;
+
+        if (gateQuestionAnsweredYes && gateNextDependentField) {
+          gateForcedResponse = qField(gateNextDependentField);
+          nextMessage = gateForcedResponse;
+          extractedUpdates = {};
+          endCall = false;
+          llmMs = 0;
+
+          state.lastAskedField = gateNextDependentField;
+        }
+
+        if (answerIsNoOnGateQuestion) {
+          terminateAfterGateNo = true;
+          gateForcedResponse = "Thanks, that's all I got.";
+          nextMessage = gateForcedResponse;
+          extractedUpdates = {};
+          endCall = true;
+          llmMs = 0;
+        }
 
         const valueCollectedThisTurn =
           state.tpaBenefitQnaOpen &&
@@ -1729,14 +1923,17 @@ export class MediaStreamHandlerService {
         }
         // Only end when AI explicitly set endCall true (e.g. after user said thank you). When AI said "That's all I need, thank you" it sets endCall false — do not end yet.
         let shouldEndCall = endCall === true;
-        if (shouldEndCall && !allCollected) {
+
+        if (shouldEndCall && !answerIsNoOnGateQuestion && !allCollected) {
           const missing = orderedF.filter(
             (f) => !hasValue(state.extractedData[f] ?? null),
           );
+
           this.logger.warn(
             '[MediaStream] AI returned endCall but not all fields collected; will not end. Missing: ' +
               missing.join(', '),
           );
+
           shouldEndCall = false;
         }
         // NEVER end on the turn we just finished collecting — we want the explicit
@@ -1772,6 +1969,20 @@ export class MediaStreamHandlerService {
         const goodbye =
           CLOSING_PHRASES[Math.floor(Math.random() * CLOSING_PHRASES.length)];
         let toSpeak = (nextMessage ?? '').trim();
+        const gateYesTransition =
+          gateQuestionAnsweredYes && !!gateNextDependentField;
+
+        if (gateYesTransition) {
+          toSpeak = qField(gateNextDependentField!);
+
+          state.lastAskedField = gateNextDependentField;
+
+          shouldEndCall = false;
+
+          this.logger.log(
+            `[MediaStream] Gate YES HARD TRANSITION: asking ${gateNextDependentField}`,
+          );
+        }
         // Never confirm a validity date the user didn't say: if we were asking for validity and they didn't give a date, only ask for validity (no "is it July 17 2025 right?")
         const userSaidDate =
           /\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}/i.test(
@@ -2018,6 +2229,33 @@ export class MediaStreamHandlerService {
         }
 
         // ---------------------------------------------------------------------------
+        // HARD GATE FLOW OVERRIDE
+        //
+        // A gate question is a branching decision, not a normal benefit field.
+        // Once the TPA answers Yes/No, never allow the LLM or normal field-order
+        // logic to decide the next question.
+        //
+        // YES -> ask first active dependency.
+        // NO  -> close immediately.
+        // ---------------------------------------------------------------------------
+        if (gateQuestionAnsweredYes && gateNextDependentField) {
+          toSpeak = qField(gateNextDependentField);
+          state.lastAskedField = gateNextDependentField;
+          shouldEndCall = false;
+
+          this.logger.log(
+            `[MediaStream] Gate flow override YES: asking dependent=${gateNextDependentField}`,
+          );
+        } else if (answerIsNoOnGateQuestion) {
+          toSpeak = "Thanks, that's all I got.";
+          shouldEndCall = false;
+
+          this.logger.log(
+            `[MediaStream] Gate flow override NO: closing call after gate=${gateQuestionAnswered}`,
+          );
+        }
+
+        // ---------------------------------------------------------------------------
         // FIELD-ORDER ENFORCEMENT
         // The LLM frequently drifts — it says "Can I get the deductible?" when the
         // actual next missing field is validity, or acknowledges ("Got it, thanks")
@@ -2102,13 +2340,21 @@ export class MediaStreamHandlerService {
         // thank-you / acknowledgement, then the next turn will play the final goodbye.
         // ---------------------------------------------------------------------------
         if (state.justCompletedAllFields && !state.allDoneAnnounced) {
-          toSpeak = "That's all I have. Thank you for your help.";
+          toSpeak = "Thank you, that's all I got.";
+
           state.allDoneAnnounced = true;
           state.justCompletedAllFields = false;
-          shouldEndCall = false;
+
+          // Do NOT hang up immediately.
+          // After TTS completes, enter the 4-second post-goodbye window.
+          shouldEndCall = true;
+
+          this.logger.log(
+            `[MediaStream] All verification fields collected — sending final message and waiting up to 4s for TPA goodbye.`,
+          );
         }
 
-        if (shouldEndCall) {
+        if (shouldEndCall && !state.allDoneAnnounced) {
           // Always use a short, no-intro closing — never repeat introduction at end of call.
           toSpeak = goodbye;
           // Will enter post-goodbye below: stay on line briefly in case user responds, then hang up
@@ -2135,6 +2381,8 @@ export class MediaStreamHandlerService {
         }
         // After a value is stored: always ack and ask the next field (do not stop on "thanks" alone).
         if (
+          !gateYesTransition &&
+          !gateQuestionAnswered &&
           valueCollectedThisTurn &&
           state.tpaBenefitQnaOpen &&
           !allCollected &&
@@ -2143,6 +2391,8 @@ export class MediaStreamHandlerService {
         ) {
           toSpeak = `${pickPostValueAcknowledgement()} ${qField(state.lastAskedField)}`;
         } else if (
+          !gateYesTransition &&
+          !gateQuestionAnswered &&
           benefitQnaHandoffThisTurn &&
           state.tpaBenefitQnaOpen &&
           !state.allDoneAnnounced &&
@@ -2150,11 +2400,14 @@ export class MediaStreamHandlerService {
         ) {
           const miss =
             getFirstMissingField(state.extractedData, orderedF) ?? orderedF[0];
+
           if (miss) {
             toSpeak = qField(miss);
             state.lastAskedField = miss;
           }
         } else if (
+          !gateYesTransition &&
+          !gateQuestionAnswered &&
           state.tpaBenefitQnaOpen &&
           !state.firstBenefitSoINeedPrefixUsed &&
           !allCollected &&
@@ -2166,9 +2419,32 @@ export class MediaStreamHandlerService {
             state.extractedData,
             orderedF,
           );
+
           if (firstMissing === state.lastAskedField) {
             toSpeak = qField(firstMissing);
           }
+        }
+
+        // ---------------------------------------------------------------------------
+        // FINAL GATE YES OVERRIDE
+        //
+        // A gate YES is a hard state transition.
+        // Do not allow the LLM, field-order enforcement, or value-collected
+        // acknowledgement logic to replace the dependency selected above.
+        // ---------------------------------------------------------------------------
+        if (gateQuestionAnsweredYes && gateNextDependentField) {
+          state.lastAskedField = gateNextDependentField;
+          toSpeak = qField(gateNextDependentField);
+          shouldEndCall = false;
+
+          this.logger.log(
+            `[MediaStream] FINAL GATE YES OVERRIDE: ` +
+              `${gateQuestionAnswered} -> ${gateNextDependentField}`,
+          );
+        }
+
+        if (/I would need the/i.test(toSpeak ?? '')) {
+          state.firstBenefitSoINeedPrefixUsed = true;
         }
 
         if (/I would need the/i.test(toSpeak ?? '')) {
@@ -2224,14 +2500,37 @@ export class MediaStreamHandlerService {
           });
         }
 
-        if (shouldEndCall) {
-          // Post-goodbye: already said short closing (e.g. "Got you. Have a good day.") — stay on line briefly in case user responds
+        if (terminateAfterGateNo) {
+          this.logger.log(
+            `[MediaStream] Gate NO completed — hanging up after closing message`,
+          );
+
+          state.callEnded = true;
+
+          if (state.fallbackTimer) {
+            clearInterval(state.fallbackTimer);
+            state.fallbackTimer = null;
+          }
+
+          const sid = state.callSid;
+
+          if (sid) {
+            this.twilioService
+              .hangUp(sid)
+              .catch((e) =>
+                this.logger.warn(
+                  '[MediaStream] Gate NO hang up failed',
+                  (e as Error)?.message,
+                ),
+              );
+          }
+        } else if (shouldEndCall) {
           state.postGoodbyeUntil = Date.now() + POST_GOODBYE_LISTEN_MS;
           state.postGoodbyeTimeoutId = setTimeout(
             doPostGoodbyeHangUp,
             POST_GOODBYE_LISTEN_MS,
           );
-          startFallbackTimer(); // keep processing buffer so we hear if user says something or thank you
+          startFallbackTimer();
         }
       } catch (err: any) {
         this.logger.warn('[MediaStream] Process buffer failed', err?.message);
@@ -2291,7 +2590,6 @@ export class MediaStreamHandlerService {
               state.callSid,
             );
             if (ctx) {
-              this.logger.log(`this is the CTX::: ${JSON.stringify(ctx)}`);
               if (!state.patientId?.trim()) state.patientId = ctx.PatientID;
               if (!state.appointmentId?.trim() && ctx.AppointmentID) {
                 state.appointmentId = ctx.AppointmentID;
@@ -2320,10 +2618,9 @@ export class MediaStreamHandlerService {
               });
             if (ctx) {
               state.callContext = ctx;
-              const nameSlice = ctx.patient.fullName.split(/\s+/);
               state.patientInfo = {
-                firstName: nameSlice[0] ?? '',
-                lastName: nameSlice.slice(1).join(' '),
+                firstName: ctx.patient.firstName,
+                lastName: ctx.patient.lastName,
                 fullName: ctx.patient.fullName,
                 dobFormatted: ctx.patient.dobFormatted,
                 ssn: ctx.patient.ssn,
@@ -2353,7 +2650,6 @@ export class MediaStreamHandlerService {
             }
 
             const ctx = await contextPromise;
-            this.logger.log('the output needed:', ctx);
             if (ctx) {
               state.callContext = ctx;
               state.patientInfo = {
@@ -2494,32 +2790,84 @@ export class MediaStreamHandlerService {
   private answerIsYes(value?: string | null): boolean {
     if (!value) return false;
 
-    return ['yes', 'y', 'true', 'covered'].includes(value.trim().toLowerCase());
+    return ['yes', 'y', 'yeah', 'yep', 'yup', 'true', 'covered'].includes(
+      value.trim().toLowerCase(),
+    );
+  }
+
+  private answerIsNo(value?: string | null): boolean {
+    if (!value) return false;
+
+    return ['no', 'n', 'nope', 'nah', 'false', 'not covered', 'none'].includes(
+      value.trim().toLowerCase(),
+    );
+  }
+
+  private hasValue(value: string | null | undefined): boolean {
+    return value != null && String(value).trim().length > 0;
   }
 
   private processDependencies(
     state: StreamState,
     field: string,
     value: unknown,
-  ) {
+  ): void {
+    // Get the verification step for this field
     const step = state.verificationStepByField[field];
 
+    // No dependencies? Nothing to do
     if (!step?.dependencies?.length) {
       return;
     }
 
-    if (String(value).trim().toLowerCase() !== 'no') {
+    const answer = String(value ?? '')
+      .trim()
+      .toLowerCase();
+
+    // YES: Keep all dependency fields active
+    if (this.answerIsYes(answer)) {
+      for (const procedureCode of step.dependencies) {
+        const dependent =
+          state.verificationStepByProcedureCode[procedureCode.toUpperCase()];
+
+        if (!dependent) continue;
+
+        // If previously skipped, reactivate it
+        if (state.extractedData[dependent.field] === '__SKIPPED__') {
+          delete state.extractedData[dependent.field];
+        }
+      }
+
+      this.logger.log(
+        `[MediaStream] Dependency YES: ${field}=${answer}; dependencies remain active: ${step.dependencies.join(', ')}`,
+      );
       return;
     }
 
-    for (const procedureCode of step.dependencies) {
-      const dependent =
-        state.verificationStepByProcedureCode[procedureCode.toUpperCase()];
+    // NO: Skip all dependency fields
+    if (this.answerIsNo(answer)) {
+      for (const procedureCode of step.dependencies) {
+        const dependent =
+          state.verificationStepByProcedureCode[procedureCode.toUpperCase()];
 
-      if (!dependent) continue;
+        if (!dependent) continue;
 
-      state.extractedData[dependent.field] = '__SKIPPED__';
+        // Only skip if not already answered
+        if (!this.hasValue(state.extractedData[dependent.field])) {
+          state.extractedData[dependent.field] = '__SKIPPED__';
+        }
+      }
+
+      this.logger.log(
+        `[MediaStream] Dependency NO: ${field}=${answer}; skipping dependencies: ${step.dependencies.join(', ')}`,
+      );
+      return;
     }
+
+    // Ambiguous: Do nothing (LLM will re-ask via the rule)
+    this.logger.warn(
+      `[MediaStream] Dependency answer unclear: field=${field}, value=${String(value)}`,
+    );
   }
 
   private ensureTpaIvrState(callSid: string | null): TpaIvrRuntimeState {
@@ -2590,7 +2938,6 @@ export class MediaStreamHandlerService {
     state.evaIntroIdentitySaid = false;
 
     const ctx = await contextPromise;
-    this.logger.log(`[EVA] Patient Context: ${JSON.stringify(ctx, null, 2)}`);
     if (ctx) {
       state.callContext = ctx;
       state.patientInfo = {
@@ -2601,9 +2948,6 @@ export class MediaStreamHandlerService {
         ssn: ctx.patient.ssn,
       };
       applyVerificationStepsToStreamState(state, ctx);
-      this.logger.log(
-        `[EVA] state.patientInfo = ${JSON.stringify(state.patientInfo, null, 2)}`,
-      );
       this.logger.log(
         `[MediaStream] Call context loaded after ${sourceLabel}: patient=${ctx.patient.fullName}`,
       );

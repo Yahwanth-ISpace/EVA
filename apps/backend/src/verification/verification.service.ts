@@ -262,7 +262,7 @@ export class VerificationService {
   }
 
   async findAll(user: { userId: string; role: string }) {
-    if (user.role === 'PAYEE') {
+    if (user.role === 'OPERATOR') {
       if (!user.userId) {
         throw new Error('Missing payee user ID');
       }

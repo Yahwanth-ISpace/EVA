@@ -16,14 +16,14 @@ export default function Register() {
     firstName: string;
     lastName: string;
     dob: string;
-    role: "PAYEE" | "ADMIN";
+    role: "OPERATOR" | "ADMIN";
   }>({
     email: "",
     password: "",
     firstName: "",
     lastName: "",
     dob: "",
-    role: "PAYEE",
+    role: "OPERATOR",
   });
 
   const handleChange = (
@@ -106,7 +106,7 @@ export default function Register() {
           onChange={handleChange}
           className="w-full border px-3 py-2 rounded"
         >
-          <option value="PAYEE">Payee</option>
+          <option value="OPERATOR">Payee</option>
           <option value="ADMIN">Admin</option>
         </select>
 

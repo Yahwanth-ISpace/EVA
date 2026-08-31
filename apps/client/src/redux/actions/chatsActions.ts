@@ -1,8 +1,8 @@
 import type { Dispatch } from "redux";
 import { chatApi } from "../../utils/chatApi";
 import chatTypes, {
-  type ChatMessage
-} from "../types/chatsTypes";
+  type ChatMessage,
+  // type ChatResponse,
 
 const withLoading = async <T>(
   dispatch: Dispatch,
