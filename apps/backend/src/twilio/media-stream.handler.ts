@@ -2971,6 +2971,130 @@ export class MediaStreamHandlerService {
     return 0;
   }
 
+  private clearTwilioAudio(
+  session: StreamSession,
+): void {
+  const { state, ws } = session;
+
+  if (!state.streamSid) {
+    this.logger.warn(
+      `[BARGE-IN] streamSid missing callSid=${state.callSid}`,
+    );
+    return;
+  }
+
+  if (ws.readyState !== ws.OPEN) {
+    this.logger.warn(
+      `[BARGE-IN] WebSocket not open callSid=${state.callSid}`,
+    );
+    return;
+  }
+
+  ws.send(
+    JSON.stringify({
+      event: 'clear',
+      streamSid: state.streamSid,
+    }),
+  );
+
+  this.logger.log(
+    `[BARGE-IN] Twilio clear sent ` +
+      `callSid=${state.callSid} ` +
+      `streamSid=${state.streamSid}`,
+  );
+}
+
+  async bargeIn(
+  callSid: string,
+  reason = 'frontend',
+): Promise<void> {
+  const session =
+    this.callSessions.get(callSid);
+
+  if (!session) {
+    this.logger.warn(
+      `[BARGE-IN] Session not found callSid=${callSid}`,
+    );
+    return;
+  }
+
+  if (session.state.callEnded) {
+    this.logger.warn(
+      `[BARGE-IN] Call already ended callSid=${callSid}`,
+    );
+    return;
+  }
+
+  if (session.bargeInInProgress) {
+    return;
+  }
+
+  session.bargeInInProgress = true;
+
+  try {
+    this.logger.log(
+      `[BARGE-IN] Starting callSid=${callSid} ` +
+        `appointmentId=${session.state.appointmentId ?? 'none'} ` +
+        `reason=${reason}`,
+    );
+
+    // Invalidate the currently running AI/TTS response.
+    session.responseGeneration++;
+
+    // Cancel active AI/TTS operation if supported.
+    session.responseAbortController?.abort();
+    session.responseAbortController =
+      undefined;
+
+    session.isSpeaking = false;
+
+    // Stop audio already buffered by Twilio.
+    this.clearTwilioAudio(session);
+
+    this.logger.log(
+      `[BARGE-IN] Completed callSid=${callSid} ` +
+        `generation=${session.responseGeneration}`,
+    );
+  } finally {
+    session.bargeInInProgress = false;
+  }
+}
+
+
+  async bargeInForAppointment(
+  appointmentId: string,
+  reason = 'frontend',
+): Promise<{ callSid: string } | null> {
+  const normalizedAppointmentId =
+    String(appointmentId).trim();
+
+  for (const [
+    callSid,
+    session,
+  ] of this.callSessions.entries()) {
+    if (
+      String(session.state.appointmentId ?? '').trim() ===
+        normalizedAppointmentId &&
+      !session.state.callEnded
+    ) {
+      await this.bargeIn(
+        callSid,
+        reason,
+      );
+
+      return {
+        callSid,
+      };
+    }
+  }
+
+  this.logger.warn(
+    `[BARGE-IN] No active call found for appointment=${normalizedAppointmentId}`,
+  );
+
+  return null;
+}
+
   /** Convert raw mulaw (8kHz mono) file to wav for transcription API */
   private mulawRawToWav(rawPath: string, wavPath: string): void {
     const result = spawnSync(
