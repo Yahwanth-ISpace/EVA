@@ -5,12 +5,12 @@ import chatTypes, {
   // type ChatResponse,
 } from "../types/chatsTypes";
 
-const withLoading = async <T>(
+const withLoading = async (
   dispatch: Dispatch,
-  asyncFn: () => Promise<T>,
+  asyncFn: () => Promise<any>,
   successType: string,
   successMessage: string,
-  failureType?: string
+  failureType?: string,
 ) => {
   dispatch({ type: chatTypes.CHAT_LOADING });
   try {
@@ -50,7 +50,7 @@ export const sendChat =
       () => chatApi.post("/chat", payload).then((res: any) => res),
       chatTypes.SEND_CHAT_SUCCESS,
       "Message sent",
-      chatTypes.SEND_CHAT_FAILURE
+      chatTypes.SEND_CHAT_FAILURE,
     );
 
 // Get chat history
@@ -90,5 +90,5 @@ export const clearChatHistory =
         chatApi.post(`/chat/clear/${userId}`, {}).then((res: any) => res.data),
       chatTypes.CLEAR_HISTORY_SUCCESS,
       "Chat cleared",
-      chatTypes.CLEAR_HISTORY_FAILURE
+      chatTypes.CLEAR_HISTORY_FAILURE,
     );
