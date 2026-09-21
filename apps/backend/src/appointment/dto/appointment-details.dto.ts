@@ -79,6 +79,21 @@ export class ProviderDto {
   providerTaxId: string;
 }
 
+export interface EvaVerification {
+  status?: string;
+
+  transcript?: string;
+
+  extractedData?: Record<string, string | null>;
+
+  call?: {
+    callSid?: string | null;
+    startedAt?: string | null;
+    endedAt?: string | null;
+    duration?: number | null;
+  };
+}
+
 export class AppointmentDetailsDto {
   @ApiProperty()
   appointmentId: string;
@@ -141,4 +156,23 @@ export class AppointmentDetailsDto {
     },
   })
   benefitsInfo?: BenefitsInfo;
+
+  @ApiProperty({
+    description: 'EVA verification details',
+    example: {
+      status: 'completed',
+      transcript: 'Hello, this is a sample transcript of the verification call.',
+      extractedData: {
+        coverage: 'Full coverage',
+        deductible: '$500',
+      },
+      call: {
+        callSid: 'call_sid_123',
+        startedAt: '2023-01-01T00:00:00Z',
+        endedAt: '2023-01-01T00:05:00Z',
+        duration: 300,
+      },
+    },
+  })
+  eva?: EvaVerification;
 }
