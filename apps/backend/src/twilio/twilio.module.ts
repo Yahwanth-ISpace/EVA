@@ -11,6 +11,7 @@ import { VerificationRequirementModule } from '../verification-requirement/verif
 import { BotTrackerModule } from '../bot-tracker/bot-tracker.module';
 import { AudioEmotionModule } from '../audio-emotion/audio-emotion.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { AppointmentModule } from "../appointment/appointment.module";
 
 @Module({
   imports: [
