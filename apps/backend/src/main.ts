@@ -34,7 +34,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   setupSwagger(app);
   app.enableCors({
-    origin: ['http://3.210.91.177', 'http://localhost:5173'],
+    origin: corsOrigin(),
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',
