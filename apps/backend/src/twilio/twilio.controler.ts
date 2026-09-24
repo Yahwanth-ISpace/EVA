@@ -41,7 +41,7 @@ function getStreamBaseUrl(): string {
     process.env.BACKEND_URL ||
     `http://localhost:${process.env.PORT ?? 3000}`
   ).trim();
-  if (base.startsWith('wss://') || base.startsWith('ws://'))
+  if (base.startsWith('ws://') || base.startsWith('ws://'))
     return base.replace(/\/+$/, '');
   if (base.startsWith('https://'))
     return base.replace(/^https/, 'wss').replace(/\/+$/, '');

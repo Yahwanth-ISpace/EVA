@@ -19,7 +19,7 @@ const initialState: VerificationsState = {
 
 export const verificationsReducer = (
   state = initialState,
-  action: any
+  action: any,
 ): VerificationsState => {
   switch (action.type) {
     case "VERIFICATION_LOADING":
@@ -42,7 +42,23 @@ export const verificationsReducer = (
     case appTypes.verifications.FETCH_VERIFICATION_BY_ID_REQUEST:
       return {
         ...state,
+        loading: true,
+        error: null,
+      };
+
+    case appTypes.verifications.FETCH_VERIFICATION_BY_ID_SUCCESS:
+      return {
+        ...state,
+        loading: false,
         verification: action.payload,
+        error: null,
+      };
+
+    case appTypes.verifications.FETCH_VERIFICATION_BY_ID_FAILURE:
+      return {
+        ...state,
+        loading: false,
+        error: action.payload,
       };
 
     default:

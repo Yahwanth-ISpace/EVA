@@ -103,7 +103,7 @@ export default function InsuranceDetails() {
         ====================================================== */}
         <div>
           <Link
-            to="/insurance"
+            to="/Dashboard"
             className="inline-flex items-center text-sm font-medium text-indigo-600 transition hover:text-indigo-800"
           >
             ← Back to verifications
