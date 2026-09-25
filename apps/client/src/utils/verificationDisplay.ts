@@ -109,13 +109,22 @@ export function getVerificationForAppointment(
   appointmentId: string,
   payeeId: string,
   samePayeeAppointmentCount?: number,
+  appointmentNumericId?: string,
 ): VerificationRecord | undefined {
-  const linked = verifications.find((v) => v.appointmentId === appointmentId);
+  const matchesAppointment = (v: VerificationRecord) => {
+    if (v.appointmentId == null || v.appointmentId === "") return false;
+    const stored = String(v.appointmentId);
+    if (stored === appointmentId) return true;
+    if (appointmentNumericId && stored === appointmentNumericId) return true;
+    return false;
+  };
+
+  const linked = verifications.find(matchesAppointment);
   if (linked) return linked;
   if (samePayeeAppointmentCount !== 1) return undefined;
   const unlinked = verifications.filter(
     (v) =>
-      v.payee?.id === payeeId &&
+      (v.payee?.id === payeeId || v.payeeId === payeeId) &&
       (v.appointmentId == null || v.appointmentId === ""),
   );
   if (unlinked.length === 1) return unlinked[0];

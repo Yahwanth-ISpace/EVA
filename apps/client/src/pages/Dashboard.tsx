@@ -8,11 +8,11 @@ import Navbar from "../components/Navbar";
 import type { RootState, AppDispatch } from "../redux/store";
 import PatientTabs from "../components/PatientTabs";
 import Container from "../components/Container";
-import { Role } from "../components/RoleWrapper";
 
 export default function Dashboard() {
   const dispatch = useDispatch<AppDispatch>();
 
+  const { user } = useSelector((state: RootState) => state.authState);
   const { verifications: verificationData, loading: verificationLoading } =
     useSelector((state: RootState) => state.verificationsState);
 
@@ -20,6 +20,8 @@ export default function Dashboard() {
     dispatch(getVerifications());
     dispatch(getAppointments());
   }, [dispatch]);
+
+  const isAdmin = user?.role === "ADMIN";
 
   return (
     <div className="Dashboard flex flex-col h-screen max-h-screen bg-slate-50/50 overflow-hidden pt-5">
@@ -31,17 +33,20 @@ export default function Dashboard() {
           </h1>
         </div>
 
-        <Container className="pb-8 mt-5 flex-1 min-h-0">
-          <Role role="ADMIN">
-            <AdminInsuranceTable
-              records={verificationData}
-              loading={verificationLoading}
-            />
-          </Role>
+        <Container className="pb-8 mt-5 flex-1 min-h-0 flex flex-col gap-8 overflow-y-auto custom-scrollbar">
+          <PatientTabs />
 
-          <Role role="OPERATOR">
-            <PatientTabs />
-          </Role>
+          {isAdmin ? (
+            <section className="shrink-0 border-t border-slate-200 pt-6">
+              <h2 className="text-lg font-semibold text-slate-800 mb-4">
+                Verification records
+              </h2>
+              <AdminInsuranceTable
+                records={verificationData}
+                loading={verificationLoading}
+              />
+            </section>
+          ) : null}
         </Container>
       </div>
     </div>
