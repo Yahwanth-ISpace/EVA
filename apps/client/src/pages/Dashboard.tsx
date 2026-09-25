@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
 import { getAppointments } from "../redux/actions/appointmentsActions";
 import { getVerifications } from "../redux/actions/verificationActions";
 
 import AdminInsuranceTable from "../components/AdminInsuranceTable";
-import Navbar from "../components/Navbar";
-import type { RootState, AppDispatch } from "../redux/store";
-import PatientTabs from "../components/PatientTabs";
 import Container from "../components/Container";
+import Navbar from "../components/Navbar";
+import PatientTabs from "../components/PatientTabs";
+import type { AppDispatch, RootState } from "../redux/store";
 
 type AdminTab = "appointments" | "verifications";
 
@@ -25,20 +25,6 @@ export default function Dashboard() {
 
   // Admin section tab
   const [activeTab, setActiveTab] = useState<AdminTab>("appointments");
-
-  // Verification sorting
-  const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
-
-  // Latest verifications by default
-  const sortedRecords = useMemo(() => {
-    return [...verificationData].sort((a, b) => {
-      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-
-      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-
-      return sortOrder === "desc" ? dateB - dateA : dateA - dateB;
-    });
-  }, [verificationData, sortOrder]);
 
   useEffect(() => {
     dispatch(getVerifications());
@@ -125,7 +111,7 @@ export default function Dashboard() {
                 <div className="mt-5">
                   {/* Verification Table */}
                   <AdminInsuranceTable
-                    records={sortedRecords}
+                    records={verificationData}
                     loading={verificationLoading}
                   />
                 </div>
