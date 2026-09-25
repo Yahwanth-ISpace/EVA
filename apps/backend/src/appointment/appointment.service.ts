@@ -11,6 +11,7 @@ import { TwilioService } from 'src/twilio/twilio.service';
 import { AppointmentDetailsDto } from './dto/appointment-details.dto';
 import { MongoService } from 'src/mongo/mongo.service';
 import { AgentDto } from 'src/schedular/dto/agent.dto';
+import { mapMongoAppointmentToClient } from './appointment.mapper';
 
 @Injectable()
 export class AppointmentService {
@@ -58,13 +59,16 @@ export class AppointmentService {
     const col = await this.mongoService.appointmentsCollection();
 
     if (user.role === 'ADMIN') {
-      return col
+      const docs = await col
         .find({})
         .sort({
           appointmentDate: 1,
           savedAt: -1,
         })
         .toArray();
+      return docs.map((d) =>
+        mapMongoAppointmentToClient(d as Record<string, unknown>),
+      );
     }
 
     const dbUser = await this.prisma.user.findUnique({
@@ -92,7 +96,7 @@ export class AppointmentService {
       return [];
     }
 
-    return col
+    const docs = await col
       .find({
         'patient.patientId': {
           $in: patientIds,
@@ -103,6 +107,9 @@ export class AppointmentService {
         savedAt: -1,
       })
       .toArray();
+    return docs.map((d) =>
+      mapMongoAppointmentToClient(d as Record<string, unknown>),
+    );
   }
 
   async findOne(id: string, user: { userId: string; role: 'ADMIN' | 'OPERATOR' }) {
@@ -163,7 +170,7 @@ export class AppointmentService {
       }
     }
 
-    return doc;
+    return mapMongoAppointmentToClient(doc as Record<string, unknown>);
   }
   async updateEvaVerification(
     patientId: string,

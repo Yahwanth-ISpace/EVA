@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
+import type { ActiveLiveCall } from "./appointmentRecord";
 import {
   isCallActiveFromTrackers,
   type BotTrackerRecord,
@@ -127,4 +128,34 @@ export function useLiveBotTrackersByPayeeIds(
   }, [ids, activeMs, idleMs]);
 
   return byPayee;
+}
+
+/** In-memory active EVA calls from the media-stream handler (authoritative for per-appointment live state). */
+export function useActiveLiveCalls(
+  pollMs = 2000,
+): ActiveLiveCall[] {
+  const [calls, setCalls] = useState<ActiveLiveCall[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const tick = async () => {
+      try {
+        const data = await api.get<ActiveLiveCall[]>("/twilio/active-calls");
+        if (!cancelled) setCalls(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setCalls([]);
+      }
+      if (!cancelled) timer = setTimeout(tick, pollMs);
+    };
+
+    tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [pollMs]);
+
+  return calls;
 }

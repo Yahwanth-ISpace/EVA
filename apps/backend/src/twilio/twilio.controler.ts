@@ -27,6 +27,7 @@ import {
   TwilioPutOnHoldDto,
 } from './dto/twilio-call.dto';
 import { BotTrackerService } from '../bot-tracker/bot-tracker.service';
+import { MediaStreamHandlerService } from './media-stream.handler';
 
 const backendBaseUrl =
   (process.env.BACKEND_URL || '').trim() ||
@@ -85,7 +86,20 @@ export class TwilioController {
     private readonly twilioService: TwilioService,
     private readonly elevenLabsService: ElevenLabsService,
     private readonly botTrackerService: BotTrackerService,
+    private readonly mediaStreamHandlerService: MediaStreamHandlerService,
   ) {}
+
+  @Get('active-calls')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('jwt-auth')
+  @ApiOperation({
+    summary: 'List active EVA media-stream calls',
+    description:
+      'Returns in-progress verification calls (patientId + appointmentId) for live dashboard badges and barge-in testing.',
+  })
+  activeCalls() {
+    return this.mediaStreamHandlerService.getActiveLiveCalls();
+  }
 
   /**
    * IVR inbound — when a call comes in, play menu and gather 1–4.

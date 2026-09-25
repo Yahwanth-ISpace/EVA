@@ -14,6 +14,12 @@ export class BotTrackerDto {
   PatientID: string;
 
   @ApiProperty({
+    description: 'Same as PatientID (dashboard polling key)',
+    example: '90560891',
+  })
+  payeeId: string;
+
+  @ApiProperty({
     description: 'Call log data - accepts any data type',
     example: { duration: 300, status: 'completed', notes: 'verification completed' },
   })

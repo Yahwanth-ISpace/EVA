@@ -25,6 +25,7 @@ import {
   isCallActiveFromTrackers,
 } from "../utils/botTracker";
 import { CallActivitySection } from "../components/CallActivitySection";
+import { resolveAppointmentPayeeId } from "../utils/appointmentRecord";
 import { useLiveBotTrackers } from "../utils/useLiveBotTrackers";
 import {
   getVerificationFieldRows,
@@ -263,11 +264,14 @@ export default function AppointmentDetail() {
     (state: RootState) => state.verificationsState,
   );
 
-  const appointmentFromStore = useMemo(
-    () =>
-      id ? appointments.find((a: AppointmentRecord) => a.id === id) : undefined,
-    [appointments, id],
-  );
+  const appointmentFromStore = useMemo(() => {
+    if (!id) return undefined;
+    return appointments.find((a: AppointmentRecord) => {
+      if (a.id === id) return true;
+      if (String(a.appointmentId ?? "") === id) return true;
+      return false;
+    });
+  }, [appointments, id]);
 
   const [fetchedAppointment, setFetchedAppointment] = useState<
     AppointmentRecord | null | undefined
@@ -324,15 +328,19 @@ export default function AppointmentDetail() {
     [appointments, appointment],
   );
 
+  const appointmentPayeeId = appointment
+    ? resolveAppointmentPayeeId(appointment)
+    : undefined;
+
   const verification = appointment
     ? getVerificationForAppointment(
         verifications,
         appointment.id,
-        appointment.payeeId,
+        appointmentPayeeId ?? appointment.payeeId,
         samePayeeAppointmentCount,
       )
     : undefined;
-  const liveLogs = useLiveBotTrackers(appointment?.payeeId);
+  const liveLogs = useLiveBotTrackers(appointmentPayeeId);
   const [callLogTab, setCallLogTab] = useState<"live" | "transcript">("live");
   const [endCallLoading, setEndCallLoading] = useState(false);
   const [holdLoading, setHoldLoading] = useState(false);
@@ -434,7 +442,7 @@ export default function AppointmentDetail() {
 
   useEffect(() => {
     liveTailRef.current = { len: 0, tailId: "" };
-  }, [appointment?.payeeId]);
+  }, [appointmentPayeeId]);
 
   useEffect(() => {
     const trimmed = supervisorPhone.trim();
@@ -447,6 +455,12 @@ export default function AppointmentDetail() {
     () => isCallActiveFromTrackers(liveLogs),
     [liveLogs],
   );
+
+  useEffect(() => {
+    if (isCallInProgress) {
+      setCallLogTab("live");
+    }
+  }, [isCallInProgress]);
 
   /** Stays true after the call ends if any TPA segment was angry since the latest [CALL_EVENT] START. */
   const tpaAngryIndicatorActive = useMemo(
@@ -493,7 +507,7 @@ export default function AppointmentDetail() {
   }, [activeCallSid]);
 
   const handleBargeInClick = useCallback(async () => {
-    if (!activeCallSid || !appointment?.payeeId) return;
+    if (!activeCallSid || !appointmentPayeeId) return;
     const phone = supervisorPhone.trim();
     if (!phone) return;
     setBargeInLoading(true);
@@ -502,7 +516,7 @@ export default function AppointmentDetail() {
       await api.post<{ ok: boolean }>("/twilio/barge-in", {
         callSid: activeCallSid,
         supervisorPhone: phone,
-        payeeId: appointment.payeeId,
+        payeeId: appointmentPayeeId,
       });
     } catch {
       setBargeInError(
@@ -511,7 +525,7 @@ export default function AppointmentDetail() {
     } finally {
       setBargeInLoading(false);
     }
-  }, [activeCallSid, appointment?.payeeId, supervisorPhone]);
+  }, [activeCallSid, appointmentPayeeId, supervisorPhone]);
 
   const handleSupervisorPhoneChange = useCallback((value: string) => {
     setSupervisorPhone(value);

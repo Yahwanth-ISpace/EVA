@@ -17,6 +17,7 @@ export class BotTrackerService {
     return {
       id: tracker.id,
       PatientID: tracker.payeeId,
+      payeeId: tracker.payeeId,
       callLog: tracker.callLog,
       createdAt: tracker.createdAt,
     };
