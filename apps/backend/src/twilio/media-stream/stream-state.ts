@@ -75,6 +75,8 @@ export interface StreamState {
   evaIntroIdentitySaid: boolean;
   /** TPA said they found/located the patient — identity verification treated as done. */
   tpaPatientLocated: boolean;
+  /** Supervisor barge-in requested — stop EVA TTS/LLM until call bridges to conference. */
+  supervisorBargePending: boolean;
 
   agentId: string | null;
 
