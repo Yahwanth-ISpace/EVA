@@ -25,7 +25,10 @@ import {
   isCallActiveFromTrackers,
 } from "../utils/botTracker";
 import { CallActivitySection } from "../components/CallActivitySection";
-import { resolveAppointmentPayeeId } from "../utils/appointmentRecord";
+import {
+  resolveAppointmentNumericId,
+  resolveAppointmentPayeeId,
+} from "../utils/appointmentRecord";
 import { useLiveBotTrackers } from "../utils/useLiveBotTrackers";
 import {
   getVerificationFieldRows,
@@ -320,17 +323,19 @@ export default function AppointmentDetail() {
       (fetchedAppointment !== null && fetchedAppointment.id !== id)),
   );
 
-  const samePayeeAppointmentCount = useMemo(
-    () =>
-      appointment
-        ? appointments.filter((a) => a.payeeId === appointment.payeeId).length
-        : 0,
-    [appointments, appointment],
-  );
-
   const appointmentPayeeId = appointment
     ? resolveAppointmentPayeeId(appointment)
     : undefined;
+
+  const samePayeeAppointmentCount = useMemo(
+    () =>
+      appointment && appointmentPayeeId
+        ? appointments.filter(
+            (a) => resolveAppointmentPayeeId(a) === appointmentPayeeId,
+          ).length
+        : 0,
+    [appointments, appointment, appointmentPayeeId],
+  );
 
   const verification = appointment
     ? getVerificationForAppointment(
@@ -338,6 +343,7 @@ export default function AppointmentDetail() {
         appointment.id,
         appointmentPayeeId ?? appointment.payeeId,
         samePayeeAppointmentCount,
+        resolveAppointmentNumericId(appointment),
       )
     : undefined;
   const liveLogs = useLiveBotTrackers(appointmentPayeeId);

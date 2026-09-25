@@ -15,6 +15,7 @@ import {
 } from "../utils/useLiveBotTrackers";
 import {
   isAppointmentLive,
+  resolveAppointmentNumericId,
   resolveAppointmentPayeeId,
   resolveAppointmentRouteId,
 } from "../utils/appointmentRecord";
@@ -215,14 +216,16 @@ export default function PatientTabs() {
     };
 
     const statusRank = (appt: AppointmentRecord) => {
+      const payeeKey = resolveAppointmentPayeeId(appt) ?? appt.payeeId;
       const samePayeeCount = appointments.filter(
-        (a) => a.payeeId === appt.payeeId,
+        (a) => (resolveAppointmentPayeeId(a) ?? a.payeeId) === payeeKey,
       ).length;
       const verification = getVerificationForAppointment(
         verifications,
         appt.id,
-        appt.payeeId,
+        payeeKey,
         samePayeeCount,
+        resolveAppointmentNumericId(appt),
       );
       if (Boolean(verification)) return 2;
       if (
@@ -387,14 +390,19 @@ export default function PatientTabs() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredAppointments.map((appt: AppointmentRecord) => {
+                    const payeeKey =
+                      resolveAppointmentPayeeId(appt) ?? appt.payeeId;
                     const samePayeeCount = appointments.filter(
-                      (a) => a.payeeId === appt.payeeId,
+                      (a) =>
+                        (resolveAppointmentPayeeId(a) ?? a.payeeId) ===
+                        payeeKey,
                     ).length;
                     const verification = getVerificationForAppointment(
                       verifications,
                       appt.id,
-                      appt.payeeId,
+                      payeeKey,
                       samePayeeCount,
+                      resolveAppointmentNumericId(appt),
                     );
                     const isVerified = Boolean(verification);
                     const isCallInProgress = isAppointmentLive(
