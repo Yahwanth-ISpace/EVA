@@ -859,6 +859,7 @@ export default function AppointmentDetail() {
                   setCallLogTab={setCallLogTab}
                   isCallInProgress={isCallInProgress}
                   tpaAngryIndicatorActive={tpaAngryIndicatorActive}
+                  supervisorBargeActive={supervisorBargeActive}
                   liveChronological={liveChronological}
                   hasTranscript={hasTranscript}
                   transcriptText={transcriptText}
@@ -867,6 +868,11 @@ export default function AppointmentDetail() {
                   holdLoading={holdLoading}
                   onEndCallClick={handleEndCallClick}
                   endCallLoading={endCallLoading}
+                  onBargeInClick={handleBargeInClick}
+                  bargeInLoading={bargeInLoading}
+                  bargeInError={bargeInError}
+                  supervisorPhone={supervisorPhone}
+                  onSupervisorPhoneChange={handleSupervisorPhoneChange}
                   canControlCall={Boolean(activeCallSid)}
                 />
               </aside>
