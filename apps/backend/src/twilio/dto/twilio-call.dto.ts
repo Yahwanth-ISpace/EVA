@@ -11,7 +11,8 @@ export class TwilioInitiateCallDto {
 
   @ApiProperty({
     example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
-    description: 'Payee (patient) ID — links stream to verification requirement.',
+    description:
+      'Payee (patient) ID — links stream to verification requirement.',
   })
   payeeId: string;
 
@@ -37,7 +38,8 @@ export class TwilioInitiateCallDto {
 export class TwilioCallSidDto {
   @ApiProperty({
     example: 'CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-    description: 'Twilio Call SID (e.g. from live call events or `CallSid` on status callbacks).',
+    description:
+      'Twilio Call SID (e.g. from live call events or `CallSid` on status callbacks).',
   })
   @IsString()
   @IsNotEmpty()
@@ -49,3 +51,24 @@ export class TwilioEndCallDto extends TwilioCallSidDto {}
 
 /** Body for `POST /twilio/put-on-hold` — redirect the call to hold TwiML (disconnects media stream until resumed). */
 export class TwilioPutOnHoldDto extends TwilioCallSidDto {}
+
+/** Body for `POST /twilio/barge-in` — supervisor joins the active verification call via Twilio Conference. */
+export class TwilioBargeInDto extends TwilioCallSidDto {
+  @ApiProperty({
+    example: '+15551234567',
+    description:
+      'Supervisor phone (E.164). Twilio will dial this number into the same conference as the TPA call. EVA media stream ends when the call is bridged.',
+  })
+  @IsString()
+  @IsNotEmpty()
+  supervisorPhone: string;
+
+  @ApiPropertyOptional({
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+    description:
+      'Payee / patient id for a live activity log line (`[CALL_EVENT] SUPERVISOR_BARGE_IN`). Same id used for bot-trackers polling.',
+  })
+  @IsOptional()
+  @IsString()
+  payeeId?: string;
+}

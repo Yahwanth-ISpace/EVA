@@ -100,6 +100,12 @@ export function parseLiveLogMessage(rawLine: string): {
   if (line.startsWith("User:")) {
     return { role: "tpa", text: line.slice(5).trim() };
   }
+  if (line.includes("[CALL_EVENT] SUPERVISOR_BARGE_IN")) {
+    return {
+      role: "system",
+      text: "Supervisor joined the call — EVA stopped speaking; human is on the line with the TPA.",
+    };
+  }
   return { role: "system", text: line };
 }
 
@@ -182,8 +188,7 @@ export function extractActiveCallSidFromTrackers(
   trackers: BotTrackerRecord[],
 ): string | null {
   const chron = [...trackers].sort(
-    (a, b) =>
-      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
   );
   let openSid: string | null = null;
   for (const t of chron) {
@@ -204,8 +209,7 @@ export function isCallActiveFromTrackers(
 ): boolean {
   if (!trackers.length) return false;
   const chron = [...trackers].sort(
-    (a, b) =>
-      new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
   );
   let open = false;
   for (const t of chron) {
@@ -220,6 +224,23 @@ export function isCallActiveFromTrackers(
  * True if any `[TPA_EMOTION] angry` appears after the latest `[CALL_EVENT] START`
  * (full payee log; not UI-sliced). Still true after `[CALL_EVENT] END` until a newer START.
  */
+/** True if a supervisor barge-in was logged since the latest `[CALL_EVENT] START`. */
+export function hasSupervisorBargeSinceLatestCallStart(
+  chronological: BotTrackerRecord[],
+): boolean {
+  let lastStart = -1;
+  for (let i = 0; i < chronological.length; i++) {
+    const line = formatCallLogLine(chronological[i]!);
+    if (line.includes("[CALL_EVENT] START")) lastStart = i;
+  }
+  if (lastStart < 0) return false;
+  for (let j = lastStart; j < chronological.length; j++) {
+    const line = formatCallLogLine(chronological[j]!);
+    if (line.includes("[CALL_EVENT] SUPERVISOR_BARGE_IN")) return true;
+  }
+  return false;
+}
+
 export function hasTpaAngrySinceLatestCallStart(
   chronological: BotTrackerRecord[],
 ): boolean {

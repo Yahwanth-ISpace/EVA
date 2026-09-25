@@ -21,10 +21,12 @@ import { Response } from 'express';
 import { TwilioService } from './twilio.service';
 import { ElevenLabsService } from '../voice/elevenlabs.service';
 import {
+  TwilioBargeInDto,
   TwilioEndCallDto,
   TwilioInitiateCallDto,
   TwilioPutOnHoldDto,
 } from './dto/twilio-call.dto';
+import { BotTrackerService } from '../bot-tracker/bot-tracker.service';
 
 const backendBaseUrl =
   (process.env.BACKEND_URL || '').trim() ||
@@ -56,6 +58,22 @@ function escapeXmlAttr(value: string): string {
     .replace(/</g, '&lt;');
 }
 
+function escapeXmlText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/** Conference room names we generate for barge-in (prevent arbitrary TwiML injection). */
+function assertConferenceRoom(room: string): string {
+  const r = room?.trim() ?? '';
+  if (!/^eva-barge-[A-Za-z0-9]+$/.test(r)) {
+    throw new BadRequestException('Invalid conference room');
+  }
+  return r;
+}
+
 /**
  * TwilioController handles phone call infrastructure via Twilio.
  * IVR: Press 1 complaints, 2 register insurance, 3 latest offers, 4 talk to agent (hold 10s then dial).
@@ -66,6 +84,7 @@ export class TwilioController {
   constructor(
     private readonly twilioService: TwilioService,
     private readonly elevenLabsService: ElevenLabsService,
+    private readonly botTrackerService: BotTrackerService,
   ) {}
 
   /**
@@ -354,7 +373,6 @@ export class TwilioController {
     description:
       'Dials `to` with TwiML that connects media stream for `payeeId` (EVA benefit verification).',
   })
-
   @ApiBody({ type: TwilioInitiateCallDto })
   async initiateCall(@Body() body: TwilioInitiateCallDto) {
     return this.twilioService.makeCall(
@@ -389,6 +407,89 @@ export class TwilioController {
         <Play loop="0">${escapeXmlAttr(moh)}</Play>
       </Response>
     `);
+  }
+
+  /**
+   * TwiML: join a named conference (verification leg or supervisor leg). Twilio webhook — no JWT.
+   */
+  @Get('conference-join')
+  @Post('conference-join')
+  @ApiOperation({
+    summary: 'Join barge-in conference (TwiML)',
+    description:
+      'Used when redirecting the verification call or dialing a supervisor into `POST /twilio/barge-in`. Query `room` must match `eva-barge-*`.',
+  })
+  @ApiQuery({ name: 'room', required: true })
+  @ApiQuery({
+    name: 'role',
+    required: false,
+    enum: ['verification', 'supervisor'],
+  })
+  @ApiProduces('text/xml')
+  conferenceJoin(
+    @Query('room') room: string,
+    @Query('role') role: string | undefined,
+    @Res() res: Response,
+  ) {
+    const conferenceName = assertConferenceRoom(room);
+    const roleNorm = (role ?? 'verification').trim().toLowerCase();
+    const label = roleNorm === 'supervisor' ? 'supervisor' : 'verification';
+    const waitUrl = process.env.TWILIO_HOLD_MUSIC_URL?.trim();
+    const waitAttr = waitUrl
+      ? ` waitUrl="${escapeXmlAttr(waitUrl)}" waitMethod="GET"`
+      : '';
+
+    res.type('text/xml').send(`
+      <Response>
+        <Say voice="alice">${escapeXmlText(
+          roleNorm === 'supervisor'
+            ? 'Connecting you to the verification call.'
+            : 'Connecting the call for supervisor join.',
+        )}</Say>
+        <Dial>
+          <Conference
+            beep="false"
+            startConferenceOnEnter="true"
+            endConferenceOnExit="false"
+            participantLabel="${escapeXmlAttr(label)}"${waitAttr}
+          >${escapeXmlText(conferenceName)}</Conference>
+        </Dial>
+      </Response>
+    `);
+  }
+
+  @Post('barge-in')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('jwt-auth')
+  @ApiOperation({
+    summary: 'Supervisor barge-in (human join)',
+    description:
+      'Moves the active verification call into a Twilio Conference (stops EVA media stream) and dials `supervisorPhone` into the same conference so a human can speak with the TPA.',
+  })
+  @ApiBody({ type: TwilioBargeInDto })
+  async bargeIn(@Body() body: TwilioBargeInDto) {
+    let result: { conferenceName: string; supervisorCallSid: string };
+    try {
+      result = await this.twilioService.bargeInSupervisor(
+        body.callSid,
+        body.supervisorPhone,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Barge-in failed';
+      throw new BadRequestException(message);
+    }
+    const payeeKey = body.payeeId?.trim();
+    if (payeeKey) {
+      try {
+        await this.botTrackerService.create({
+          PatientID: payeeKey,
+          callLog: `[CALL_EVENT] SUPERVISOR_BARGE_IN callSid=${body.callSid.trim()} conference=${result.conferenceName}`,
+        });
+      } catch {
+        // Non-blocking — barge succeeded even if live log write fails.
+      }
+    }
+    return { ok: true, ...result };
   }
 
   @Post('put-on-hold')

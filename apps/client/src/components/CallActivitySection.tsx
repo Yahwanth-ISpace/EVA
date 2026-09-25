@@ -15,6 +15,8 @@ export interface CallActivitySectionProps {
   isCallInProgress: boolean;
   /** True if the latest verification call had any angry TPA segment (including after the call ends). */
   tpaAngryIndicatorActive?: boolean;
+  /** True after a supervisor barge-in event on the latest verification call. */
+  supervisorBargeActive?: boolean;
   liveChronological: BotTrackerRecord[];
   hasTranscript: boolean;
   transcriptText: string;
@@ -23,6 +25,11 @@ export interface CallActivitySectionProps {
   holdLoading?: boolean;
   onEndCallClick: () => void;
   endCallLoading?: boolean;
+  onBargeInClick?: () => void;
+  bargeInLoading?: boolean;
+  bargeInError?: string | null;
+  supervisorPhone?: string;
+  onSupervisorPhoneChange?: (value: string) => void;
   /** True when we have a Twilio Call SID (required for hold / end APIs). */
   canControlCall: boolean;
 }
@@ -75,8 +82,7 @@ function CallChatBubble({
     );
   }
   const isEva = role === "eva";
-  const showToneChip =
-    role === "tpa" && tpaTone && tpaTone !== "angry";
+  const showToneChip = role === "tpa" && tpaTone && tpaTone !== "angry";
   const tpaAngryBorder =
     role === "tpa" && tpaTone === "angry"
       ? "ring-2 ring-red-500 ring-offset-1 ring-offset-slate-100/50 border-red-400"
@@ -122,6 +128,32 @@ function CallChatBubble({
   );
 }
 
+function SupervisorBargeHeaderIcon() {
+  return (
+    <span
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-100 text-violet-700 shadow-sm border border-violet-200/90"
+      title="A supervisor joined this verification call (human barge-in)"
+      aria-label="Supervisor joined the call"
+      role="img"
+    >
+      <svg
+        className="h-5 w-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={2}
+        aria-hidden
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"
+        />
+      </svg>
+    </span>
+  );
+}
+
 function TpaAngryHeaderIcon() {
   return (
     <span
@@ -150,14 +182,13 @@ function TpaAngryHeaderIcon() {
 
 /** Saved transcript as plain log lines: EVA (indigo), TPA (default), divider after each turn. */
 function TranscriptLogView({ fullText }: { fullText: string }) {
-  const turns = useMemo(
-    () => parseTranscriptIntoTurns(fullText),
-    [fullText],
-  );
+  const turns = useMemo(() => parseTranscriptIntoTurns(fullText), [fullText]);
 
   if (turns.length === 0) {
     return (
-      <p className="text-sm text-slate-500 italic px-1 font-mono">No content.</p>
+      <p className="text-sm text-slate-500 italic px-1 font-mono">
+        No content.
+      </p>
     );
   }
 
@@ -209,10 +240,7 @@ function TranscriptLogEntry({
           {turn.text}
         </p>
         {showDividerBelow ? (
-          <div
-            className="mt-3 mb-1 border-b border-slate-200"
-            aria-hidden
-          />
+          <div className="mt-3 mb-1 border-b border-slate-200" aria-hidden />
         ) : null}
       </div>
     );
@@ -266,6 +294,7 @@ export const CallActivitySection = forwardRef<
     setCallLogTab,
     isCallInProgress,
     tpaAngryIndicatorActive = false,
+    supervisorBargeActive = false,
     liveChronological,
     hasTranscript,
     transcriptText,
@@ -274,6 +303,11 @@ export const CallActivitySection = forwardRef<
     holdLoading = false,
     onEndCallClick,
     endCallLoading = false,
+    onBargeInClick,
+    bargeInLoading = false,
+    bargeInError = null,
+    supervisorPhone = "",
+    onSupervisorPhoneChange,
     canControlCall,
   },
   ref,
@@ -321,7 +355,10 @@ export const CallActivitySection = forwardRef<
             </p>
           </div>
         </div>
-        {tpaAngryIndicatorActive ? <TpaAngryHeaderIcon /> : null}
+        <div className="flex items-center gap-2 shrink-0">
+          {supervisorBargeActive ? <SupervisorBargeHeaderIcon /> : null}
+          {tpaAngryIndicatorActive ? <TpaAngryHeaderIcon /> : null}
+        </div>
       </div>
 
       <div className="rounded-xl border border-slate-200/90 bg-white overflow-hidden shadow-sm flex flex-col flex-1 min-h-0">
@@ -605,6 +642,65 @@ export const CallActivitySection = forwardRef<
               {endCallLoading ? "Ending…" : "End"}
             </button>
           </div>
+          {onBargeInClick ? (
+            <div className="rounded-lg border border-violet-200/90 bg-violet-50/60 p-2.5 space-y-2">
+              <p className="text-[11px] font-semibold text-violet-900">
+                Test human barge-in
+              </p>
+              <label className="block">
+                <span className="sr-only">Supervisor phone (E.164)</span>
+                <input
+                  type="tel"
+                  autoComplete="tel"
+                  placeholder="+15551234567"
+                  value={supervisorPhone}
+                  onChange={(e) => onSupervisorPhoneChange?.(e.target.value)}
+                  className="w-full rounded-md border border-violet-200 bg-white px-2.5 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-200/80"
+                />
+              </label>
+              <button
+                type="button"
+                disabled={
+                  !canControlCall ||
+                  bargeInLoading ||
+                  !supervisorPhone.trim() ||
+                  supervisorBargeActive
+                }
+                onClick={onBargeInClick}
+                title="Twilio conference: EVA stream stops; your phone joins the TPA call"
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-violet-400/90 bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none"
+              >
+                <svg
+                  className="h-4 w-4 shrink-0 opacity-95"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  aria-hidden
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"
+                  />
+                </svg>
+                {bargeInLoading
+                  ? "Joining…"
+                  : supervisorBargeActive
+                    ? "Supervisor joined"
+                    : "Barge in (call me)"}
+              </button>
+              {bargeInError ? (
+                <p className="text-[11px] text-red-700 bg-red-50 border border-red-200/90 rounded-md px-2 py-1.5">
+                  {bargeInError}
+                </p>
+              ) : null}
+              <p className="text-[10px] text-violet-900/80 leading-snug">
+                Dials your number into the live TPA call. EVA stops speaking;
+                answer your phone to talk to the TPA.
+              </p>
+            </div>
+          ) : null}
           <p className="text-[10px] text-slate-500 leading-snug px-0.5">
             Hold and End use Twilio. Mute only freezes this live panel.
           </p>
