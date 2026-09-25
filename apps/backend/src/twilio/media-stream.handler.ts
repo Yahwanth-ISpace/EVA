@@ -254,6 +254,7 @@ export class MediaStreamHandlerService {
       evaSocialGreetDone: false,
       evaIntroIdentitySaid: false,
       tpaPatientLocated: false,
+      supervisorBargePending: false,
       agentId: null,
       verificationStepByField: {},
       verificationStepByProcedureCode: {},
@@ -312,6 +313,7 @@ export class MediaStreamHandlerService {
 
     /** Returns TTS playback duration in ms (0 if empty or failed). */
     const speak = async (text: string, _ttsLabel?: string): Promise<number> => {
+      if (state.supervisorBargePending) return 0;
       if (!text?.trim()) return 0;
       const ttsStart = Date.now();
       try {
@@ -454,6 +456,7 @@ export class MediaStreamHandlerService {
       opts?: { resumeCheckOnly?: boolean },
     ) => {
       if (state.processing || state.callEnded) return;
+      if (state.supervisorBargePending) return;
       state.processing = true;
       const resumeCheckOnly = opts?.resumeCheckOnly === true;
       const turnStart = Date.now();
@@ -3023,6 +3026,15 @@ export class MediaStreamHandlerService {
       `streamSid=${state.streamSid}`,
   );
 }
+
+  /** Stop EVA immediately when supervisor barge is requested (TPA call stays up until bridge). */
+  async silenceForSupervisorBarge(callSid: string): Promise<void> {
+    const session = this.callSessions.get(callSid.trim());
+    if (session) {
+      session.state.supervisorBargePending = true;
+    }
+    await this.bargeIn(callSid, 'supervisor_pending');
+  }
 
   async bargeIn(
   callSid: string,

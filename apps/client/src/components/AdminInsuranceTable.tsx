@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import type { VerificationRecord } from "../redux/types/verificationTypes";
 import { getVerificationFieldRows } from "../utils/verificationDisplay";
 import StatusBadge from "./StatusBadges";
+import { useState, useMemo } from "react";
 
 interface Props {
   records: VerificationRecord[];
@@ -11,9 +12,10 @@ interface Props {
 }
 
 export default function AdminInsuranceTable({ records, loading }: Props) {
+
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-      <div className="overflow-x-auto">
+      <div className="max-h-[600px] overflow-auto">
         <table className="min-w-full text-sm">
           <thead className="border-b border-gray-200 bg-gray-50">
             <tr>

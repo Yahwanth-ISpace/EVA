@@ -5,9 +5,11 @@ import {
   Query,
   Body,
   Res,
+  Req,
   BadRequestException,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -17,6 +19,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from 'src/auth/guards/jwtAuthGuard';
+import { Public } from 'src/auth/decorators/public.decorator';
 import { Response } from 'express';
 import { TwilioService } from './twilio.service';
 import { ElevenLabsService } from '../voice/elevenlabs.service';
@@ -404,6 +407,7 @@ export class TwilioController {
    */
   @Get('hold-music')
   @Post('hold-music')
+  @Public()
   @ApiOperation({
     summary: 'Hold music (TwiML)',
     description:
@@ -428,6 +432,7 @@ export class TwilioController {
    */
   @Get('conference-join')
   @Post('conference-join')
+  @Public()
   @ApiOperation({
     summary: 'Join barge-in conference (TwiML)',
     description:
@@ -441,25 +446,28 @@ export class TwilioController {
   })
   @ApiProduces('text/xml')
   conferenceJoin(
-    @Query('room') room: string,
-    @Query('role') role: string | undefined,
+    @Query('room') roomQuery: string,
+    @Query('role') roleQuery: string | undefined,
+    @Body() body: Record<string, string>,
+    @Req() req: Request,
     @Res() res: Response,
   ) {
+    const room =
+      roomQuery?.trim() ||
+      body?.room?.trim() ||
+      String((req.query as Record<string, string>)?.room ?? '').trim();
+    const role =
+      roleQuery?.trim() ||
+      body?.role?.trim() ||
+      String((req.query as Record<string, string>)?.role ?? '').trim();
     const conferenceName = assertConferenceRoom(room);
-    const roleNorm = (role ?? 'verification').trim().toLowerCase();
+    const roleNorm = (role || 'verification').trim().toLowerCase();
     const label = roleNorm === 'supervisor' ? 'supervisor' : 'verification';
-    const waitUrl = process.env.TWILIO_HOLD_MUSIC_URL?.trim();
-    const waitAttr = waitUrl
-      ? ` waitUrl="${escapeXmlAttr(waitUrl)}" waitMethod="GET"`
-      : '';
+    const holdTwimlUrl = `${backendBaseUrl.replace(/\/+$/, '')}/twilio/hold-music`;
+    const waitAttr = ` waitUrl="${escapeXmlAttr(holdTwimlUrl)}" waitMethod="GET"`;
 
     res.type('text/xml').send(`
       <Response>
-        <Say voice="alice">${escapeXmlText(
-          roleNorm === 'supervisor'
-            ? 'Connecting you to the verification call.'
-            : 'Connecting the call for supervisor join.',
-        )}</Say>
         <Dial>
           <Conference
             beep="false"
@@ -470,6 +478,26 @@ export class TwilioController {
         </Dial>
       </Response>
     `);
+  }
+
+  @Post('barge-supervisor-status')
+  @Public()
+  @ApiOperation({
+    summary: 'Supervisor outbound call status (barge-in bridge)',
+    description:
+      'When the supervisor answers, bridges the verification/TPA call into the same conference.',
+  })
+  async bargeSupervisorStatus(
+    @Query('verificationCallSid') verificationCallSid: string,
+    @Body() body: Record<string, string>,
+  ) {
+    const status = String(body?.CallStatus ?? '').toLowerCase();
+    if (status === 'in-progress' || status === 'answered') {
+      await this.twilioService.bridgeVerificationCallToConference(
+        verificationCallSid,
+      );
+    }
+    return { ok: true };
   }
 
   @Post('barge-in')
@@ -484,6 +512,9 @@ export class TwilioController {
   async bargeIn(@Body() body: TwilioBargeInDto) {
     let result: { conferenceName: string; supervisorCallSid: string };
     try {
+      await this.mediaStreamHandlerService.silenceForSupervisorBarge(
+        body.callSid.trim(),
+      );
       result = await this.twilioService.bargeInSupervisor(
         body.callSid,
         body.supervisorPhone,

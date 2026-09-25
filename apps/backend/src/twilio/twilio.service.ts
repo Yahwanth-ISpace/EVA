@@ -28,6 +28,8 @@ const callSidToStreamContext = new Map<string, CallStreamContext>();
 @Injectable()
 export class TwilioService {
   private readonly logger = new Logger(TwilioService.name);
+  /** Verification calls already redirected into a barge conference (idempotent bridge). */
+  private readonly verificationCallsBridgedToConference = new Set<string>();
   /**
    * Resolve payeeId + optional appointmentId for an outbound call from its Twilio call SID.
    * Used when the media stream WebSocket URL omits query params.
@@ -100,8 +102,8 @@ export class TwilioService {
   }
 
   /**
-   * Human supervisor barge-in: move the active TPA call into a Twilio Conference (ends EVA media stream),
-   * then dial the supervisor into the same room so they can speak with the TPA.
+   * Human supervisor barge-in: dial supervisor first; when they answer, bridge the TPA leg into
+   * the same conference (ends EVA media stream at bridge time). EVA should be silenced before this runs.
    */
   async bargeInSupervisor(
     callSid: string,
@@ -126,22 +128,53 @@ export class TwilioService {
     const joinUrl = (role: 'verification' | 'supervisor') =>
       `${base}/twilio/conference-join?room=${encodeURIComponent(conferenceName)}&role=${role}`;
 
-    await client.calls(callSid).update({
-      url: joinUrl('verification'),
-      method: 'POST',
-    });
+    const statusCallback = `${base}/twilio/barge-supervisor-status?verificationCallSid=${encodeURIComponent(callSid.trim())}`;
 
     const supervisorCall = await client.calls.create({
       to,
       from: fromNumber,
       url: joinUrl('supervisor'),
-      method: 'POST',
+      method: 'GET',
+      statusCallback,
+      statusCallbackEvent: ['answered', 'completed'],
+      statusCallbackMethod: 'POST',
     });
+
+    this.logger.log(
+      `Supervisor barge dial started verificationCallSid=${callSid} supervisorCallSid=${supervisorCall.sid} conference=${conferenceName}`,
+    );
 
     return {
       conferenceName,
       supervisorCallSid: supervisorCall.sid,
     };
+  }
+
+  /** Move the live TPA/verification leg into the barge conference (after supervisor answers). */
+  async bridgeVerificationCallToConference(
+    verificationCallSid: string,
+  ): Promise<void> {
+    const sid = verificationCallSid?.trim();
+    if (!sid) return;
+    if (this.verificationCallsBridgedToConference.has(sid)) {
+      return;
+    }
+    if (!backendBaseUrl?.trim()) {
+      throw new Error('BACKEND_URL environment variable is not set.');
+    }
+
+    const base = backendBaseUrl.replace(/\/+$/, '');
+    const conferenceName = this.conferenceNameForCall(sid);
+    const joinUrl = `${base}/twilio/conference-join?room=${encodeURIComponent(conferenceName)}&role=verification`;
+
+    this.verificationCallsBridgedToConference.add(sid);
+    await client.calls(sid).update({
+      url: joinUrl,
+      method: 'GET',
+    });
+    this.logger.log(
+      `Bridged verification call ${sid} into conference ${conferenceName}`,
+    );
   }
 
   /**
