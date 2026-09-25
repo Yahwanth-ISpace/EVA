@@ -20,11 +20,12 @@ import Icon from "../components/Icons";
 import { api } from "../utils/api";
 import {
   extractActiveCallSidFromTrackers,
+  hasSupervisorBargeSinceLatestCallStart,
   hasTpaAngrySinceLatestCallStart,
   isCallActiveFromTrackers,
 } from "../utils/botTracker";
-import type { BotTrackerRecord } from "../utils/botTracker";
 import { CallActivitySection } from "../components/CallActivitySection";
+import { useLiveBotTrackers } from "../utils/useLiveBotTrackers";
 import {
   getVerificationFieldRows,
   getVerificationForAppointment,
@@ -331,10 +332,20 @@ export default function AppointmentDetail() {
         samePayeeAppointmentCount,
       )
     : undefined;
-  const [liveLogs, setLiveLogs] = useState<BotTrackerRecord[]>([]);
+  const liveLogs = useLiveBotTrackers(appointment?.payeeId);
   const [callLogTab, setCallLogTab] = useState<"live" | "transcript">("live");
   const [endCallLoading, setEndCallLoading] = useState(false);
   const [holdLoading, setHoldLoading] = useState(false);
+  const [bargeInLoading, setBargeInLoading] = useState(false);
+  const [bargeInError, setBargeInError] = useState<string | null>(null);
+  const [supervisorPhone, setSupervisorPhone] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return (
+      window.localStorage.getItem("eva_supervisor_test_phone") ??
+      import.meta.env.VITE_EVA_SUPERVISOR_TEST_PHONE ??
+      ""
+    );
+  });
   const liveScrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const liveTailRef = useRef<{ len: number; tailId: string }>({
@@ -398,32 +409,39 @@ export default function AppointmentDetail() {
     }
   }, [callLogTab]);
 
-  useEffect(() => {
-    if (!appointment?.payeeId) return;
-    let cancelled = false;
+  // useEffect(() => {
+  //   if (!appointment?.payeeId) return;
+  //   let cancelled = false;
 
-    const fetchLiveLogs = async () => {
-      try {
-        const data = await api.get<BotTrackerRecord[]>(
-          `/bot-trackers/payee/${appointment.payeeId}`,
-        );
-        if (!cancelled) setLiveLogs(data);
-      } catch {
-        if (!cancelled) setLiveLogs([]);
-      }
-    };
+  //   const fetchLiveLogs = async () => {
+  //     try {
+  //       const data = await api.get<BotTrackerRecord[]>(
+  //         `/bot-trackers/payee/${appointment.payeeId}`,
+  //       );
+  //       if (!cancelled) setLiveLogs(data);
+  //     } catch {
+  //       if (!cancelled) setLiveLogs([]);
+  //     }
+  //   };
 
-    fetchLiveLogs();
-    const timer = window.setInterval(fetchLiveLogs, 3000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [appointment?.payeeId]);
+  //   fetchLiveLogs();
+  //   const timer = window.setInterval(fetchLiveLogs, 3000);
+  //   return () => {
+  //     cancelled = true;
+  //     window.clearInterval(timer);
+  //   };
+  // }, [appointment?.payeeId]);
 
   useEffect(() => {
     liveTailRef.current = { len: 0, tailId: "" };
   }, [appointment?.payeeId]);
+
+  useEffect(() => {
+    const trimmed = supervisorPhone.trim();
+    if (trimmed) {
+      window.localStorage.setItem("eva_supervisor_test_phone", trimmed);
+    }
+  }, [supervisorPhone]);
 
   const isCallInProgress = useMemo(
     () => isCallActiveFromTrackers(liveLogs),
@@ -433,6 +451,11 @@ export default function AppointmentDetail() {
   /** Stays true after the call ends if any TPA segment was angry since the latest [CALL_EVENT] START. */
   const tpaAngryIndicatorActive = useMemo(
     () => hasTpaAngrySinceLatestCallStart(liveSorted),
+    [liveSorted],
+  );
+
+  const supervisorBargeActive = useMemo(
+    () => hasSupervisorBargeSinceLatestCallStart(liveSorted),
     [liveSorted],
   );
 
@@ -468,6 +491,32 @@ export default function AppointmentDetail() {
       setEndCallLoading(false);
     }
   }, [activeCallSid]);
+
+  const handleBargeInClick = useCallback(async () => {
+    if (!activeCallSid || !appointment?.payeeId) return;
+    const phone = supervisorPhone.trim();
+    if (!phone) return;
+    setBargeInLoading(true);
+    setBargeInError(null);
+    try {
+      await api.post<{ ok: boolean }>("/twilio/barge-in", {
+        callSid: activeCallSid,
+        supervisorPhone: phone,
+        payeeId: appointment.payeeId,
+      });
+    } catch {
+      setBargeInError(
+        "Barge-in failed. Use E.164 format (+1…), confirm Twilio credentials, and that BACKEND_URL is reachable by Twilio.",
+      );
+    } finally {
+      setBargeInLoading(false);
+    }
+  }, [activeCallSid, appointment?.payeeId, supervisorPhone]);
+
+  const handleSupervisorPhoneChange = useCallback((value: string) => {
+    setSupervisorPhone(value);
+    setBargeInError(null);
+  }, []);
 
   if (!id) {
     return (

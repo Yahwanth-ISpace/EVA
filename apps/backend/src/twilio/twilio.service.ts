@@ -93,6 +93,57 @@ export class TwilioService {
     await client.calls(callSid).update({ url: holdUrl, method: 'POST' });
   }
 
+  /** Stable conference name for a verification call SID (Twilio-safe characters only). */
+  conferenceNameForCall(callSid: string): string {
+    const sid = callSid.trim().replace(/\W/g, '');
+    return `eva-barge-${sid}`.slice(0, 128);
+  }
+
+  /**
+   * Human supervisor barge-in: move the active TPA call into a Twilio Conference (ends EVA media stream),
+   * then dial the supervisor into the same room so they can speak with the TPA.
+   */
+  async bargeInSupervisor(
+    callSid: string,
+    supervisorPhone: string,
+  ): Promise<{ conferenceName: string; supervisorCallSid: string }> {
+    if (!callSid?.trim()) {
+      throw new Error('callSid is required.');
+    }
+    const to = supervisorPhone?.trim();
+    if (!to) {
+      throw new Error('supervisorPhone is required.');
+    }
+    if (!fromNumber) {
+      throw new Error('TWILIO_PHONE_NUMBER environment variable is not set.');
+    }
+    if (!backendBaseUrl?.trim()) {
+      throw new Error('BACKEND_URL environment variable is not set.');
+    }
+
+    const base = backendBaseUrl.replace(/\/+$/, '');
+    const conferenceName = this.conferenceNameForCall(callSid);
+    const joinUrl = (role: 'verification' | 'supervisor') =>
+      `${base}/twilio/conference-join?room=${encodeURIComponent(conferenceName)}&role=${role}`;
+
+    await client.calls(callSid).update({
+      url: joinUrl('verification'),
+      method: 'POST',
+    });
+
+    const supervisorCall = await client.calls.create({
+      to,
+      from: fromNumber,
+      url: joinUrl('supervisor'),
+      method: 'POST',
+    });
+
+    return {
+      conferenceName,
+      supervisorCallSid: supervisorCall.sid,
+    };
+  }
+
   /**
    * Make outbound call using Twilio telephony infrastructure.
    * Stores payeeId (and optional appointmentId) by call SID for the media stream when the WS URL omits query params.

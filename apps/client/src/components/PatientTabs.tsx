@@ -1,19 +1,16 @@
+import { useEffect, useMemo, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
 
+import { FaSearch, FaTrashAlt } from "react-icons/fa";
 import {
   deleteAppointment,
   getAppointments,
 } from "../redux/actions/appointmentsActions";
 import type { AppDispatch, RootState } from "../redux/store";
 import type { AppointmentRecord } from "../redux/types/appointmentsTypes";
-import { FaSearch, FaTrashAlt } from "react-icons/fa";
-import { api } from "../utils/api";
-import {
-  isCallActiveFromTrackers,
-} from "../utils/botTracker";
-import type { BotTrackerRecord } from "../utils/botTracker";
+import { useLiveBotTrackersByPayeeIds } from "../utils/useLiveBotTrackers";
+import { isCallActiveFromTrackers } from "../utils/botTracker";
 import { getVerificationForAppointment } from "../utils/verificationDisplay";
 
 const SKELETON_ROW_COUNT = 8;
@@ -121,50 +118,53 @@ export default function PatientTabs() {
   );
 
   const loading = loadingAppointments || loadingVerifications;
-  const [liveTrackersByPayee, setLiveTrackersByPayee] = useState<
-    Record<string, BotTrackerRecord[]>
-  >({});
+  // const [liveTrackersByPayee, setLiveTrackersByPayee] = useState<
+  //   Record<string, BotTrackerRecord[]>
+  // >({});
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("date_desc");
 
   const payeeIds = useMemo(
-    () => Array.from(new Set(appointments.map((a) => a.payeeId).filter(Boolean))),
+    () =>
+      Array.from(new Set(appointments.map((a) => a.payeeId).filter(Boolean))),
     [appointments],
   );
 
-  useEffect(() => {
-    if (!payeeIds.length) {
-      setLiveTrackersByPayee({});
-      return;
-    }
+  // useEffect(() => {
+  //   if (!payeeIds.length) {
+  //     setLiveTrackersByPayee({});
+  //     return;
+  //   }
 
-    let cancelled = false;
-    const fetchLogs = async () => {
-      try {
-        const pairs = await Promise.all(
-          payeeIds.map(async (payeeId) => {
-            const logs = await api.get<BotTrackerRecord[]>(
-              `/bot-trackers/payee/${payeeId}`,
-            );
-            return [payeeId, logs] as const;
-          }),
-        );
-        if (cancelled) return;
-        const next: Record<string, BotTrackerRecord[]> = {};
-        for (const [payeeId, logs] of pairs) next[payeeId] = logs;
-        setLiveTrackersByPayee(next);
-      } catch {
-        // Keep UI resilient even if bot tracker endpoint fails.
-      }
-    };
+  //   let cancelled = false;
+  //   const fetchLogs = async () => {
+  //     try {
+  //       const pairs = await Promise.all(
+  //         payeeIds.map(async (payeeId) => {
+  //           const logs = await api.get<BotTrackerRecord[]>(
+  //             `/bot-trackers/payee/${payeeId}`,
+  //           );
+  //           return [payeeId, logs] as const;
+  //         }),
+  //       );
+  //       if (cancelled) return;
+  //       const next: Record<string, BotTrackerRecord[]> = {};
+  //       for (const [payeeId, logs] of pairs) next[payeeId] = logs;
+  //       setLiveTrackersByPayee(next);
+  //     } catch {
+  //       // Keep UI resilient even if bot tracker endpoint fails.
+  //     }
+  //   };
 
-    fetchLogs();
-    const timer = window.setInterval(fetchLogs, 7000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [payeeIds]);
+  //   fetchLogs();
+  //   const timer = window.setInterval(fetchLogs, 7000);
+  //   return () => {
+  //     cancelled = true;
+  //     window.clearInterval(timer);
+  //   };
+  // }, [payeeIds]);
+
+  const liveTrackersByPayee = useLiveBotTrackersByPayeeIds(payeeIds);
 
   const handleOpenDetails = (appointmentId: string) => {
     navigate(`/appointments/${appointmentId}`);
@@ -209,11 +209,7 @@ export default function PatientTabs() {
         samePayeeCount,
       );
       if (Boolean(verification)) return 2;
-      if (
-        isCallActiveFromTrackers(
-          liveTrackersByPayee[appt.payeeId] ?? [],
-        )
-      )
+      if (isCallActiveFromTrackers(liveTrackersByPayee[appt.payeeId] ?? []))
         return 1;
       return 0;
     };
@@ -223,18 +219,12 @@ export default function PatientTabs() {
     return [...list].sort((a, b) => {
       switch (sortBy) {
         case "date_desc":
-          return (
-            new Date(b.date).getTime() - new Date(a.date).getTime()
-          );
+          return new Date(b.date).getTime() - new Date(a.date).getTime();
         case "date_asc":
-          return (
-            new Date(a.date).getTime() - new Date(b.date).getTime()
-          );
+          return new Date(a.date).getTime() - new Date(b.date).getTime();
         case "patient_asc": {
-          const na =
-            `${a.payee.firstName} ${a.payee.lastName}`.toLowerCase();
-          const nb =
-            `${b.payee.firstName} ${b.payee.lastName}`.toLowerCase();
+          const na = `${a.payee.firstName} ${a.payee.lastName}`.toLowerCase();
+          const nb = `${b.payee.firstName} ${b.payee.lastName}`.toLowerCase();
           const c = na.localeCompare(nb);
           if (c !== 0) return c;
           return new Date(b.date).getTime() - new Date(a.date).getTime();
@@ -258,13 +248,7 @@ export default function PatientTabs() {
           return 0;
       }
     });
-  }, [
-    appointments,
-    verifications,
-    liveTrackersByPayee,
-    searchQuery,
-    sortBy,
-  ]);
+  }, [appointments, verifications, liveTrackersByPayee, searchQuery, sortBy]);
 
   return (
     <div className="flex flex-col relative flex-1 min-h-0 overflow-hidden">
