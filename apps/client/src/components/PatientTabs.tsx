@@ -312,6 +312,7 @@ export default function PatientTabs() {
                 className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400"
                 aria-hidden
               />
+              
               <input
                 id="appointments-search"
                 type="search"
@@ -322,9 +323,11 @@ export default function PatientTabs() {
                 className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-800 placeholder:text-slate-400 shadow-sm focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
               />
             </div>
+
             <label htmlFor="appointments-sort" className="sr-only">
               Sort appointments by
             </label>
+
             <select
               id="appointments-sort"
               value={sortBy}

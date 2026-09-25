@@ -20,9 +20,8 @@ export default function Dashboard() {
   const { verifications: verificationData, loading: verificationLoading } =
     useSelector((state: RootState) => state.verificationsState);
 
-  const { appointments, loading: appointmentLoading } = useSelector(
-    (state: RootState) => state.appointmentsState,
-  );
+  // Appointments are used by PatientTabs
+  useSelector((state: RootState) => state.appointmentsState);
 
   // Admin section tab
   const [activeTab, setActiveTab] = useState<AdminTab>("appointments");
@@ -30,6 +29,7 @@ export default function Dashboard() {
   // Verification sorting
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
 
+  // Latest verifications by default
   const sortedRecords = useMemo(() => {
     return [...verificationData].sort((a, b) => {
       const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -52,20 +52,34 @@ export default function Dashboard() {
       <Navbar />
 
       <div className="section-wrapper mt-6 flex min-h-0 flex-1 flex-col">
+        {/* Dashboard Header */}
         <div className="flex shrink-0 items-center justify-between px-2 sm:px-4">
           <h1 className="text-2xl font-semibold tracking-widest text-blue-600">
             Dashboard
           </h1>
         </div>
 
-        <Container className="mt-5 flex min-h-0 flex-1 flex-col overflow-y-auto pb-12 custom-scrollbar">
-          <PatientTabs />
-
+        <Container
+          className="
+            mt-5
+            flex
+            min-h-0
+            flex-1
+            flex-col
+            overflow-y-auto
+            pb-12
+            custom-scrollbar
+          "
+        >
           {isAdmin && (
-            <section className="mt-8 shrink-0">
-              {/* Admin Tabs */}
+            <section className="shrink-0">
+              {/* ========================================= */}
+              {/* APPOINTMENTS / VERIFICATIONS TABS         */}
+              {/* ========================================= */}
+
               <div className="border-b border-slate-200">
                 <div className="flex items-center gap-8 px-2">
+                  {/* Appointments Tab */}
                   <button
                     type="button"
                     onClick={() => setActiveTab("appointments")}
@@ -78,6 +92,7 @@ export default function Dashboard() {
                     Appointments
                   </button>
 
+                  {/* Verifications Tab */}
                   <button
                     type="button"
                     onClick={() => setActiveTab("verifications")}
@@ -92,54 +107,23 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Appointments */}
-              {activeTab === "appointments" && (
-                <div className="mt-4">
-                  <div className="mb-3 rounded-lg bg-white px-6 py-3">
-                    <h2 className="text-lg font-semibold text-slate-800">
-                      Appointments
-                    </h2>
-                  </div>
+              {/* ========================================= */}
+              {/* APPOINTMENTS TAB                          */}
+              {/* ========================================= */}
 
-                  {/* 
-                    Replace this with your appointment table
-                    once we use your actual appointment structure.
-                  */}
-                  <div className="rounded-xl border border-gray-200 bg-white p-6 text-center text-sm text-gray-500">
-                    {appointmentLoading
-                      ? "Loading appointments..."
-                      : appointments?.length
-                        ? `${appointments.length} appointments found.`
-                        : "No appointments found."}
-                  </div>
+              {activeTab === "appointments" && (
+                <div className="mt-5">
+                  <PatientTabs />
                 </div>
               )}
 
-              {/* Verifications */}
+              {/* ========================================= */}
+              {/* VERIFICATIONS TAB                         */}
+              {/* ========================================= */}
+
               {activeTab === "verifications" && (
-                <div className="mt-4">
-                  {/* Verification controls */}
-                  <div className="mb-2 flex items-center justify-between rounded-lg border border-gray-200 bg-white px-6 py-3">
-                    <h2 className="text-lg font-semibold text-slate-800">
-                      Verification Records
-                    </h2>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSortOrder((current) =>
-                          current === "desc" ? "asc" : "desc",
-                        )
-                      }
-                      className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
-                    >
-                      Sort by Date
-                      <span className="ml-2">
-                        {sortOrder === "desc" ? "↓ Latest" : "↑ Oldest"}
-                      </span>
-                    </button>
-                  </div>
-
+                <div className="mt-5">
+                  {/* Verification Table */}
                   <AdminInsuranceTable
                     records={sortedRecords}
                     loading={verificationLoading}
