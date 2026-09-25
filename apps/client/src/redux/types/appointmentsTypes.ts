@@ -45,6 +45,8 @@ export type CreateAppointmentPayload = {
 
 export interface AppointmentRecord {
   id: string;
+  /** Sabrina / Mongo appointment id when present (used to match active calls). */
+  appointmentId?: string | number;
   payeeId: string;
   patientId: string;
   providerId: string;

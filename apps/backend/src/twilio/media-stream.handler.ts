@@ -263,6 +263,23 @@ export class MediaStreamHandlerService {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
     };
 
+    const streamSession: StreamSession = {
+      state,
+      ws,
+      responseGeneration: 0,
+      bargeInInProgress: false,
+      isSpeaking: false,
+    };
+
+    const syncCallSession = () => {
+      const sid = state.callSid?.trim();
+      if (!sid || state.callEnded) {
+        if (sid) this.callSessions.delete(sid);
+        return;
+      }
+      this.callSessions.set(sid, streamSession);
+    };
+
     const pushLiveTracker = async (line: string) => {
       if (!state.patientId || !line?.trim()) return;
       try {
@@ -2579,6 +2596,7 @@ export class MediaStreamHandlerService {
       if (event === 'start') {
         state.streamSid = msg?.streamSid ?? msg?.start?.streamSid ?? null;
         state.callSid = msg?.start?.callSid ?? msg?.callSid ?? null;
+        syncCallSession();
         this.logCallEvent(
           state.callSid,
           `start mode=${state.mode} patientId=${state.patientId ?? 'none'}`,
@@ -2705,6 +2723,7 @@ export class MediaStreamHandlerService {
 
       if (event === 'stop') {
         this.logCallEvent(state.callSid, 'stream stopped');
+        if (state.callSid) this.callSessions.delete(state.callSid);
         void pushLiveTracker(
           `[CALL_EVENT] END callSid=${state.callSid ?? 'unknown'}`,
         );
@@ -2741,6 +2760,7 @@ export class MediaStreamHandlerService {
     });
 
     ws.on('close', () => {
+      if (state.callSid) this.callSessions.delete(state.callSid);
       if (state.fallbackTimer) {
         clearInterval(state.fallbackTimer);
         state.fallbackTimer = null;
@@ -3060,6 +3080,27 @@ export class MediaStreamHandlerService {
   }
 }
 
+
+  getActiveLiveCalls(): Array<{
+    callSid: string;
+    patientId: string;
+    appointmentId: string | null;
+  }> {
+    const out: Array<{
+      callSid: string;
+      patientId: string;
+      appointmentId: string | null;
+    }> = [];
+    for (const [callSid, session] of this.callSessions.entries()) {
+      if (session.state.callEnded) continue;
+      out.push({
+        callSid,
+        patientId: session.state.patientId?.trim() ?? '',
+        appointmentId: session.state.appointmentId?.trim() || null,
+      });
+    }
+    return out;
+  }
 
   async bargeInForAppointment(
   appointmentId: string,

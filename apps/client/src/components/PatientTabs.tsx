@@ -9,8 +9,15 @@ import {
 } from "../redux/actions/appointmentsActions";
 import type { AppDispatch, RootState } from "../redux/store";
 import type { AppointmentRecord } from "../redux/types/appointmentsTypes";
-import { useLiveBotTrackersByPayeeIds } from "../utils/useLiveBotTrackers";
-import { isCallActiveFromTrackers } from "../utils/botTracker";
+import {
+  useActiveLiveCalls,
+  useLiveBotTrackersByPayeeIds,
+} from "../utils/useLiveBotTrackers";
+import {
+  isAppointmentLive,
+  resolveAppointmentPayeeId,
+  resolveAppointmentRouteId,
+} from "../utils/appointmentRecord";
 import { getVerificationForAppointment } from "../utils/verificationDisplay";
 
 const SKELETON_ROW_COUNT = 8;
@@ -126,7 +133,13 @@ export default function PatientTabs() {
 
   const payeeIds = useMemo(
     () =>
-      Array.from(new Set(appointments.map((a) => a.payeeId).filter(Boolean))),
+      Array.from(
+        new Set(
+          appointments
+            .map((a) => resolveAppointmentPayeeId(a))
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ),
     [appointments],
   );
 
@@ -165,9 +178,12 @@ export default function PatientTabs() {
   // }, [payeeIds]);
 
   const liveTrackersByPayee = useLiveBotTrackersByPayeeIds(payeeIds);
+  const activeLiveCalls = useActiveLiveCalls();
 
-  const handleOpenDetails = (appointmentId: string) => {
-    navigate(`/appointments/${appointmentId}`);
+  const handleOpenDetails = (appt: AppointmentRecord) => {
+    const routeId = resolveAppointmentRouteId(appt);
+    if (!routeId) return;
+    navigate(`/appointments/${routeId}`);
   };
 
   const handleDelete = (appointmentId: string) => {
@@ -209,7 +225,9 @@ export default function PatientTabs() {
         samePayeeCount,
       );
       if (Boolean(verification)) return 2;
-      if (isCallActiveFromTrackers(liveTrackersByPayee[appt.payeeId] ?? []))
+      if (
+        isAppointmentLive(appt, activeLiveCalls, liveTrackersByPayee)
+      )
         return 1;
       return 0;
     };
@@ -217,6 +235,10 @@ export default function PatientTabs() {
     const list = appointments.filter(matchesSearch);
 
     return [...list].sort((a, b) => {
+      const liveA = isAppointmentLive(a, activeLiveCalls, liveTrackersByPayee);
+      const liveB = isAppointmentLive(b, activeLiveCalls, liveTrackersByPayee);
+      if (liveA !== liveB) return liveB ? 1 : -1;
+
       switch (sortBy) {
         case "date_desc":
           return new Date(b.date).getTime() - new Date(a.date).getTime();
@@ -248,14 +270,35 @@ export default function PatientTabs() {
           return 0;
       }
     });
-  }, [appointments, verifications, liveTrackersByPayee, searchQuery, sortBy]);
+  }, [
+    appointments,
+    verifications,
+    liveTrackersByPayee,
+    activeLiveCalls,
+    searchQuery,
+    sortBy,
+  ]);
 
   return (
     <div className="flex flex-col relative flex-1 min-h-0 overflow-hidden">
       <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 mb-1">
-        <h2 className="text-xl font-semibold text-slate-800 tracking-tight">
-          Appointments
-        </h2>
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-xl font-semibold text-slate-800 tracking-tight">
+            Appointments
+          </h2>
+          {activeLiveCalls.length > 0 ? (
+            <span
+              className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200"
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+              </span>
+              {activeLiveCalls.length} live call
+              {activeLiveCalls.length === 1 ? "" : "s"}
+            </span>
+          ) : null}
+        </div>
         {!loading && appointments.length > 0 ? (
           <div className="flex flex-wrap items-center justify-end gap-2 w-full sm:w-auto sm:ml-auto">
             <label htmlFor="appointments-search" className="sr-only">
@@ -354,8 +397,10 @@ export default function PatientTabs() {
                       samePayeeCount,
                     );
                     const isVerified = Boolean(verification);
-                    const isCallInProgress = isCallActiveFromTrackers(
-                      liveTrackersByPayee[appt.payeeId] ?? [],
+                    const isCallInProgress = isAppointmentLive(
+                      appt,
+                      activeLiveCalls,
+                      liveTrackersByPayee,
                     );
                     const patientName = `${appt.payee.firstName} ${appt.payee.lastName}`;
                     const providerName = `${appt.provider.firstName} ${appt.provider.lastName}`;
@@ -375,17 +420,26 @@ export default function PatientTabs() {
                         key={appt.id}
                         role="link"
                         tabIndex={0}
-                        onClick={() => handleOpenDetails(appt.id)}
+                        onClick={() => handleOpenDetails(appt)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
-                            handleOpenDetails(appt.id);
+                            handleOpenDetails(appt);
                           }
                         }}
-                        className="cursor-pointer hover:bg-slate-50/80 transition-colors"
+                        className={`cursor-pointer transition-colors ${
+                          isCallInProgress
+                            ? "bg-amber-50/60 hover:bg-amber-50 ring-1 ring-inset ring-amber-200/80"
+                            : "hover:bg-slate-50/80"
+                        }`}
                       >
                         <td className="px-4 py-3 font-medium text-slate-800 max-w-[200px]">
                           <span className="line-clamp-2">{patientName}</span>
+                          {isCallInProgress ? (
+                            <span className="mt-1 block text-xs font-medium text-amber-700">
+                              Live — open to watch call activity
+                            </span>
+                          ) : null}
                         </td>
                         <td className="px-4 py-3 text-slate-600 max-w-[180px]">
                           <span className="line-clamp-2">{providerName}</span>
@@ -401,7 +455,11 @@ export default function PatientTabs() {
                             className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${statusBadgeClasses(isVerified, isCallInProgress)}`}
                           >
                             <span
-                              className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass(isVerified, isCallInProgress)}`}
+                              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                isCallInProgress
+                                  ? "bg-amber-500 animate-pulse"
+                                  : statusDotClass(isVerified, isCallInProgress)
+                              }`}
                             />
                             {statusLabel(isVerified, isCallInProgress)}
                           </span>
