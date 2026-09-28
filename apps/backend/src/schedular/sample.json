@@ -72,7 +72,7 @@
 
   "ORIGINAL EFFECTIVE DATE": {
     "question": "What is the patient's plan effective date?",
-    "rule": "Answer should be a valid coverage effective date in MM/DD/YYYY format.",
+    "rule": "Answer should be a valid coverage effective date in MM/DD/YYYY format. The date must be today or a past date (not a future date from the current day).",
     "answer": ""
   },
 
@@ -145,37 +145,37 @@
   "history": [
     {
       "question": "History for Full-Mouth Xray D0210",
-      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed or no history, return 'NA'.",
       "procedurecode": "D0210",
       "description": "Full-Mouth Xray"
     },
     {
       "question": "What is D0330 code history?",
-      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed or no history, return 'NA'.",
       "procedurecode": "D0330",
       "description": "Panoramic Xray"
     },
     {
       "question": "What is D0274 code history?",
-      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed or no history, return 'NA'.",
       "procedurecode": "D0274",
       "description": "Xray Bitewings"
     },
     {
       "question": "What is D4341 code history?",
-      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed or no history, return 'NA'.",
       "procedurecode": "D4341",
       "description": "Scaling Root Planing"
     },
     {
       "question": "What is D9310 code history?",
-      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed or no history, return 'NA'.",
       "procedurecode": "D9310",
       "description": "Consultation"
     },
     {
       "question": "What is D1110 code history?",
-      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed or no history, return 'NA'.",
       "procedurecode": "D1110",
       "description": "Prophylaxis"
     },
@@ -187,31 +187,31 @@
     },
     {
       "question": "What is D0140 code history?",
-      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed or no history, return 'NA'.",
       "procedurecode": "D0140",
       "description": "Limited Exam"
     },
     {
       "question": "What is D2950 code history?",
-      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed or no history, return 'NA'.",
       "procedurecode": "D2950",
       "description": "Core Buildup"
     },
     {
       "question": "What is D0120 code history?",
-      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed or no history, return 'NA'.",
       "procedurecode": "D0120",
       "description": "Periodic Exam"
     },
     {
       "question": "What is D1351 code history?",
-      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed or no history, return 'NA'.",
       "procedurecode": "D1351",
       "description": "Sealant"
     },
     {
       "question": "What is D1206/D1208 code history?",
-      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed, return 'Not Found'.",
+      "rule": "Answer should be having date, month and year, should not be a future date from current day. If never performed or no history, return 'NA'.",
       "procedurecode": "D1206/D1208",
       "description": "Fluoride Treatment"
     }

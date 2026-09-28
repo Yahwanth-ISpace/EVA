@@ -3,7 +3,12 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { ModelParams } from '@google/generative-ai';
 import type { PatientCallContext } from '../verification/verification.service';
 import { VerificationService } from '../verification/verification.service';
-import { scrubRawBenefitValue } from '../twilio/media-stream/guardrails';
+import {
+  coerceUnavailableAnswerToNa,
+  isEffectiveDateField,
+  scrubRawBenefitValue,
+  UNAVAILABLE_FIELD_VALUE,
+} from '../twilio/media-stream/guardrails';
 
 /** Stable Pro model for conversation, extraction, and classification. */
 const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-pro';
@@ -712,6 +717,8 @@ EXTRACTION (CRITICAL — field assignment and multi-value in one go):
 - We are currently asking for: "${nextFieldToAsk ?? 'none'}". When the user gives a single number, dollar amount, or percentage in response to our question, put it ONLY in "${nextFieldToAsk}". Do NOT put it in any other field (e.g. if we asked for deductible and they say "20 dollars", set ONLY {"deductible": "20 dollars"}, NOT copay). Your nextMessage must: acknowledge with one short varied phrase ("Okay.", "Got you.", "Thank you.", "Thanks.", "Awesome.", "Done.", "Okay, and next.", "Yup.") then ask for the NEXT field only by speaking that field's exact question from BENEFIT QUESTIONS verbatim. NEVER re-ask the same field they just answered. Do NOT add "right?" or "correct?" after their value.
 - If they explicitly name a field and a value (e.g. "deductible is 500 and copay is 25 percent"), extract each into the correct field. Otherwise, a single value goes ONLY into "${nextFieldToAsk}".
 - VALIDITY: Only set validity when the user explicitly says a date, month, or year (e.g. "December 31st 2024", "valid through Dec 2024"). Do NOT set validity to any default or assumed date (e.g. "31st Dec 2024", "July 17 2025"). If they did not say anything about validity or a date, leave validity empty. Never invent a date. CRITICAL — If we do NOT have validity in "Data we have so far", never say a date in your nextMessage and never ask "is it [date] right?". Only ask "What is the validity?" or "Can I get the validity?" or "Can you provide the validity?". Only confirm a date for validity ("So the validity is [date], right?") if the user JUST said that date in this turn.
+- PLAN EFFECTIVE DATE (field keys like effectiveDate, ORIGINAL EFFECTIVE DATE): Accept any past date or today's date. Reject future dates (after today). Do NOT accept a date that is still in the future from the current day.
+- UNAVAILABLE / NEGATIVE ANSWERS (all fields including history): If the TPA means there is no value — e.g. "no", "nope", "not available", "not provided", "not on file", "no history", "no record", "not covered", "never performed", "we don't have that" — set extractedUpdates for that field to exactly "NA" (not their full sentence). Then acknowledge briefly and ask for the next field.
 - Only ask them to repeat when transcript is exactly "User did not respond or was inaudible". Do not ask to repeat if they gave a number or amount.
 - After extracting a value (or multiple): acknowledge once and ask for the NEXT missing field only.
 FIELD RULE EXECUTION
@@ -1224,6 +1231,7 @@ Respond with ONLY a JSON object. No markdown. Format:
     if (!value) return '';
 
     const input = value.trim();
+    if (input.toUpperCase() === UNAVAILABLE_FIELD_VALUE) return UNAVAILABLE_FIELD_VALUE;
 
     // Already normalized
     if (/^\d{2}-\d{2}-\d{4}(,\d{2}-\d{2}-\d{4})*$/.test(input)) {
@@ -1273,7 +1281,65 @@ Respond with ONLY a JSON object. No markdown. Format:
     return [...new Set(results)].join(',');
   }
 
-  
+  private calendarDayStartUtcMs(now = new Date()): number {
+    return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  }
+
+  private effectiveDateMmDdYyyyStartUtc(mmDdYyyy: string): Date | null {
+    const m = mmDdYyyy.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!m) return null;
+    const month = parseInt(m[1], 10) - 1;
+    const day = parseInt(m[2], 10);
+    const year = parseInt(m[3], 10);
+    if (month < 0 || month > 11 || day < 1 || day > 31) return null;
+    const dt = new Date(Date.UTC(year, month, day));
+    if (
+      dt.getUTCFullYear() !== year ||
+      dt.getUTCMonth() !== month ||
+      dt.getUTCDate() !== day
+    ) {
+      return null;
+    }
+    return dt;
+  }
+
+  /** Normalize plan effective date to MM/DD/YYYY. Returns null if not parseable. */
+  private normalizeEffectiveDate(value: string): string | null {
+    const t = value.trim();
+    if (!t) return null;
+
+    const slash = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (slash) {
+      const month = parseInt(slash[1], 10);
+      const day = parseInt(slash[2], 10);
+      let year = parseInt(slash[3], 10);
+      if (slash[3].length === 2) year += year >= 70 ? 1900 : 2000;
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        const probe = new Date(Date.UTC(year, month - 1, day));
+        if (
+          probe.getUTCFullYear() === year &&
+          probe.getUTCMonth() === month - 1 &&
+          probe.getUTCDate() === day
+        ) {
+          return `${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}/${year}`;
+        }
+      }
+    }
+
+    const viaValidity = this.normalizeValidity(t);
+    if (viaValidity) {
+      const dt = this.validityNormalizedStartUtc(viaValidity);
+      if (dt) {
+        const month = dt.getUTCMonth() + 1;
+        const day = dt.getUTCDate();
+        const year = dt.getUTCFullYear();
+        return `${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}/${year}`;
+      }
+    }
+
+    return null;
+  }
+
   /** Normalize validity to "21st Dec 2028" format. Returns null if not parseable. */
   private normalizeValidity(value: string): string | null {
     const t = value.trim();
@@ -1467,8 +1533,40 @@ Respond with ONLY a JSON object. No markdown. Format:
       const raw = extracted[field];
       if (raw == null || String(raw).trim() === '') continue;
       const v = scrubRawBenefitValue(field, String(raw).trim(), userSaid);
-      if (field.startsWith('history.') || field === 'effectiveDate') {
+      const unavailableNa =
+        coerceUnavailableAnswerToNa(v, userSaid) ??
+        (v.toUpperCase() === UNAVAILABLE_FIELD_VALUE
+          ? UNAVAILABLE_FIELD_VALUE
+          : null);
+      if (unavailableNa) {
+        out[field] = unavailableNa;
+        continue;
+      }
+      if (field.startsWith('history.')) {
         out[field] = this.normalizeHistoryDates(v);
+        continue;
+      }
+      if (isEffectiveDateField(field)) {
+        const normalized = this.normalizeEffectiveDate(v);
+        if (!normalized || !this.looksLikeDate(v)) {
+          return {
+            ok: false,
+            invalidField: field,
+            correctionMessage: `I noticed you said "${quote(v)}". For the effective date, I need a full date with month, day, and year. Could you share it again?`,
+          };
+        }
+        const dtStart = this.effectiveDateMmDdYyyyStartUtc(normalized);
+        if (dtStart) {
+          const startTodayUtc = this.calendarDayStartUtcMs();
+          if (dtStart.getTime() > startTodayUtc) {
+            return {
+              ok: false,
+              invalidField: field,
+              correctionMessage: `That effective date is in the future — I need a date on or before today. Could you confirm the month, day, and year again?`,
+            };
+          }
+        }
+        out[field] = normalized;
         continue;
       }
       if (!v?.trim()) continue;
@@ -1551,12 +1649,7 @@ Respond with ONLY a JSON object. No markdown. Format:
         if (rejectFuture) {
           const dtStart = this.validityNormalizedStartUtc(normalized);
           if (dtStart) {
-            const now = new Date();
-            const startTodayUtc = Date.UTC(
-              now.getUTCFullYear(),
-              now.getUTCMonth(),
-              now.getUTCDate(),
-            );
+            const startTodayUtc = this.calendarDayStartUtcMs();
             if (dtStart.getTime() > startTodayUtc) {
               return {
                 ok: false,
