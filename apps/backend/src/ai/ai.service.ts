@@ -1277,12 +1277,75 @@ Respond with ONLY a JSON object. No markdown. Format:
       }
     }
 
-    // Remove duplicates while preserving order
-    return [...new Set(results)].join(',');
+    if (results.length > 0) {
+      return [...new Set(results)].join(',');
+    }
+
+    const viaEffective = this.normalizeEffectiveDate(input);
+    if (viaEffective) {
+      const dt = this.effectiveDateMmDdYyyyStartUtc(viaEffective);
+      if (dt) {
+        const day = String(dt.getUTCDate()).padStart(2, '0');
+        const month = String(dt.getUTCMonth() + 1).padStart(2, '0');
+        const year = dt.getUTCFullYear();
+        return `${day}-${month}-${year}`;
+      }
+    }
+
+    return '';
   }
 
   private calendarDayStartUtcMs(now = new Date()): number {
     return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  }
+
+  private static readonly SPOKEN_DATE_PHRASE =
+    /\b(?:\d{1,2}\/\d{1,2}\/\d{2,4}|\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{2,4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{2,4})\b/gi;
+
+  private extractSpokenDatePhrases(text: string): string[] {
+    if (!text?.trim()) return [];
+    const matches = text.match(AiService.SPOKEN_DATE_PHRASE) ?? [];
+    return [...new Set(matches.map((m) => m.trim()))];
+  }
+
+  private dateParseCandidates(extracted: string, userSaid: string): string[] {
+    const out: string[] = [];
+    for (const src of [extracted, userSaid, `${extracted} ${userSaid}`.trim()]) {
+      if (!src?.trim()) continue;
+      out.push(src.trim());
+      out.push(...this.extractSpokenDatePhrases(src));
+    }
+    return [...new Set(out.filter(Boolean))];
+  }
+
+  private resolveEffectiveDateNormalized(
+    extracted: string,
+    userSaid: string,
+  ): string | null {
+    for (const candidate of this.dateParseCandidates(extracted, userSaid)) {
+      const normalized = this.normalizeEffectiveDate(candidate);
+      if (normalized) return normalized;
+    }
+    return null;
+  }
+
+  private resolveValidityNormalized(
+    extracted: string,
+    userSaid: string,
+  ): string | null {
+    for (const candidate of this.dateParseCandidates(extracted, userSaid)) {
+      const normalized = this.normalizeValidity(candidate);
+      if (normalized) return normalized;
+    }
+    return null;
+  }
+
+  private resolveHistoryDateValue(extracted: string, userSaid: string): string {
+    for (const candidate of this.dateParseCandidates(extracted, userSaid)) {
+      const normalized = this.normalizeHistoryDates(candidate);
+      if (normalized) return normalized;
+    }
+    return this.normalizeHistoryDates(extracted);
   }
 
   private effectiveDateMmDdYyyyStartUtc(mmDdYyyy: string): Date | null {
@@ -1445,7 +1508,9 @@ Respond with ONLY a JSON object. No markdown. Format:
     }
 
     // Try "December 2028" / "Dec 2028" (month and year only) → treat as 1st of that month
-    const my = t.match(/(\w+)\s+(\d{2,4})/i);
+    const my = t.match(
+      /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\s+(\d{2,4})\b/i,
+    );
     if (my) {
       const monthNum =
         months[my[1].toLowerCase().slice(0, 3)] ?? months[my[1].toLowerCase()];
@@ -1543,12 +1608,12 @@ Respond with ONLY a JSON object. No markdown. Format:
         continue;
       }
       if (field.startsWith('history.')) {
-        out[field] = this.normalizeHistoryDates(v);
+        out[field] = this.resolveHistoryDateValue(v, userSaid);
         continue;
       }
       if (isEffectiveDateField(field)) {
-        const normalized = this.normalizeEffectiveDate(v);
-        if (!normalized || !this.looksLikeDate(v)) {
+        const normalized = this.resolveEffectiveDateNormalized(v, userSaid);
+        if (!normalized) {
           return {
             ok: false,
             invalidField: field,
@@ -1621,8 +1686,8 @@ Respond with ONLY a JSON object. No markdown. Format:
           out.copay = v;
         }
       } else if (field === 'validity') {
-        const normalized = this.normalizeValidity(v);
-        if (!normalized || !this.looksLikeDate(v)) {
+        const normalized = this.resolveValidityNormalized(v, userSaid);
+        if (!normalized) {
           return {
             ok: false,
             invalidField: 'validity',

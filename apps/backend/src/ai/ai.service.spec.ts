@@ -64,6 +64,19 @@ describe('AiService', () => {
       });
     });
 
+    it('accepts spoken dates embedded in LLM extractions or transcript', () => {
+      const field = 'ORIGINAL EFFECTIVE DATE';
+      const result = service.validateAndNormalizeBenefitExtracted(
+        { [field]: 'the effective date is April 29th 2026' },
+        'April 29th 2026',
+        [field],
+      );
+      expect(result).toEqual({
+        ok: true,
+        normalized: { [field]: '04/29/2026' },
+      });
+    });
+
     it('rejects future effective dates', () => {
       const result = service.validateAndNormalizeBenefitExtracted(
         { [field]: '01/15/2030' },
