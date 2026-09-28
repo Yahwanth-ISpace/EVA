@@ -301,13 +301,104 @@ export function stripTrailingBenefitConfirmation(text: string): string {
   return t.trim();
 }
 
+/** Plan / coverage effective date fields (not procedure history dates). */
+export function isEffectiveDateField(field: string): boolean {
+  const f = field.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if (
+    f === 'effectivedate' ||
+    f === 'originaleffectivedate' ||
+    f === 'planeffectivedate' ||
+    f === 'coverageeffectivedate'
+  ) {
+    return true;
+  }
+  return /effective\s*date|date\s*effective/i.test(field.trim());
+}
+
+export const UNAVAILABLE_FIELD_VALUE = 'NA';
+
+function normalizeAnswerText(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/['']/g, "'")
+    .replace(/\s+/g, ' ');
+}
+
+/** True when the utterance clearly includes a numeric benefit token (not a bare "no"). */
+export function hasConcreteBenefitToken(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/\d+\s*%|\$\s*\d+|\d+\s*(?:dollars?|cents?)\b/i.test(t)) return true;
+  if (/\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/.test(t)) return true;
+  if (
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b/i.test(
+      t,
+    ) &&
+    /\d/.test(t)
+  ) {
+    return true;
+  }
+  if (/\b\d+(?:\.\d+)?\s*percent\b/i.test(t)) return true;
+  return false;
+}
+
+/**
+ * Map TPA negatives / not-available phrases to stored value "NA" (history and all benefit fields).
+ * Returns null when the answer should go through normal validation.
+ */
+export function coerceUnavailableAnswerToNa(
+  extractedValue: string,
+  userSaid: string,
+): string | null {
+  const pieces = [extractedValue, userSaid]
+    .map((s) => normalizeAnswerText(s))
+    .filter(Boolean);
+
+  for (const t of pieces) {
+    if (hasConcreteBenefitToken(t)) continue;
+    if (t === 'na' || t === 'n/a' || t === 'not applicable') {
+      return UNAVAILABLE_FIELD_VALUE;
+    }
+    if (/^(no|nope|nah|none|nothing)$/.test(t)) {
+      return UNAVAILABLE_FIELD_VALUE;
+    }
+    if (
+      /\bnot\s+(available|provided|on\s+file|applicable|found|in\s+the\s+system)\b/.test(
+        t,
+      ) ||
+      /\bno\s+(history|record|records|information|info|data|claim|claims)\b/.test(
+        t,
+      ) ||
+      /\b(isn't|is\s+not|not|wasn't|was\s+not)\s+covered\b/.test(t) ||
+      /\bnot\s+covered\b/.test(t) ||
+      /\bnever\s+(performed|done|had|been)\b/.test(t) ||
+      /\b(don't|do\s+not|doesn't|does\s+not)\s+have\b/.test(t) ||
+      /\bwe\s+(don't|do\s+not)\s+have\b/.test(t) ||
+      /\b(unavailable|without\s+history)\b/.test(t) ||
+      /\b(can't|cannot)\s+provide\b/.test(t) ||
+      /\bno\s+history\b/.test(t) ||
+      /\bthere\s+is\s+no\b/.test(t) ||
+      /\bnothing\s+on\s+file\b/.test(t) ||
+      /\bzero\s+history\b/.test(t)
+    ) {
+      return UNAVAILABLE_FIELD_VALUE;
+    }
+  }
+
+  return null;
+}
+
 /** Pull only the numeric/date token for a benefit field — never store the full TPA sentence. */
 export function scrubRawBenefitValue(
   field: string,
   raw: string,
   userSaid: string,
 ): string {
-  if (field.startsWith('history.') || field === 'EffectiveDate') {
+  const na = coerceUnavailableAnswerToNa(raw, userSaid);
+  if (na) return na;
+
+  if (field.startsWith('history.') || isEffectiveDateField(field)) {
     return raw.trim();
   }
   const fromSpeech = extractValueForField(userSaid, field);
