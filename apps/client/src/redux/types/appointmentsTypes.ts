@@ -52,6 +52,8 @@ export interface AppointmentRecord {
   providerId: string;
   officeId: string;
   date: string;
+  /** When the appointment row was saved in Mongo (`savedAt`). */
+  savedAt?: string;
   reason: string;
   status: "SCHEDULED" | "ERROR" | "CANCELLED";
   createdAt: string;

@@ -4,12 +4,25 @@ import "react-loading-skeleton/dist/skeleton.css";
 import { FaSearch } from "react-icons/fa";
 import { Link } from "react-router-dom";
 
+import type { AppointmentRecord } from "../redux/types/appointmentsTypes";
 import type { VerificationRecord } from "../redux/types/verificationTypes";
+import { resolveVerificationSavedAt } from "../utils/appointmentRecord";
+import {
+  formatSavedAtDisplay,
+  savedAtToMillis,
+} from "../utils/formatDbDate";
+import {
+  ADMIN_TABLE_CARD,
+  ADMIN_TABLE_HEAD_CELL,
+  ADMIN_TABLE_HEAD_ROW,
+  ADMIN_TABLE_SCROLL,
+} from "../utils/adminTableLayout";
 import { getVerificationFieldRows } from "../utils/verificationDisplay";
 import StatusBadge from "./StatusBadges";
 
 interface Props {
   records: VerificationRecord[];
+  appointments: AppointmentRecord[];
   loading: boolean;
 }
 
@@ -17,7 +30,11 @@ type SortBy = "date_desc" | "date_asc" | "patient_asc" | "status_asc";
 
 const SKELETON_ROW_COUNT = 8;
 
-export default function AdminInsuranceTable({ records, loading }: Props) {
+export default function AdminInsuranceTable({
+  records,
+  appointments,
+  loading,
+}: Props) {
   const [searchQuery, setSearchQuery] = useState("");
 
   // Latest by default
@@ -49,9 +66,13 @@ export default function AdminInsuranceTable({ records, loading }: Props) {
     });
 
     return [...filtered].sort((a, b) => {
-      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateA = savedAtToMillis(
+        resolveVerificationSavedAt(a, appointments),
+      );
 
-      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      const dateB = savedAtToMillis(
+        resolveVerificationSavedAt(b, appointments),
+      );
 
       switch (sortBy) {
         case "date_desc":
@@ -92,7 +113,7 @@ export default function AdminInsuranceTable({ records, loading }: Props) {
           return 0;
       }
     });
-  }, [records, searchQuery, sortBy]);
+  }, [records, appointments, searchQuery, sortBy]);
 
   return (
     <div className="flex flex-col relative min-h-0 flex-1 overflow-hidden">
@@ -155,25 +176,30 @@ export default function AdminInsuranceTable({ records, loading }: Props) {
       <div className="shrink-0 h-px bg-slate-200 my-4" role="presentation" />
 
       {/* Table content */}
-      <div className="content-wrapper flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 custom-scrollbar">
+      <div className={ADMIN_TABLE_SCROLL}>
         {/* Loading */}
         {loading ? (
-          <div className="rounded-xl border border-slate-200 overflow-hidden bg-white shadow-[0_1px_3px_0_rgba(0,0,0,0.06)]">
-            <div className="overflow-x-auto">
+          <div className={ADMIN_TABLE_CARD}>
               <table className="w-full min-w-[900px] text-left text-sm">
                 <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="px-4 py-3">Patient</th>
+                  <tr className={ADMIN_TABLE_HEAD_ROW}>
+                    <th className={ADMIN_TABLE_HEAD_CELL}>Patient</th>
 
-                    <th className="px-4 py-3">Appointment</th>
+                    <th className={ADMIN_TABLE_HEAD_CELL}>Appointment</th>
 
-                    <th className="px-4 py-3">Date</th>
+                    <th className={ADMIN_TABLE_HEAD_CELL}>Date</th>
 
-                    <th className="px-4 py-3">Status</th>
+                    <th className={ADMIN_TABLE_HEAD_CELL}>Status</th>
 
-                    <th className="px-4 py-3">Verification details</th>
+                    <th className={ADMIN_TABLE_HEAD_CELL}>
+                      Verification details
+                    </th>
 
-                    <th className="px-3 py-3 w-32 text-right">Action</th>
+                    <th
+                      className={`${ADMIN_TABLE_HEAD_CELL} px-3 w-32 text-right`}
+                    >
+                      Action
+                    </th>
                   </tr>
                 </thead>
 
@@ -219,7 +245,6 @@ export default function AdminInsuranceTable({ records, loading }: Props) {
                   ))}
                 </tbody>
               </table>
-            </div>
           </div>
         ) : records.length === 0 ? (
           /* No records */
@@ -245,22 +270,35 @@ export default function AdminInsuranceTable({ records, loading }: Props) {
           </div>
         ) : (
           /* Actual table */
-          <div className="rounded-xl border border-slate-200 overflow-hidden bg-white shadow-[0_1px_3px_0_rgba(0,0,0,0.06)]">
-            <div className="overflow-x-auto">
+          <div className={ADMIN_TABLE_CARD}>
               <table className="w-full min-w-[900px] text-left text-sm">
                 <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <th className="px-4 py-3">Patient</th>
+                  <tr className={ADMIN_TABLE_HEAD_ROW}>
+                    <th className={ADMIN_TABLE_HEAD_CELL}>Patient</th>
 
-                    <th className="px-4 py-3">Appointment</th>
+                    <th className={ADMIN_TABLE_HEAD_CELL}>Appointment</th>
 
-                    <th className="px-4 py-3 whitespace-nowrap">Date</th>
+                    <th
+                      className={`${ADMIN_TABLE_HEAD_CELL} whitespace-nowrap`}
+                    >
+                      Date
+                    </th>
 
-                    <th className="px-4 py-3 whitespace-nowrap">Status</th>
+                    <th
+                      className={`${ADMIN_TABLE_HEAD_CELL} whitespace-nowrap`}
+                    >
+                      Status
+                    </th>
 
-                    <th className="px-4 py-3">Verification details</th>
+                    <th className={ADMIN_TABLE_HEAD_CELL}>
+                      Verification details
+                    </th>
 
-                    <th className="px-3 py-3 w-32 text-right">Action</th>
+                    <th
+                      className={`${ADMIN_TABLE_HEAD_CELL} px-3 w-32 text-right`}
+                    >
+                      Action
+                    </th>
                   </tr>
                 </thead>
 
@@ -268,16 +306,9 @@ export default function AdminInsuranceTable({ records, loading }: Props) {
                   {filteredAndSortedRecords.map((record) => {
                     const rows = getVerificationFieldRows(record);
 
-                    const dateStr = record.createdAt
-                      ? new Date(record.createdAt).toLocaleDateString(
-                          undefined,
-                          {
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                          },
-                        )
-                      : "—";
+                    const dateStr = formatSavedAtDisplay(
+                      resolveVerificationSavedAt(record, appointments),
+                    );
 
                     return (
                       <tr
@@ -347,7 +378,6 @@ export default function AdminInsuranceTable({ records, loading }: Props) {
                   })}
                 </tbody>
               </table>
-            </div>
           </div>
         )}
       </div>

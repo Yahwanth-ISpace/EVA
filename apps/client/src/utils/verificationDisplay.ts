@@ -99,6 +99,37 @@ export function getVerificationFieldRows(
     }));
 }
 
+/** Whether required verification fields (per requirement) are all populated. */
+export function isVerificationComplete(
+  verification: VerificationRecord | null | undefined,
+): boolean {
+  if (!verification) return false;
+
+  const data =
+    verification.extractedData &&
+    typeof verification.extractedData === "object" &&
+    !Array.isArray(verification.extractedData)
+      ? (verification.extractedData as Record<string, string | null>)
+      : {};
+
+  const reqFields = parseRequirementFields(
+    verification.verificationRequirement?.verificationFields,
+  );
+
+  if (reqFields.length > 0) {
+    const required = reqFields.filter((f) => f.required !== false);
+    const toCheck = required.length > 0 ? required : reqFields;
+    return toCheck.every((f) => {
+      const v = data[f.field];
+      return v != null && String(v).trim() !== "";
+    });
+  }
+
+  const rows = getVerificationFieldRows(verification);
+  if (rows.length === 0) return false;
+  return rows.every((r) => r.value.trim() !== "");
+}
+
 /**
  * Prefer verification rows linked to this appointment.
  * Legacy rows without `appointmentId` are only reused when this payee has a single appointment
