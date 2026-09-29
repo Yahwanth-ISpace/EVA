@@ -29,7 +29,15 @@ import {
   resolveAppointmentNumericId,
   resolveAppointmentPayeeId,
 } from "../utils/appointmentRecord";
+import {
+  buildTranscriptLogFromTrackers,
+} from "../utils/botTracker";
 import { useLiveBotTrackers } from "../utils/useLiveBotTrackers";
+import {
+  resolveAppointmentWorkflowStatus,
+  workflowStatusBadgeClasses,
+  workflowStatusDotClass,
+} from "../utils/appointmentWorkflowStatus";
 import {
   getVerificationFieldRows,
   getVerificationForAppointment,
@@ -378,8 +386,21 @@ export default function AppointmentDetail() {
 
   const liveChronological = useMemo(() => liveSorted.slice(-200), [liveSorted]);
 
-  const transcriptText = verification?.transcript?.trim() ?? "";
-  const hasTranscript = Boolean(transcriptText);
+  const transcriptFromTrackers = useMemo(
+    () => buildTranscriptLogFromTrackers(liveSorted),
+    [liveSorted],
+  );
+  const appointmentEvaTranscript =
+    appointment &&
+    typeof (appointment as { eva?: { transcript?: string } }).eva?.transcript ===
+      "string"
+      ? (appointment as { eva?: { transcript?: string } }).eva!.transcript!.trim()
+      : "";
+  const transcriptText =
+    verification?.transcript?.trim() ||
+    appointmentEvaTranscript ||
+    transcriptFromTrackers;
+  const hasTranscript = Boolean(transcriptText?.trim());
 
   const verificationFieldRows = useMemo(
     () => getVerificationFieldRows(verification),
@@ -467,6 +488,14 @@ export default function AppointmentDetail() {
       setCallLogTab("live");
     }
   }, [isCallInProgress]);
+
+  const wasCallInProgressRef = useRef(false);
+  useEffect(() => {
+    if (wasCallInProgressRef.current && !isCallInProgress) {
+      dispatch(getVerifications());
+    }
+    wasCallInProgressRef.current = isCallInProgress;
+  }, [dispatch, isCallInProgress]);
 
   /** Stays true after the call ends if any TPA segment was angry since the latest [CALL_EVENT] START. */
   const tpaAngryIndicatorActive = useMemo(
@@ -603,22 +632,14 @@ export default function AppointmentDetail() {
         .filter(Boolean)
         .join(", ")
     : "—";
-  /** Verification workflow only: scheduled → in progress → verified */
-  const applicationStatusLabel = verification
-    ? "Verified"
-    : isCallInProgress
-      ? "In progress"
-      : "Scheduled";
-  const statusClass = verification
-    ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
-    : isCallInProgress
-      ? "bg-amber-50 text-amber-700 border border-amber-100"
-      : "bg-slate-100 text-slate-700 border border-slate-200";
-  const statusDotClass = verification
-    ? "bg-emerald-500"
-    : isCallInProgress
-      ? "bg-amber-500"
-      : "bg-slate-500";
+  const applicationWorkflowStatus = resolveAppointmentWorkflowStatus(
+    isCallInProgress,
+    verification,
+    liveLogs,
+  );
+  const applicationStatusLabel = applicationWorkflowStatus;
+  const statusClass = workflowStatusBadgeClasses(applicationWorkflowStatus);
+  const statusDotClass = workflowStatusDotClass(applicationWorkflowStatus);
 
   const fieldClass =
     "w-full rounded-lg border border-slate-200/90 bg-white px-3.5 py-2.5 text-slate-900 text-sm shadow-sm read-only:cursor-default focus:ring-0 focus:border-indigo-200";

@@ -204,6 +204,43 @@ export function extractActiveCallSidFromTrackers(
   return openSid;
 }
 
+/**
+ * Reconstruct EVA/User transcript lines from bot-tracker logs for the latest call
+ * (between the most recent [CALL_EVENT] START and the following END).
+ */
+export function buildTranscriptLogFromTrackers(
+  chronological: BotTrackerRecord[],
+): string {
+  const chron = [...chronological].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  );
+  let startIdx = -1;
+  for (let i = chron.length - 1; i >= 0; i--) {
+    const line = formatCallLogLine(chron[i]!);
+    if (line.includes("[CALL_EVENT] START")) {
+      startIdx = i;
+      break;
+    }
+  }
+  if (startIdx < 0) return "";
+
+  const lines: string[] = [];
+  for (let i = startIdx + 1; i < chron.length; i++) {
+    const raw = formatCallLogLine(chron[i]!).trim();
+    if (!raw) continue;
+    if (raw.includes("[CALL_EVENT] END")) break;
+    if (raw.includes("[CALL_EVENT] START")) break;
+    if (parseTpaEmotionLine(raw)) {
+      lines.push(raw);
+      continue;
+    }
+    if (raw.startsWith("EVA:") || raw.startsWith("User:")) {
+      lines.push(raw);
+    }
+  }
+  return lines.join("\n");
+}
+
 export function isCallActiveFromTrackers(
   trackers: BotTrackerRecord[],
 ): boolean {
@@ -218,6 +255,14 @@ export function isCallActiveFromTrackers(
     else if (line.includes("[CALL_EVENT] END")) open = false;
   }
   return open;
+}
+
+/** True if bot-tracker logs show at least one verification call was started. */
+export function payeeHasCallActivity(trackers: BotTrackerRecord[]): boolean {
+  if (!trackers.length) return false;
+  return trackers.some((t) =>
+    formatCallLogLine(t).includes("[CALL_EVENT] START"),
+  );
 }
 
 /**

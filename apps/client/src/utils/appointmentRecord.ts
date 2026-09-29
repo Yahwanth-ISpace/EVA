@@ -1,4 +1,5 @@
 import type { AppointmentRecord } from "../redux/types/appointmentsTypes";
+import type { VerificationRecord } from "../redux/types/verificationTypes";
 import type { BotTrackerRecord } from "./botTracker";
 import { isCallActiveFromTrackers } from "./botTracker";
 
@@ -24,6 +25,44 @@ export function resolveAppointmentPayeeId(
   }
   const legacy = (appt as Record<string, unknown>).PatientID;
   if (legacy != null && String(legacy).trim()) return String(legacy).trim();
+  return undefined;
+}
+
+/** Mongo `savedAt` as returned by the appointments API (ISO string). */
+export function resolveAppointmentSavedAt(
+  appt: AppointmentRecord | Record<string, unknown>,
+): string | undefined {
+  const raw =
+    (appt as AppointmentRecord).savedAt ??
+    (appt as Record<string, unknown>).savedAt ??
+    (appt as AppointmentRecord).createdAt;
+  if (raw == null || String(raw).trim() === "") return undefined;
+  return String(raw);
+}
+
+export function resolveVerificationSavedAt(
+  record: Pick<
+    VerificationRecord,
+    "appointmentId" | "payeeId" | "createdAt"
+  >,
+  appointments: AppointmentRecord[],
+): string | undefined {
+  const apptId =
+    record.appointmentId != null ? String(record.appointmentId).trim() : "";
+  const payeeId = record.payeeId?.trim() ?? "";
+
+  if (apptId) {
+    const match = appointments.find((a) => {
+      const numericId = resolveAppointmentNumericId(a);
+      if (numericId !== apptId) return false;
+      if (!payeeId) return true;
+      return resolveAppointmentPayeeId(a) === payeeId;
+    });
+    const fromAppointment = match ? resolveAppointmentSavedAt(match) : undefined;
+    if (fromAppointment) return fromAppointment;
+  }
+
+  if (record.createdAt?.trim()) return record.createdAt;
   return undefined;
 }
 

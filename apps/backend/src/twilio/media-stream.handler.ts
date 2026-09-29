@@ -347,16 +347,45 @@ export class MediaStreamHandlerService {
         return;
       }
 
-      if (!state.appointmentId) {
-        this.logger.warn(
-          '[MediaStream] Appointment NOT updated: appointmentId is missing',
-        );
-        return;
-      }
-
       const fullTranscript = state.conversationTranscript.length
         ? state.conversationTranscript.join('\n')
         : '';
+
+      const fields = state.orderedFields.length
+        ? state.orderedFields
+        : ['coverage', 'deductible', 'copay', 'validity'];
+      const hasExtracted = fields.some(
+        (f) =>
+          state.extractedData[f] != null &&
+          String(state.extractedData[f]).trim(),
+      );
+
+      if (!fullTranscript && !hasExtracted) {
+        return;
+      }
+
+      try {
+        await this.verificationService.mergeExtractedData(
+          state.patientId,
+          state.extractedData,
+          fullTranscript || undefined,
+          state.verificationRequirementId,
+          state.appointmentId,
+          { replaceTranscript: Boolean(fullTranscript) },
+        );
+      } catch (e) {
+        this.logger.warn(
+          '[MediaStream] Failed to save verification transcript/data',
+          (e as Error)?.message,
+        );
+      }
+
+      if (!state.appointmentId) {
+        this.logger.warn(
+          '[MediaStream] Appointment mongo doc NOT updated: appointmentId is missing',
+        );
+        return;
+      }
 
       try {
         await this.appointmentService.updateEvaVerification(
@@ -398,17 +427,7 @@ export class MediaStreamHandlerService {
         clearInterval(state.fallbackTimer);
         state.fallbackTimer = null;
       }
-      const fields = state.orderedFields.length
-        ? state.orderedFields
-        : ['coverage', 'deductible', 'copay', 'validity'];
-      const hasAny =
-        state.patientId &&
-        fields.some(
-          (f) =>
-            state.extractedData[f] != null &&
-            String(state.extractedData[f]).trim(),
-        );
-      if (hasAny) updateAppointmentWithCallResult();
+      if (state.patientId) void updateAppointmentWithCallResult();
       const sid = state.callSid;
       if (sid)
         this.twilioService
@@ -2742,19 +2761,9 @@ export class MediaStreamHandlerService {
           clearTimeout(state.postGoodbyeTimeoutId);
           state.postGoodbyeTimeoutId = null;
         }
-        const finalFields = state.orderedFields.length
-          ? state.orderedFields
-          : ['coverage', 'deductible', 'copay', 'validity'];
-        if (
-          state.patientId &&
-          finalFields.some(
-            (f) =>
-              state.extractedData[f] != null &&
-              String(state.extractedData[f]).trim(),
-          )
-        ) {
-          updateAppointmentWithCallResult();
-        } else if (!state.patientId) {
+        if (state.patientId) {
+          void updateAppointmentWithCallResult();
+        } else {
           this.logger.warn(
             '[MediaStream] Call stopped but patientId missing — verification NOT saved. Use ?patientId=... or ?payeeId=... in stream URL.',
           );

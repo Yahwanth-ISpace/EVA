@@ -320,6 +320,7 @@ export class VerificationService {
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
+    options?: { replaceTranscript?: boolean },
   ) {
     // if (!(await this.mongoService.patientHasAppointment(payeeId))) {
     //   throw new NotFoundException(
@@ -384,9 +385,11 @@ export class VerificationService {
       extractedData: merged,
     };
     if (transcriptToAppend?.trim()) {
-      updatePayload.transcript = existing
-        ? `${existing.transcript}\n\n---\n\n${transcriptToAppend}`
-        : transcriptToAppend;
+      const next = transcriptToAppend.trim();
+      updatePayload.transcript =
+        options?.replaceTranscript || !existing?.transcript?.trim()
+          ? next
+          : `${existing.transcript}\n\n---\n\n${next}`;
     }
     if (verificationRequirementId) {
       updatePayload.verificationRequirementId = verificationRequirementId;

@@ -20,8 +20,9 @@ export default function Dashboard() {
   const { verifications: verificationData, loading: verificationLoading } =
     useSelector((state: RootState) => state.verificationsState);
 
-  // Appointments are used by PatientTabs
-  useSelector((state: RootState) => state.appointmentsState);
+  const { appointments } = useSelector(
+    (state: RootState) => state.appointmentsState,
+  );
 
   // Admin section tab
   const [activeTab, setActiveTab] = useState<AdminTab>("appointments");
@@ -52,13 +53,11 @@ export default function Dashboard() {
             min-h-0
             flex-1
             flex-col
-            overflow-y-auto
             pb-12
-            custom-scrollbar
           "
         >
           {isAdmin && (
-            <section className="shrink-0">
+            <section className="flex min-h-0 flex-1 flex-col">
               {/* ========================================= */}
               {/* APPOINTMENTS / VERIFICATIONS TABS         */}
               {/* ========================================= */}
@@ -98,7 +97,7 @@ export default function Dashboard() {
               {/* ========================================= */}
 
               {activeTab === "appointments" && (
-                <div className="mt-5">
+                <div className="mt-5 flex min-h-0 flex-1 flex-col">
                   <PatientTabs />
                 </div>
               )}
@@ -108,10 +107,11 @@ export default function Dashboard() {
               {/* ========================================= */}
 
               {activeTab === "verifications" && (
-                <div className="mt-5">
+                <div className="mt-5 flex min-h-0 flex-1 flex-col">
                   {/* Verification Table */}
                   <AdminInsuranceTable
                     records={verificationData}
+                    appointments={appointments}
                     loading={verificationLoading}
                   />
                 </div>

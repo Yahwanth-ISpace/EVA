@@ -6,6 +6,15 @@ function splitName(full: string): { firstName: string; lastName: string } {
   return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
 }
 
+function toIsoTimestamp(value: unknown): string {
+  if (value instanceof Date) return value.toISOString();
+  if (value != null && String(value).trim()) {
+    const parsed = new Date(String(value));
+    if (Number.isFinite(parsed.getTime())) return parsed.toISOString();
+  }
+  return new Date().toISOString();
+}
+
 function resolveId(doc: Record<string, unknown>): string {
   if (doc.id != null && String(doc.id).trim()) return String(doc.id);
   const raw = doc._id;
@@ -51,12 +60,13 @@ export function mapMongoAppointmentToClient(
     String(provider.providerName ?? ''),
   );
 
-  const savedAt = doc.savedAt ?? doc.createdAt ?? new Date().toISOString();
+  const savedAtIso = toIsoTimestamp(doc.savedAt ?? doc.createdAt);
   const appointmentDate =
-    doc.appointmentDate ?? doc.date ?? savedAt;
+    doc.appointmentDate ?? doc.date ?? savedAtIso;
 
   return {
     ...doc,
+    savedAt: savedAtIso,
     id: resolveId(doc),
     appointmentId:
       doc.appointmentId != null ? String(doc.appointmentId) : undefined,
@@ -67,8 +77,8 @@ export function mapMongoAppointmentToClient(
     date: appointmentDate,
     reason: String(doc.eligibilityResult ?? doc.reason ?? ''),
     status: doc.status ?? 'SCHEDULED',
-    createdAt: savedAt,
-    updatedAt: savedAt,
+    createdAt: savedAtIso,
+    updatedAt: savedAtIso,
     notes: String(doc.AppointmentNote ?? doc.notes ?? ''),
     payee: {
       id: patientId,
@@ -89,8 +99,8 @@ export function mapMongoAppointmentToClient(
       npi: String(provider.providerNpi ?? ''),
       phone: '',
       email: '',
-      createdAt: String(savedAt),
-      updatedAt: String(savedAt),
+      createdAt: savedAtIso,
+      updatedAt: savedAtIso,
     },
     office: {
       id: String(office.officeID ?? office.officeId ?? ''),
@@ -101,8 +111,8 @@ export function mapMongoAppointmentToClient(
       state: String(office.state ?? ''),
       zip: String(office.zip ?? office.zipCode ?? ''),
       phone: '',
-      createdAt: String(savedAt),
-      updatedAt: String(savedAt),
+      createdAt: savedAtIso,
+      updatedAt: savedAtIso,
       provider: {} as Record<string, never>,
     },
   };

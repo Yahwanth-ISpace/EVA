@@ -18,33 +18,58 @@ import {
   resolveAppointmentNumericId,
   resolveAppointmentPayeeId,
   resolveAppointmentRouteId,
+  resolveAppointmentSavedAt,
 } from "../utils/appointmentRecord";
+import {
+  formatSavedAtDateOnly,
+  savedAtToMillis,
+} from "../utils/formatDbDate";
+import {
+  resolveAppointmentWorkflowStatus,
+  workflowStatusBadgeClasses,
+  workflowStatusDotClass,
+  workflowStatusSortRank,
+} from "../utils/appointmentWorkflowStatus";
+import {
+  ADMIN_TABLE_CARD,
+  ADMIN_TABLE_HEAD_CELL,
+  ADMIN_TABLE_HEAD_ROW,
+  ADMIN_TABLE_SCROLL,
+} from "../utils/adminTableLayout";
 import { getVerificationForAppointment } from "../utils/verificationDisplay";
 
 const SKELETON_ROW_COUNT = 8;
 
 const SkeletonTable = () => (
-  <div className="rounded-xl border border-slate-200 overflow-hidden bg-white shadow-[0_1px_3px_0_rgba(0,0,0,0.06)]">
-    <div className="overflow-x-auto">
+  <div className={ADMIN_TABLE_CARD}>
       <table className="w-full min-w-[640px] text-left text-sm">
         <thead>
-          <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            <th scope="col" className="px-4 py-3">
+          <tr className={ADMIN_TABLE_HEAD_ROW}>
+            <th scope="col" className={ADMIN_TABLE_HEAD_CELL}>
               Patient
             </th>
-            <th scope="col" className="px-4 py-3">
+            <th scope="col" className={ADMIN_TABLE_HEAD_CELL}>
               Provider
             </th>
-            <th scope="col" className="px-4 py-3">
+            <th scope="col" className={ADMIN_TABLE_HEAD_CELL}>
               Office
             </th>
-            <th scope="col" className="px-4 py-3 whitespace-nowrap">
+            <th
+              scope="col"
+              className={`${ADMIN_TABLE_HEAD_CELL} whitespace-nowrap`}
+            >
               Date
             </th>
-            <th scope="col" className="px-4 py-3 whitespace-nowrap">
+            <th
+              scope="col"
+              className={`${ADMIN_TABLE_HEAD_CELL} whitespace-nowrap`}
+            >
               Status
             </th>
-            <th scope="col" className="px-3 py-3 w-14 text-center">
+            <th
+              scope="col"
+              className={`${ADMIN_TABLE_HEAD_CELL} px-3 w-14 text-center`}
+            >
               <span className="sr-only">Actions</span>
             </th>
           </tr>
@@ -83,29 +108,8 @@ const SkeletonTable = () => (
           ))}
         </tbody>
       </table>
-    </div>
   </div>
 );
-
-function statusBadgeClasses(isVerified: boolean, isCallInProgress: boolean) {
-  if (isVerified)
-    return "bg-emerald-50 text-emerald-700 border border-emerald-100";
-  if (isCallInProgress)
-    return "bg-amber-50 text-amber-700 border border-amber-100";
-  return "bg-slate-100 text-slate-700 border border-slate-200";
-}
-
-function statusDotClass(isVerified: boolean, isCallInProgress: boolean) {
-  if (isVerified) return "bg-emerald-500";
-  if (isCallInProgress) return "bg-amber-500";
-  return "bg-slate-500";
-}
-
-function statusLabel(isVerified: boolean, isCallInProgress: boolean) {
-  if (isVerified) return "Verified";
-  if (isCallInProgress) return "In progress";
-  return "Scheduled";
-}
 
 type SortBy =
   | "date_desc"
@@ -227,12 +231,20 @@ export default function PatientTabs() {
         samePayeeCount,
         resolveAppointmentNumericId(appt),
       );
-      if (Boolean(verification)) return 2;
-      if (
-        isAppointmentLive(appt, activeLiveCalls, liveTrackersByPayee)
-      )
-        return 1;
-      return 0;
+      const live = isAppointmentLive(
+        appt,
+        activeLiveCalls,
+        liveTrackersByPayee,
+      );
+      const trackers = payeeKey
+        ? liveTrackersByPayee[payeeKey] ?? []
+        : [];
+      const workflowStatus = resolveAppointmentWorkflowStatus(
+        live,
+        verification,
+        trackers,
+      );
+      return workflowStatusSortRank(workflowStatus);
     };
 
     const list = appointments.filter(matchesSearch);
@@ -244,15 +256,24 @@ export default function PatientTabs() {
 
       switch (sortBy) {
         case "date_desc":
-          return new Date(b.date).getTime() - new Date(a.date).getTime();
+          return (
+            savedAtToMillis(resolveAppointmentSavedAt(b)) -
+            savedAtToMillis(resolveAppointmentSavedAt(a))
+          );
         case "date_asc":
-          return new Date(a.date).getTime() - new Date(b.date).getTime();
+          return (
+            savedAtToMillis(resolveAppointmentSavedAt(a)) -
+            savedAtToMillis(resolveAppointmentSavedAt(b))
+          );
         case "patient_asc": {
           const na = `${a.payee.firstName} ${a.payee.lastName}`.toLowerCase();
           const nb = `${b.payee.firstName} ${b.payee.lastName}`.toLowerCase();
           const c = na.localeCompare(nb);
           if (c !== 0) return c;
-          return new Date(b.date).getTime() - new Date(a.date).getTime();
+          return (
+            savedAtToMillis(resolveAppointmentSavedAt(b)) -
+            savedAtToMillis(resolveAppointmentSavedAt(a))
+          );
         }
         case "provider_asc": {
           const na =
@@ -261,13 +282,19 @@ export default function PatientTabs() {
             `${b.provider.firstName} ${b.provider.lastName}`.toLowerCase();
           const c = na.localeCompare(nb);
           if (c !== 0) return c;
-          return new Date(b.date).getTime() - new Date(a.date).getTime();
+          return (
+            savedAtToMillis(resolveAppointmentSavedAt(b)) -
+            savedAtToMillis(resolveAppointmentSavedAt(a))
+          );
         }
         case "status_asc": {
           const ra = statusRank(a);
           const rb = statusRank(b);
           if (ra !== rb) return ra - rb;
-          return new Date(b.date).getTime() - new Date(a.date).getTime();
+          return (
+            savedAtToMillis(resolveAppointmentSavedAt(b)) -
+            savedAtToMillis(resolveAppointmentSavedAt(a))
+          );
         }
         default:
           return 0;
@@ -344,7 +371,7 @@ export default function PatientTabs() {
         ) : null}
       </div>
       <div className="shrink-0 h-px bg-slate-200 my-4" role="presentation" />
-      <div className="content-wrapper flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 custom-scrollbar">
+      <div className={ADMIN_TABLE_SCROLL}>
         {loading ? (
           <SkeletonTable />
         ) : appointments.length === 0 ? (
@@ -366,27 +393,35 @@ export default function PatientTabs() {
             </p>
           </div>
         ) : (
-          <div className="rounded-xl border border-slate-200 overflow-hidden bg-white shadow-[0_1px_3px_0_rgba(0,0,0,0.06)]">
-            <div className="overflow-x-auto">
+          <div className={ADMIN_TABLE_CARD}>
               <table className="w-full min-w-[640px] text-left text-sm">
                 <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <th scope="col" className="px-4 py-3">
+                  <tr className={ADMIN_TABLE_HEAD_ROW}>
+                    <th scope="col" className={ADMIN_TABLE_HEAD_CELL}>
                       Patient
                     </th>
-                    <th scope="col" className="px-4 py-3">
+                    <th scope="col" className={ADMIN_TABLE_HEAD_CELL}>
                       Provider
                     </th>
-                    <th scope="col" className="px-4 py-3">
+                    <th scope="col" className={ADMIN_TABLE_HEAD_CELL}>
                       Office
                     </th>
-                    <th scope="col" className="px-4 py-3 whitespace-nowrap">
+                    <th
+                      scope="col"
+                      className={`${ADMIN_TABLE_HEAD_CELL} whitespace-nowrap`}
+                    >
                       Date
                     </th>
-                    <th scope="col" className="px-4 py-3 whitespace-nowrap">
+                    <th
+                      scope="col"
+                      className={`${ADMIN_TABLE_HEAD_CELL} whitespace-nowrap`}
+                    >
                       Status
                     </th>
-                    <th scope="col" className="px-3 py-3 w-14 text-center">
+                    <th
+                      scope="col"
+                      className={`${ADMIN_TABLE_HEAD_CELL} px-3 w-14 text-center`}
+                    >
                       <span className="sr-only">Actions</span>
                     </th>
                   </tr>
@@ -407,24 +442,26 @@ export default function PatientTabs() {
                       samePayeeCount,
                       resolveAppointmentNumericId(appt),
                     );
-                    const isVerified = Boolean(verification);
                     const isCallInProgress = isAppointmentLive(
                       appt,
                       activeLiveCalls,
                       liveTrackersByPayee,
+                    );
+                    const payeeTrackers = payeeKey
+                      ? liveTrackersByPayee[payeeKey] ?? []
+                      : [];
+                    const workflowStatus = resolveAppointmentWorkflowStatus(
+                      isCallInProgress,
+                      verification,
+                      payeeTrackers,
                     );
                     const patientName = `${appt.payee.firstName} ${appt.payee.lastName}`;
                     const providerName = `${appt.provider.firstName} ${appt.provider.lastName}`;
                     const officeLine = [appt.office.name, appt.office.city]
                       .filter(Boolean)
                       .join(", ");
-                    const dateStr = new Date(appt.date).toLocaleDateString(
-                      undefined,
-                      {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      },
+                    const dateStr = formatSavedAtDateOnly(
+                      resolveAppointmentSavedAt(appt),
                     );
                     return (
                       <tr
@@ -463,16 +500,16 @@ export default function PatientTabs() {
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           <span
-                            className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${statusBadgeClasses(isVerified, isCallInProgress)}`}
+                            className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${workflowStatusBadgeClasses(workflowStatus)}`}
                           >
                             <span
                               className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                isCallInProgress
+                                workflowStatus === "In progress"
                                   ? "bg-amber-500 animate-pulse"
-                                  : statusDotClass(isVerified, isCallInProgress)
+                                  : workflowStatusDotClass(workflowStatus)
                               }`}
                             />
-                            {statusLabel(isVerified, isCallInProgress)}
+                            {workflowStatus}
                           </span>
                         </td>
                         <td className="px-2 py-2 text-center">
@@ -499,7 +536,6 @@ export default function PatientTabs() {
                   })}
                 </tbody>
               </table>
-            </div>
           </div>
         )}
       </div>
