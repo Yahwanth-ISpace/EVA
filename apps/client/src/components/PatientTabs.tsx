@@ -129,10 +129,6 @@ export default function PatientTabs() {
     (state: RootState) => state.verificationsState,
   );
 
-  const loading = loadingAppointments || loadingVerifications;
-  // const [liveTrackersByPayee, setLiveTrackersByPayee] = useState<
-  //   Record<string, BotTrackerRecord[]>
-  // >({});
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("date_desc");
 
@@ -147,6 +143,17 @@ export default function PatientTabs() {
       ),
     [appointments],
   );
+
+  const { byPayee: liveTrackersByPayee, initialLoading: botTrackersInitialLoading } =
+    useLiveBotTrackersByPayeeIds(payeeIds);
+  const { calls: activeLiveCalls, initialLoading: activeCallsInitialLoading } =
+    useActiveLiveCalls();
+
+  const loading =
+    loadingAppointments ||
+    loadingVerifications ||
+    botTrackersInitialLoading ||
+    activeCallsInitialLoading;
 
   // useEffect(() => {
   //   if (!payeeIds.length) {
@@ -181,9 +188,6 @@ export default function PatientTabs() {
   //     window.clearInterval(timer);
   //   };
   // }, [payeeIds]);
-
-  const liveTrackersByPayee = useLiveBotTrackersByPayeeIds(payeeIds);
-  const activeLiveCalls = useActiveLiveCalls();
 
   const handleOpenDetails = (appt: AppointmentRecord) => {
     const routeId = resolveAppointmentRouteId(appt);

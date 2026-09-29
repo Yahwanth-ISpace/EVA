@@ -16,25 +16,41 @@ function anyCallActive(map: Record<string, BotTrackerRecord[]>): boolean {
 /**
  * Polls bot-tracker lines for a payee. Polls faster while a verification call is active.
  */
+export type LiveBotTrackersResult = {
+  records: BotTrackerRecord[];
+  /** False after the first fetch attempt for the current payeeId completes. */
+  initialLoading: boolean;
+};
+
 export function useLiveBotTrackers(
   payeeId: string | undefined,
   options?: { activeIntervalMs?: number; idleIntervalMs?: number },
-): BotTrackerRecord[] {
+): LiveBotTrackersResult {
   const [records, setRecords] = useState<BotTrackerRecord[]>([]);
+  const [initialLoading, setInitialLoading] = useState(() => Boolean(payeeId));
   const activeMs = options?.activeIntervalMs ?? DEFAULT_ACTIVE_MS;
   const idleMs = options?.idleIntervalMs ?? DEFAULT_IDLE_MS;
 
   useEffect(() => {
     if (!payeeId) {
       setRecords([]);
+      setInitialLoading(false);
       return;
     }
 
+    setInitialLoading(true);
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let firstFetch = true;
 
     const schedule = (delayMs: number, fn: () => void) => {
       timer = setTimeout(fn, delayMs);
+    };
+
+    const finishInitialLoad = () => {
+      if (!firstFetch) return;
+      firstFetch = false;
+      setInitialLoading(false);
     };
 
     const tick = async () => {
@@ -44,11 +60,13 @@ export function useLiveBotTrackers(
         );
         if (cancelled) return;
         setRecords(data);
+        finishInitialLoad();
         const delay = isCallActiveFromTrackers(data) ? activeMs : idleMs;
         schedule(delay, tick);
       } catch {
         if (cancelled) return;
         setRecords([]);
+        finishInitialLoad();
         schedule(idleMs, tick);
       }
     };
@@ -61,14 +79,20 @@ export function useLiveBotTrackers(
     };
   }, [payeeId, activeMs, idleMs]);
 
-  return records;
+  return { records, initialLoading };
 }
 
 /** Polls bot-tracker lines for many payees (e.g. dashboard list). */
+export type LiveBotTrackersByPayeeResult = {
+  byPayee: Record<string, BotTrackerRecord[]>;
+  /** False after the first fetch attempt for the current payee id set completes. */
+  initialLoading: boolean;
+};
+
 export function useLiveBotTrackersByPayeeIds(
   payeeIds: string[],
   options?: { activeIntervalMs?: number; idleIntervalMs?: number },
-): Record<string, BotTrackerRecord[]> {
+): LiveBotTrackersByPayeeResult {
   const sortedKey = useMemo(
     () => [...payeeIds].filter(Boolean).sort().join("\0"),
     [payeeIds],
@@ -81,20 +105,30 @@ export function useLiveBotTrackersByPayeeIds(
   const [byPayee, setByPayee] = useState<Record<string, BotTrackerRecord[]>>(
     {},
   );
+  const [initialLoading, setInitialLoading] = useState(() => ids.length > 0);
   const activeMs = options?.activeIntervalMs ?? DEFAULT_ACTIVE_MS;
   const idleMs = options?.idleIntervalMs ?? DEFAULT_IDLE_MS;
 
   useEffect(() => {
     if (!ids.length) {
       setByPayee({});
+      setInitialLoading(false);
       return;
     }
 
+    setInitialLoading(true);
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let firstFetch = true;
 
     const schedule = (delayMs: number, fn: () => void) => {
       timer = setTimeout(fn, delayMs);
+    };
+
+    const finishInitialLoad = () => {
+      if (!firstFetch) return;
+      firstFetch = false;
+      setInitialLoading(false);
     };
 
     const tick = async () => {
@@ -111,10 +145,12 @@ export function useLiveBotTrackersByPayeeIds(
         const next: Record<string, BotTrackerRecord[]> = {};
         for (const [payeeId, logs] of pairs) next[payeeId] = logs;
         setByPayee(next);
+        finishInitialLoad();
         const delay = anyCallActive(next) ? activeMs : idleMs;
         schedule(delay, tick);
       } catch {
         if (cancelled) return;
+        finishInitialLoad();
         schedule(idleMs, tick);
       }
     };
@@ -127,18 +163,32 @@ export function useLiveBotTrackersByPayeeIds(
     };
   }, [ids, activeMs, idleMs]);
 
-  return byPayee;
+  return { byPayee, initialLoading };
 }
 
 /** In-memory active EVA calls from the media-stream handler (authoritative for per-appointment live state). */
+export type ActiveLiveCallsResult = {
+  calls: ActiveLiveCall[];
+  /** False after the first poll attempt completes. */
+  initialLoading: boolean;
+};
+
 export function useActiveLiveCalls(
   pollMs = 2000,
-): ActiveLiveCall[] {
+): ActiveLiveCallsResult {
   const [calls, setCalls] = useState<ActiveLiveCall[]>([]);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let firstFetch = true;
+
+    const finishInitialLoad = () => {
+      if (!firstFetch) return;
+      firstFetch = false;
+      setInitialLoading(false);
+    };
 
     const tick = async () => {
       try {
@@ -147,9 +197,11 @@ export function useActiveLiveCalls(
       } catch {
         if (!cancelled) setCalls([]);
       }
+      if (!cancelled) finishInitialLoad();
       if (!cancelled) timer = setTimeout(tick, pollMs);
     };
 
+    setInitialLoading(true);
     tick();
     return () => {
       cancelled = true;
@@ -157,5 +209,5 @@ export function useActiveLiveCalls(
     };
   }, [pollMs]);
 
-  return calls;
+  return { calls, initialLoading };
 }

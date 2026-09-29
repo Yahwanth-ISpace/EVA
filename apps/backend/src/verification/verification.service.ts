@@ -1079,6 +1079,102 @@ export class VerificationService {
   }
 
   /**
+   * Persist edited extraction values and POST eligibility payload to Sabrina SaveEligibility.
+   */
+  async saveEligibilityToSabrina(
+    payeeId: string,
+    appointmentId: string | null | undefined,
+    extracted: Record<string, string | null | undefined>,
+    transcriptToAppend?: string | null,
+  ): Promise<{
+    saved: boolean;
+    sabrinaResponse: unknown;
+  }> {
+    if (!payeeId?.trim()) {
+      throw new BadRequestException('payeeId is required');
+    }
+
+    const apptId = appointmentId?.trim() || null;
+
+    await this.mergeExtractedData(
+      payeeId,
+      extracted,
+      transcriptToAppend ?? undefined,
+      null,
+      apptId,
+    );
+
+    const appointment = await this.mongoService.findAppointmentDocument(
+      payeeId,
+      apptId,
+    );
+    if (!appointment) {
+      throw new NotFoundException(
+        'Appointment not found for this patient and visit',
+      );
+    }
+
+    const sabrinaData = await this.mongoService.getSubrinaAppointments(
+      payeeId,
+      apptId ?? '',
+    );
+
+    const steps = this.verificationStepsFromAppointmentDoc(
+      appointment as Record<string, unknown>,
+    );
+    const verificationFields = steps.map((step) => ({
+      question: step.question,
+      field: step.field,
+      answer: extracted[step.field] ?? null,
+      value: extracted[step.field] ?? null,
+    }));
+
+    if (sabrinaData) {
+      this.mapSubrinaAnswers(verificationFields, sabrinaData);
+      (sabrinaData as Record<string, unknown>).status =
+        this.computeSabrinaResponseStatus(
+          sabrinaData as Record<string, any>,
+          transcriptToAppend ?? '',
+        );
+      await this.mongoService.saveSubrinaDebugData(
+        payeeId,
+        apptId,
+        sabrinaData,
+      );
+    }
+
+    const payload = this.buildEligibilityPayload(appointment, extracted);
+    const sabrinaApiUrl =
+      process.env.SABRINA_API_URL || 'https://sabrinauatapi.ispace.com/api';
+    const headers = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'Ocp-Apim-Subscription-Key': process.env.SABRINA_SUBSCRIPTION_KEY,
+    };
+
+    this.logger.log(
+      `SaveEligibility payload for payee ${payeeId}: ${JSON.stringify(payload, null, 2)}`,
+    );
+
+    const response = await firstValueFrom(
+      this.httpService.post(
+        `${sabrinaApiUrl}/appointments/SaveEligibility`,
+        payload,
+        { headers },
+      ),
+    );
+
+    this.logger.log(
+      `SaveEligibility response: ${JSON.stringify(response?.data ?? response, null, 2)}`,
+    );
+
+    return {
+      saved: true,
+      sabrinaResponse: response?.data ?? null,
+    };
+  }
+
+  /**
    * Parse a transcript and extract verification fields based on EVA's questions.
    * Uses Gemini AI to match fields mentioned in questions to the transcript,
    * then returns a structured JSON with extracted values.

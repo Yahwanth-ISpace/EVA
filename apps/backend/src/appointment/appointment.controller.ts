@@ -19,6 +19,7 @@ import { AppointmentService } from './appointment.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwtAuthGuard';
 import { AppointmentDetailsDto } from './dto/appointment-details.dto';
+import { SaveEligibilityDto } from './dto/save-eligibility.dto';
 import { TwilioService } from 'src/twilio/twilio.service';
 import { AgentStatus } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -109,5 +110,24 @@ export class AppointmentController {
   @ApiParam({ name: 'id', example: 'appointment-uuid-here' })
   findOne(@Param('id') id: string, @Req() req) {
     return this.appointmentService.findOne(id, req.user);
+  }
+
+  @Post(':id/save-eligibility')
+  @ApiOperation({
+    summary: 'Save eligibility to Sabrina',
+    description:
+      'Updates local verification extraction and posts the eligibility payload to Sabrina SaveEligibility.',
+  })
+  @ApiParam({ name: 'id', example: 'appointment-uuid-or-mongo-id' })
+  saveEligibility(
+    @Param('id') id: string,
+    @Body() body: SaveEligibilityDto,
+    @Req() req,
+  ) {
+    return this.appointmentService.saveEligibilityToSabrina(
+      id,
+      req.user,
+      body.extractedData ?? {},
+    );
   }
 }

@@ -12,6 +12,7 @@ import { AppointmentDetailsDto } from './dto/appointment-details.dto';
 import { MongoService } from 'src/mongo/mongo.service';
 import { AgentDto } from 'src/schedular/dto/agent.dto';
 import { mapMongoAppointmentToClient } from './appointment.mapper';
+import { VerificationService } from 'src/verification/verification.service';
 
 @Injectable()
 export class AppointmentService {
@@ -21,6 +22,7 @@ export class AppointmentService {
     private readonly prisma: PrismaService,
     private readonly twilioService: TwilioService,
     private readonly mongoService: MongoService,
+    private readonly verificationService: VerificationService,
   ) {}
 
   async create(appointment: AppointmentDetailsDto, agentId: string) {
@@ -172,6 +174,36 @@ export class AppointmentService {
 
     return mapMongoAppointmentToClient(doc as Record<string, unknown>);
   }
+
+  async saveEligibilityToSabrina(
+    id: string,
+    user: { userId: string; role: 'ADMIN' | 'OPERATOR' },
+    extractedData: Record<string, string | null | undefined>,
+  ) {
+    const appt = await this.findOne(id, user);
+    const record = appt as Record<string, unknown>;
+    const payeeId = String(
+      record.payeeId ?? (record.patient as { patientId?: string })?.patientId ?? '',
+    ).trim();
+    if (!payeeId) {
+      throw new BadRequestException('Patient id missing on appointment');
+    }
+    const appointmentId =
+      record.appointmentId != null ? String(record.appointmentId) : undefined;
+    const transcript =
+      typeof (record.eva as { transcript?: string } | undefined)?.transcript ===
+      'string'
+        ? (record.eva as { transcript: string }).transcript
+        : undefined;
+
+    return this.verificationService.saveEligibilityToSabrina(
+      payeeId,
+      appointmentId,
+      extractedData,
+      transcript,
+    );
+  }
+
   async updateEvaVerification(
     patientId: string,
     appointmentId: string,
