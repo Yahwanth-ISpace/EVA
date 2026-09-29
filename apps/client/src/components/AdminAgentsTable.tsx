@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
+import { FaTrashAlt } from "react-icons/fa";
 import { useDispatch, useSelector } from "react-redux";
 
 import {
   createAgent,
+  deleteAgent,
   getAgents,
   updateAgent,
 } from "../redux/actions/agentActions";
@@ -33,6 +35,7 @@ const emptyNewAgent = {
 };
 
 type RowDraft = {
+  name: string;
   twilioPhoneNumber: string;
   twilioPhoneNumberExt: string;
   status: AgentStatus;
@@ -40,6 +43,7 @@ type RowDraft = {
 
 function draftFromAgent(agent: AgentRecord): RowDraft {
   return {
+    name: agent.name,
     twilioPhoneNumber: agent.twilioPhoneNumber,
     twilioPhoneNumberExt: agent.twilioPhoneNumberExt,
     status: agent.status,
@@ -48,6 +52,7 @@ function draftFromAgent(agent: AgentRecord): RowDraft {
 
 function draftsEqual(a: RowDraft, b: RowDraft) {
   return (
+    a.name === b.name &&
     a.twilioPhoneNumber === b.twilioPhoneNumber &&
     a.twilioPhoneNumberExt === b.twilioPhoneNumberExt &&
     a.status === b.status
@@ -56,6 +61,9 @@ function draftsEqual(a: RowDraft, b: RowDraft) {
 
 const inputClass =
   "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
+
+const actionBtnClass =
+  "rounded-lg px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40";
 
 export default function AdminAgentsTable() {
   const dispatch = useDispatch<AppDispatch>();
@@ -66,13 +74,20 @@ export default function AdminAgentsTable() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [newAgent, setNewAgent] = useState(emptyNewAgent);
   const [formError, setFormError] = useState<string | null>(null);
-  const [rowDrafts, setRowDrafts] = useState<Record<string, RowDraft>>({});
-  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<RowDraft | null>(null);
+  const [rowError, setRowError] = useState<string | null>(null);
 
   const closeCreateModal = () => {
     setCreateModalOpen(false);
     setNewAgent(emptyNewAgent);
     setFormError(null);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditDraft(null);
+    setRowError(null);
   };
 
   useEffect(() => {
@@ -89,21 +104,14 @@ export default function AdminAgentsTable() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [createModalOpen]);
 
-  useEffect(() => {
-    setRowDrafts((prev) => {
-      const next = { ...prev };
-      for (const agent of agents) {
-        if (!next[agent.id]) {
-          next[agent.id] = draftFromAgent(agent);
-        }
-      }
-      return next;
-    });
-  }, [agents]);
-
   const sortedAgents = useMemo(
     () => [...agents].sort((a, b) => a.name.localeCompare(b.name)),
     [agents],
+  );
+
+  const editingAgent = useMemo(
+    () => sortedAgents.find((a) => a.id === editingId) ?? null,
+    [sortedAgents, editingId],
   );
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -133,45 +141,62 @@ export default function AdminAgentsTable() {
     }
   };
 
-  const updateDraft = (id: string, patch: Partial<RowDraft>) => {
-    setRowDrafts((prev) => ({
-      ...prev,
-      [id]: { ...prev[id], ...patch },
-    }));
-    setRowErrors((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
+  const startEdit = (agent: AgentRecord) => {
+    setEditingId(agent.id);
+    setEditDraft(draftFromAgent(agent));
+    setRowError(null);
   };
 
-  const handleSaveRow = async (agent: AgentRecord) => {
-    const draft = rowDrafts[agent.id];
-    if (!draft || draftsEqual(draft, draftFromAgent(agent))) return;
+  const handleSaveEdit = async (agent: AgentRecord) => {
+    if (!editDraft) return;
 
-    if (!draft.twilioPhoneNumber.trim()) {
-      setRowErrors((prev) => ({
-        ...prev,
-        [agent.id]: "Phone number is required.",
-      }));
+    if (!editDraft.name.trim() || !editDraft.twilioPhoneNumber.trim()) {
+      setRowError("Name and phone number are required.");
+      return;
+    }
+
+    if (draftsEqual(editDraft, draftFromAgent(agent))) {
+      cancelEdit();
       return;
     }
 
     try {
       await dispatch(
         updateAgent(agent.id, {
-          twilioPhoneNumber: draft.twilioPhoneNumber.trim(),
-          twilioPhoneNumberExt: draft.twilioPhoneNumberExt.trim() || "+1",
-          status: draft.status,
+          name: editDraft.name.trim(),
+          twilioPhoneNumber: editDraft.twilioPhoneNumber.trim(),
+          twilioPhoneNumberExt: editDraft.twilioPhoneNumberExt.trim() || "+1",
+          status: editDraft.status,
         }),
       );
+      cancelEdit();
     } catch (err: unknown) {
-      setRowErrors((prev) => ({
-        ...prev,
-        [agent.id]:
-          err instanceof Error ? err.message : "Could not save changes.",
-      }));
+      setRowError(
+        err instanceof Error ? err.message : "Could not save changes.",
+      );
     }
+  };
+
+  const handleDelete = async (agent: AgentRecord) => {
+    if (editingId === agent.id) cancelEdit();
+
+    const confirmed = window.confirm(
+      `Delete agent "${agent.name}"? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    try {
+      await dispatch(deleteAgent(agent.id));
+    } catch (err: unknown) {
+      setRowError(
+        err instanceof Error ? err.message : "Could not delete agent.",
+      );
+    }
+  };
+
+  const patchEditDraft = (patch: Partial<RowDraft>) => {
+    setEditDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+    setRowError(null);
   };
 
   return (
@@ -192,7 +217,7 @@ export default function AdminAgentsTable() {
         </button>
       </div>
 
-      {error && !createModalOpen && (
+      {error && !createModalOpen && !editingId && (
         <p className="px-1 text-sm text-red-600">{error}</p>
       )}
 
@@ -250,21 +275,6 @@ export default function AdminAgentsTable() {
               </label>
 
               <label className="flex flex-col gap-1.5 text-xs font-medium text-slate-600">
-                Phone number
-                <input
-                  className={inputClass}
-                  value={newAgent.twilioPhoneNumber}
-                  onChange={(e) =>
-                    setNewAgent((prev) => ({
-                      ...prev,
-                      twilioPhoneNumber: e.target.value,
-                    }))
-                  }
-                  placeholder="+15551234567"
-                />
-              </label>
-
-              <label className="flex flex-col gap-1.5 text-xs font-medium text-slate-600">
                 Extension
                 <input
                   className={inputClass}
@@ -276,6 +286,21 @@ export default function AdminAgentsTable() {
                     }))
                   }
                   placeholder="+1"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1.5 text-xs font-medium text-slate-600">
+                Phone number
+                <input
+                  className={inputClass}
+                  value={newAgent.twilioPhoneNumber}
+                  onChange={(e) =>
+                    setNewAgent((prev) => ({
+                      ...prev,
+                      twilioPhoneNumber: e.target.value,
+                    }))
+                  }
+                  placeholder="+15551234567"
                 />
               </label>
 
@@ -331,8 +356,8 @@ export default function AdminAgentsTable() {
             <thead>
               <tr className={ADMIN_TABLE_HEAD_ROW}>
                 <th className={ADMIN_TABLE_HEAD_CELL}>Name</th>
-                <th className={ADMIN_TABLE_HEAD_CELL}>Phone</th>
                 <th className={ADMIN_TABLE_HEAD_CELL}>Extension</th>
+                <th className={ADMIN_TABLE_HEAD_CELL}>Phone</th>
                 <th className={ADMIN_TABLE_HEAD_CELL}>Status</th>
                 <th className={ADMIN_TABLE_HEAD_CELL}>Actions</th>
               </tr>
@@ -360,74 +385,136 @@ export default function AdminAgentsTable() {
 
               {!loading &&
                 sortedAgents.map((agent) => {
-                  const draft = rowDrafts[agent.id] ?? draftFromAgent(agent);
-                  const dirty = !draftsEqual(draft, draftFromAgent(agent));
+                  const isEditing = editingId === agent.id;
+                  const draft = isEditing ? editDraft : null;
 
                   return (
                     <tr key={agent.id} className="hover:bg-slate-50/80">
-                      <td className="px-4 py-3 font-medium text-slate-800">
-                        {agent.name}
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          className={inputClass}
-                          value={draft.twilioPhoneNumber}
-                          onChange={(e) =>
-                            updateDraft(agent.id, {
-                              twilioPhoneNumber: e.target.value,
-                            })
-                          }
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          className={`${inputClass} max-w-[8rem]`}
-                          value={draft.twilioPhoneNumberExt}
-                          onChange={(e) =>
-                            updateDraft(agent.id, {
-                              twilioPhoneNumberExt: e.target.value,
-                            })
-                          }
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <select
-                          className={inputClass}
-                          value={draft.status}
-                          onChange={(e) =>
-                            updateDraft(agent.id, {
-                              status: e.target.value as AgentStatus,
-                            })
-                          }
-                        >
-                          {AGENT_STATUSES.map((status) => (
-                            <option key={status} value={status}>
-                              {STATUS_LABEL[status]}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          disabled={!dirty || saving}
-                          onClick={() => handleSaveRow(agent)}
-                          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-blue-300 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Save
-                        </button>
-                        {rowErrors[agent.id] && (
-                          <p className="mt-1 text-xs text-red-600">
-                            {rowErrors[agent.id]}
-                          </p>
-                        )}
-                      </td>
-                    </tr>
+                        <td className="px-4 py-3">
+                          {isEditing && draft ? (
+                            <input
+                              className={inputClass}
+                              value={draft.name}
+                              onChange={(e) =>
+                                patchEditDraft({ name: e.target.value })
+                              }
+                            />
+                          ) : (
+                            <span className="font-medium text-slate-800">
+                              {agent.name}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {isEditing && draft ? (
+                            <input
+                              className={`${inputClass} max-w-[8rem]`}
+                              value={draft.twilioPhoneNumberExt}
+                              onChange={(e) =>
+                                patchEditDraft({
+                                  twilioPhoneNumberExt: e.target.value,
+                                })
+                              }
+                            />
+                          ) : (
+                            agent.twilioPhoneNumberExt
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {isEditing && draft ? (
+                            <input
+                              className={inputClass}
+                              value={draft.twilioPhoneNumber}
+                              onChange={(e) =>
+                                patchEditDraft({
+                                  twilioPhoneNumber: e.target.value,
+                                })
+                              }
+                            />
+                          ) : (
+                            agent.twilioPhoneNumber
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {isEditing && draft ? (
+                            <select
+                              className={inputClass}
+                              value={draft.status}
+                              onChange={(e) =>
+                                patchEditDraft({
+                                  status: e.target.value as AgentStatus,
+                                })
+                              }
+                            >
+                              {AGENT_STATUSES.map((status) => (
+                                <option key={status} value={status}>
+                                  {STATUS_LABEL[status]}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            STATUS_LABEL[agent.status]
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {!isEditing && (
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={!!editingId || saving}
+                                onClick={() => startEdit(agent)}
+                                className={`${actionBtnClass} border border-slate-200 bg-white text-slate-700 hover:border-blue-300 hover:text-blue-700`}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!!editingId || saving}
+                                onClick={() => handleDelete(agent)}
+                                className="inline-flex rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-200 disabled:cursor-not-allowed disabled:opacity-40"
+                                aria-label={`Delete ${agent.name}`}
+                              >
+                                <FaTrashAlt className="h-4 w-4" />
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
                   );
                 })}
             </tbody>
           </table>
         </div>
+
+        {editingAgent && editDraft && (
+          <div className="flex shrink-0 flex-col gap-3 border-t border-slate-200 bg-slate-50/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            {rowError ? (
+              <p className="text-sm text-red-600">{rowError}</p>
+            ) : (
+              <p className="text-xs text-slate-500">
+                Editing {editingAgent.name}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={cancelEdit}
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => handleSaveEdit(editingAgent)}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

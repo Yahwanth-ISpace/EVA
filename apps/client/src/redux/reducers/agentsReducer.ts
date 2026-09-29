@@ -35,6 +35,7 @@ export function agentsReducer(
 
     case AgentTypes.CREATE_AGENT_REQUEST:
     case AgentTypes.UPDATE_AGENT_REQUEST:
+    case AgentTypes.DELETE_AGENT_REQUEST:
       return { ...state, saving: true, error: null };
 
     case AgentTypes.CREATE_AGENT_SUCCESS:
@@ -57,8 +58,18 @@ export function agentsReducer(
       };
     }
 
+    case AgentTypes.DELETE_AGENT_SUCCESS:
+      return {
+        ...state,
+        saving: false,
+        agents: state.agents.filter(
+          (agent) => agent.id !== (action.payload as string),
+        ),
+      };
+
     case AgentTypes.CREATE_AGENT_FAILURE:
     case AgentTypes.UPDATE_AGENT_FAILURE:
+    case AgentTypes.DELETE_AGENT_FAILURE:
       return {
         ...state,
         saving: false,

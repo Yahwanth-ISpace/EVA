@@ -83,4 +83,9 @@ export class AgentService {
       throw err;
     }
   }
+
+  async remove(id: string): Promise<void> {
+    await this.findOne(id);
+    await this.prisma.agent.delete({ where: { id } });
+  }
 }

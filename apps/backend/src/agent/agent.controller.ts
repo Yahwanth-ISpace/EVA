@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Put,
@@ -57,5 +60,14 @@ export class AgentController {
   @ApiParam({ name: 'id', example: 'agent-uuid-here' })
   update(@Param('id') id: string, @Body() dto: UpdateAgentDto) {
     return this.agentService.update(id, dto);
+  }
+
+  @Delete(':id')
+  @Roles('ADMIN')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete agent (ADMIN only)' })
+  @ApiParam({ name: 'id', example: 'agent-uuid-here' })
+  async remove(@Param('id') id: string): Promise<void> {
+    await this.agentService.remove(id);
   }
 }
