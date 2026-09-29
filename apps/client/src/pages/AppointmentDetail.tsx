@@ -38,44 +38,17 @@ import {
   workflowStatusBadgeClasses,
   workflowStatusDotClass,
 } from "../utils/appointmentWorkflowStatus";
+import { getVerificationForAppointment } from "../utils/verificationDisplay";
 import {
-  getVerificationFieldRows,
-  getVerificationForAppointment,
-} from "../utils/verificationDisplay";
+  applyDraftToCallExtractionRows,
+  callExtractionRowsToDraft,
+  countFilledCallExtractions,
+  getApplicationDetailSections,
+  getCallExtractionRows,
+  type CallExtractionRow,
+  type DetailFieldRow,
+} from "../utils/appointmentDetailDisplay";
 import { getVerifications } from "../redux/actions/verificationActions";
-
-const STATIC_FIELDS = [
-  { label: "Family Deductible", value: "$20" },
-  { label: "History", value: "3" },
-  { label: "Frequency", value: "3" },
-  { label: "Code", value: "D1029" },
-  { label: "Major", value: "80%" },
-  { label: "Minor", value: "10%" },
-  { label: "Group ID", value: "M01298" },
-];
-
-function formatAppointmentWhen(iso: string | undefined): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      weekday: "short",
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
-
-function providerDisplayName(p: AppointmentRecord["provider"]): string {
-  if (!p) return "—";
-  const n = [p.firstName, p.lastName].filter(Boolean).join(" ").trim();
-  if (n) return n;
-  return p.name?.trim() || "—";
-}
 
 function maskSsn(ssn: string | undefined | null): string {
   if (!ssn?.trim()) return "—";
@@ -103,6 +76,120 @@ function sectionHeading(title: string, subtitle: string): ReactNode {
         </h2>
         <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
       </div>
+    </div>
+  );
+}
+
+function DetailFieldGrid({
+  fields,
+  fieldClass,
+  columns = "sm:grid-cols-2 lg:grid-cols-3",
+}: {
+  fields: DetailFieldRow[];
+  fieldClass: string;
+  columns?: string;
+}) {
+  return (
+    <div className={`grid gap-4 ${columns}`}>
+      {fields.map((row) => (
+        <div key={row.key}>
+          <label
+            className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5"
+            title={row.hint}
+          >
+            {row.label}
+          </label>
+          <p className={fieldClass} title={row.hint}>
+            {row.value}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CallExtractionField({
+  row,
+  fieldClass,
+  editing,
+  onValueChange,
+}: {
+  row: CallExtractionRow;
+  fieldClass: string;
+  editing?: boolean;
+  onValueChange?: (fieldKey: string, value: string) => void;
+}) {
+  const title = [row.fieldKey, row.questionHint].filter(Boolean).join(" · ");
+  const filled = row.extractedValue.trim() !== "";
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-2 mb-1.5">
+        <label
+          className="block text-xs font-semibold text-slate-500 uppercase tracking-wide min-w-0"
+          title={title}
+          htmlFor={editing ? `extract-${row.fieldKey}` : undefined}
+        >
+          {row.label}
+        </label>
+        {!editing ? (
+          <span
+            className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${
+              filled
+                ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/80"
+                : "bg-slate-100 text-slate-500 ring-1 ring-slate-200/80"
+            }`}
+          >
+            {filled ? "Captured" : "Pending"}
+          </span>
+        ) : null}
+      </div>
+      {editing ? (
+        <input
+          id={`extract-${row.fieldKey}`}
+          type="text"
+          value={row.extractedValue}
+          onChange={(e) => onValueChange?.(row.fieldKey, e.target.value)}
+          className={`${fieldClass} focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100`}
+          placeholder="—"
+          title={title}
+        />
+      ) : (
+        <p
+          className={`${fieldClass} ${
+            filled ? "border-emerald-200/90 bg-emerald-50/30" : ""
+          }`}
+          title={title}
+        >
+          {row.extractedValue || "—"}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CallExtractionFieldGrid({
+  rows,
+  fieldClass,
+  editing,
+  onValueChange,
+}: {
+  rows: CallExtractionRow[];
+  fieldClass: string;
+  editing?: boolean;
+  onValueChange?: (fieldKey: string, value: string) => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      {rows.map((row) => (
+        <CallExtractionField
+          key={row.fieldKey}
+          row={row}
+          fieldClass={fieldClass}
+          editing={editing}
+          onValueChange={onValueChange}
+        />
+      ))}
     </div>
   );
 }
@@ -180,28 +267,13 @@ function AppointmentDetailLoadingShell({
 
                 <section className="p-6 sm:p-8 border-b border-slate-100">
                   {sectionHeading(
-                    "Insurance verification",
-                    "Benefits confirmed on the call—what applies to this claim.",
+                    "Call extraction",
+                    "Values captured on the verification call—mapped to application field keys.",
                   )}
                   <div className="grid gap-4 sm:grid-cols-2">
                     {Array.from({ length: 4 }, (_, i) => (
                       <div key={i}>
                         <SkeletonBar className="h-3 w-28 mb-2" />
-                        <SkeletonBar className="h-10 w-full rounded-lg" />
-                      </div>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="p-6 sm:p-8 pb-10 bg-white">
-                  {sectionHeading(
-                    "Benefit summary",
-                    "Plan-level limits and codes—use alongside verified coverage above.",
-                  )}
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {Array.from({ length: 6 }, (_, i) => (
-                      <div key={i}>
-                        <SkeletonBar className="h-3 w-24 mb-2" />
                         <SkeletonBar className="h-10 w-full rounded-lg" />
                       </div>
                     ))}
@@ -271,7 +343,7 @@ export default function AppointmentDetail() {
   const { appointments } = useSelector(
     (state: RootState) => state.appointmentsState,
   );
-  const { verifications } = useSelector(
+  const { verifications, loading: loadingVerifications } = useSelector(
     (state: RootState) => state.verificationsState,
   );
 
@@ -354,12 +426,24 @@ export default function AppointmentDetail() {
         resolveAppointmentNumericId(appointment),
       )
     : undefined;
-  const liveLogs = useLiveBotTrackers(appointmentPayeeId);
+  const { records: liveLogs, initialLoading: liveLogsInitialLoading } =
+    useLiveBotTrackers(appointmentPayeeId);
   const [callLogTab, setCallLogTab] = useState<"live" | "transcript">("live");
   const [endCallLoading, setEndCallLoading] = useState(false);
   const [holdLoading, setHoldLoading] = useState(false);
   const [bargeInLoading, setBargeInLoading] = useState(false);
   const [bargeInError, setBargeInError] = useState<string | null>(null);
+  const [extractionEditing, setExtractionEditing] = useState(false);
+  const [extractionDraft, setExtractionDraft] = useState<
+    Record<string, string>
+  >({});
+  const [saveEligibilityLoading, setSaveEligibilityLoading] = useState(false);
+  const [saveEligibilityError, setSaveEligibilityError] = useState<
+    string | null
+  >(null);
+  const [saveEligibilitySuccess, setSaveEligibilitySuccess] = useState<
+    string | null
+  >(null);
   const [supervisorPhone, setSupervisorPhone] = useState(() => {
     if (typeof window === "undefined") return "";
     return (
@@ -402,10 +486,90 @@ export default function AppointmentDetail() {
     transcriptFromTrackers;
   const hasTranscript = Boolean(transcriptText?.trim());
 
-  const verificationFieldRows = useMemo(
-    () => getVerificationFieldRows(verification),
-    [verification],
+  const applicationDetailSections = useMemo(
+    () => (appointment ? getApplicationDetailSections(appointment) : []),
+    [appointment],
   );
+
+  const callExtractionRows = useMemo(
+    () =>
+      appointment ? getCallExtractionRows(appointment, verification) : [],
+    [appointment, verification],
+  );
+
+  const displayExtractionRows = useMemo(() => {
+    if (!extractionEditing) return callExtractionRows;
+    return applyDraftToCallExtractionRows(callExtractionRows, extractionDraft);
+  }, [callExtractionRows, extractionDraft, extractionEditing]);
+
+  const callExtractionCounts = useMemo(
+    () => countFilledCallExtractions(displayExtractionRows),
+    [displayExtractionRows],
+  );
+
+  const displayExtractionGroups = useMemo(() => {
+    const mandatory = displayExtractionRows.filter(
+      (r) => r.category === "mandatory",
+    );
+    const benefit = displayExtractionRows.filter((r) => r.category === "benefit");
+    const history = displayExtractionRows.filter((r) => r.category === "history");
+    return { mandatory, benefit, history };
+  }, [displayExtractionRows]);
+
+  useEffect(() => {
+    setExtractionEditing(false);
+    setExtractionDraft({});
+    setSaveEligibilityError(null);
+    setSaveEligibilitySuccess(null);
+  }, [id]);
+
+  const handleStartExtractionEdit = useCallback(() => {
+    setExtractionDraft(callExtractionRowsToDraft(callExtractionRows));
+    setExtractionEditing(true);
+    setSaveEligibilityError(null);
+    setSaveEligibilitySuccess(null);
+  }, [callExtractionRows]);
+
+  const handleCancelExtractionEdit = useCallback(() => {
+    setExtractionEditing(false);
+    setExtractionDraft({});
+    setSaveEligibilityError(null);
+  }, []);
+
+  const handleExtractionFieldChange = useCallback(
+    (fieldKey: string, value: string) => {
+      setExtractionDraft((prev) => ({ ...prev, [fieldKey]: value }));
+    },
+    [],
+  );
+
+  const handleSubmitEligibility = useCallback(async () => {
+    if (!id) return;
+    setSaveEligibilityLoading(true);
+    setSaveEligibilityError(null);
+    setSaveEligibilitySuccess(null);
+    try {
+      const extractedData: Record<string, string | null> = {};
+      for (const [key, value] of Object.entries(extractionDraft)) {
+        const trimmed = value.trim();
+        extractedData[key] = trimmed === "" ? null : trimmed;
+      }
+      await api.post<{ saved: boolean }>(
+        `/appointments/${id}/save-eligibility`,
+        { extractedData },
+      );
+      setSaveEligibilitySuccess("Eligibility saved to Sabrina successfully.");
+      setExtractionEditing(false);
+      setExtractionDraft({});
+      dispatch(getVerifications());
+    } catch (err) {
+      setSaveEligibilityError(
+        err instanceof Error ? err.message : "Failed to save eligibility",
+      );
+    } finally {
+      setSaveEligibilityLoading(false);
+    }
+  }, [dispatch, extractionDraft, id]);
 
   const onLiveScroll = useCallback(() => {
     const el = liveScrollRef.current;
@@ -588,7 +752,11 @@ export default function AppointmentDetail() {
     );
   }
 
-  if (loadingAppointment) {
+  const loadingWorkflowContext =
+    loadingVerifications ||
+    (appointmentPayeeId ? liveLogsInitialLoading : false);
+
+  if (loadingAppointment || (appointment && loadingWorkflowContext)) {
     return <AppointmentDetailLoadingShell navigate={navigate} />;
   }
 
@@ -614,24 +782,6 @@ export default function AppointmentDetail() {
   }
 
   const payee = appointment.payee;
-  const office = appointment.office;
-  const provider = appointment.provider;
-  const dobFormatted = payee.dob
-    ? new Date(payee.dob).toLocaleDateString(undefined, {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      })
-    : "—";
-  const officeAddressLine = office
-    ? [
-        office.address,
-        [office.city, office.state].filter(Boolean).join(", "),
-        office.zip,
-      ]
-        .filter(Boolean)
-        .join(", ")
-    : "—";
   const applicationWorkflowStatus = resolveAppointmentWorkflowStatus(
     isCallInProgress,
     verification,
@@ -643,6 +793,17 @@ export default function AppointmentDetail() {
 
   const fieldClass =
     "w-full rounded-lg border border-slate-200/90 bg-white px-3.5 py-2.5 text-slate-900 text-sm shadow-sm read-only:cursor-default focus:ring-0 focus:border-indigo-200";
+
+  const patientSection = applicationDetailSections.find((s) => s.id === "patient");
+  const otherApplicationSections = applicationDetailSections.filter(
+    (s) => s.id !== "patient",
+  );
+  const {
+    mandatory: mandatoryExtractionRows,
+    benefit: benefitExtractionRows,
+    history: historyExtractionRows,
+  } = displayExtractionGroups;
+  const hasExtractionFields = callExtractionRows.length > 0;
 
   return (
     <div className="flex flex-col h-screen max-h-screen bg-gradient-to-b from-slate-50 to-slate-100/80 overflow-hidden pt-5">
@@ -673,224 +834,189 @@ export default function AppointmentDetail() {
           <div className="flex-1 min-h-0 pr-1 overflow-hidden flex flex-col">
             <div className="flex flex-1 min-h-0 overflow-hidden flex-col md:flex-row md:items-stretch">
               <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar">
-                {/* Patient */}
                 <section className="p-6 sm:p-8 pt-14 sm:pt-7 border-b border-slate-100 bg-slate-50/40">
                   <p className="text-xs font-semibold uppercase tracking-widest text-indigo-600/90 mb-7">
                     Appointment record
                   </p>
-                  <div className="flex items-center gap-2 mb-5">
-                    <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
-                    <div>
-                      <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-                        Patient
-                      </h2>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Demographics used for eligibility and verification.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex flex-col lg:flex-row lg:items-start gap-8 lg:gap-10">
-                    <div className="shrink-0 flex justify-center lg:justify-start">
-                      <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-2xl bg-gradient-to-br from-indigo-100 to-slate-100 border border-indigo-200/50 flex items-center justify-center text-3xl sm:text-4xl font-bold text-indigo-900/80 shadow-inner">
-                        {payee.firstName?.[0]}
-                        {payee.lastName?.[0]}
+                  {patientSection ? (
+                    <>
+                      {sectionHeading(
+                        patientSection.title,
+                        patientSection.subtitle,
+                      )}
+                      <div className="flex flex-col lg:flex-row lg:items-start gap-8 lg:gap-10">
+                        <div className="shrink-0 flex justify-center lg:justify-start">
+                          <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-2xl bg-gradient-to-br from-indigo-100 to-slate-100 border border-indigo-200/50 flex items-center justify-center text-3xl sm:text-4xl font-bold text-indigo-900/80 shadow-inner">
+                            {payee.firstName?.[0]}
+                            {payee.lastName?.[0]}
+                          </div>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <DetailFieldGrid
+                            fields={patientSection.fields.map((row) =>
+                              row.key === "ssn"
+                                ? {
+                                    ...row,
+                                    value: maskSsn(payee.ssn),
+                                  }
+                                : row,
+                            )}
+                            fieldClass={fieldClass}
+                          />
+                        </div>
                       </div>
-                    </div>
-                    <div className="min-w-0 flex-1 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                          First name
-                        </label>
-                        <p className={fieldClass}>{payee.firstName || "—"}</p>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                          Last name
-                        </label>
-                        <p className={fieldClass}>{payee.lastName || "—"}</p>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                          Date of birth
-                        </label>
-                        <p className={fieldClass}>{dobFormatted}</p>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                          SSN (masked)
-                        </label>
-                        <p className={fieldClass}>{maskSsn(payee.ssn)}</p>
-                      </div>
-                    </div>
-                  </div>
+                    </>
+                  ) : null}
                 </section>
 
-                {/* Visit & provider */}
-                <section className="p-6 sm:p-8 border-b border-slate-100">
-                  <div className="flex items-center gap-2 mb-4">
-                    <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
-                    <div>
-                      <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-                        Visit & provider
-                      </h2>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        When and where care is scheduled; who is treating the
-                        patient.
-                      </p>
+                {otherApplicationSections.map((section, index) => (
+                  <section
+                    key={section.id}
+                    className={`p-6 sm:p-8 border-b border-slate-100 ${
+                      index === otherApplicationSections.length - 1 &&
+                      callExtractionRows.length === 0
+                        ? "pb-10 bg-white"
+                        : ""
+                    }`}
+                  >
+                    {sectionHeading(section.title, section.subtitle)}
+                    <DetailFieldGrid
+                      fields={section.fields}
+                      fieldClass={fieldClass}
+                    />
+                  </section>
+                ))}
+
+                <section className="p-6 sm:p-8 pb-10 bg-white border-t border-slate-100">
+                  <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                    <div className="min-w-0 flex-1">
+                      {sectionHeading(
+                        "Call extraction",
+                        "Values captured on the verification call—compare to application fields above.",
+                      )}
                     </div>
-                  </div>
-                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                        Appointment
-                      </label>
-                      <p className={`${fieldClass} !py-2.5`}>
-                        {formatAppointmentWhen(appointment.date)}
-                      </p>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                        Provider
-                      </label>
-                      <p className={`${fieldClass} !py-2.5`}>
-                        {providerDisplayName(provider)}
-                        {provider?.specialty ? (
-                          <span className="text-slate-500 font-normal">
-                            {" "}
-                            · {provider.specialty}
-                          </span>
-                        ) : null}
-                      </p>
-                      {provider?.npi ? (
-                        <p className="text-xs text-slate-500 mt-1.5 ml-2">
-                          NPI {provider.npi}
-                          {provider.phone ? ` · ${provider.phone}` : ""}
-                        </p>
-                      ) : provider?.phone ? (
-                        <p className="text-xs text-slate-500 mt-1.5 ml-2">
-                          {provider.phone}
-                        </p>
-                      ) : null}
-                    </div>
-                    <div className="sm:col-span-2 lg:col-span-3">
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                        Office / service location
-                      </label>
-                      <p className={`${fieldClass} !py-2.5`}>
-                        {office?.name ? (
-                          <>
-                            <span className="font-medium text-slate-900">
-                              {office.name}
-                            </span>
-                            <span className="text-slate-600">
-                              {" "}
-                              — {officeAddressLine}
-                            </span>
-                          </>
-                        ) : (
-                          officeAddressLine
-                        )}
-                      </p>
-                      {office?.phone ? (
-                        <p className="text-xs text-slate-500 mt-1.5">
-                          Phone {office.phone}
-                        </p>
-                      ) : null}
-                    </div>
-                    {appointment.notes?.trim() ? (
-                      <div className="sm:col-span-2 lg:col-span-3">
-                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                          Notes
-                        </label>
-                        <p className="rounded-lg border border-slate-200/90 bg-slate-50/80 px-3.5 py-3 text-sm text-slate-700 whitespace-pre-wrap">
-                          {appointment.notes}
-                        </p>
-                      </div>
+                    {hasExtractionFields && !extractionEditing ? (
+                      <button
+                        type="button"
+                        onClick={handleStartExtractionEdit}
+                        className="shrink-0 text-xs font-semibold uppercase tracking-wide text-indigo-700 hover:text-indigo-900 px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50/80 hover:bg-indigo-50 transition-colors"
+                      >
+                        Edit
+                      </button>
                     ) : null}
                   </div>
-                </section>
-
-                {/* Insurance verification */}
-                <section className="p-6 sm:p-8 border-b border-slate-100">
-                  <div className="flex items-center gap-2 mb-4">
-                    <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
-                    <div>
-                      <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-                        Insurance verification
-                      </h2>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Benefits confirmed on the call—what applies to this
-                        claim.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    {verificationFieldRows.map((row) => (
-                      <div key={row.key}>
-                        <label
-                          className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5"
-                          title={row.questionHint}
-                        >
-                          {row.label}
-                        </label>
-                        <input
-                          type="text"
-                          readOnly
-                          value={row.value}
-                          className={fieldClass}
-                          placeholder="—"
-                          title={row.questionHint}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  {verification && verificationFieldRows.length === 0 && (
-                    <p className="mt-3 text-sm text-slate-500">
-                      No verification fields to show yet. They will match your
-                      verification requirement and fill in as data is captured
-                      on the call.
+                  {saveEligibilitySuccess ? (
+                    <p className="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200/80 rounded-lg px-3 py-2">
+                      {saveEligibilitySuccess}
                     </p>
-                  )}
-                  {!verification && (
-                    <div className="mt-4 rounded-xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-900">
-                      <p className="font-medium">No verification on file yet</p>
-                      <p className="text-xs text-amber-800/90 mt-1 leading-relaxed">
-                        Coverage details will populate after the verification
-                        call completes successfully.
+                  ) : null}
+                  {saveEligibilityError ? (
+                    <p className="mb-4 text-sm text-red-800 bg-red-50 border border-red-200/80 rounded-lg px-3 py-2">
+                      {saveEligibilityError}
+                    </p>
+                  ) : null}
+                  {hasExtractionFields ? (
+                    <>
+                      <p className="mb-5 text-xs font-medium text-slate-600">
+                        {callExtractionCounts.filled} of{" "}
+                        {callExtractionCounts.total} fields populated from the
+                        call
                       </p>
-                    </div>
-                  )}
-                </section>
+                      <div className="space-y-8">
+                        {mandatoryExtractionRows.length > 0 ? (
+                          <div>
+                            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide mb-1">
+                              Mandatory fields
+                            </h3>
+                            <p className="text-xs text-slate-500 mb-4">
+                              Plan and membership details collected before
+                              benefit amounts.
+                            </p>
+                            <CallExtractionFieldGrid
+                              rows={mandatoryExtractionRows}
+                              fieldClass={fieldClass}
+                              editing={extractionEditing}
+                              onValueChange={handleExtractionFieldChange}
+                            />
+                          </div>
+                        ) : null}
 
-                {/* Benefit summary (plan) */}
-                <section className="p-6 sm:p-8 pb-10 bg-white">
-                  <div className="flex items-center gap-2 mb-4">
-                    <span className="flex h-8 w-1 rounded-full bg-indigo-600 shrink-0" />
-                    <div>
-                      <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-                        Benefit summary
-                      </h2>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Plan-level limits and codes—use alongside verified
-                        coverage above.
+                        {benefitExtractionRows.length > 0 ||
+                        historyExtractionRows.length > 0 ? (
+                          <div>
+                            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide mb-1">
+                              Benefit fields
+                            </h3>
+                            <p className="text-xs text-slate-500 mb-4">
+                              Coverage amounts, deductibles, maximums, and
+                              related benefits.
+                            </p>
+                            {benefitExtractionRows.length > 0 ? (
+                              <CallExtractionFieldGrid
+                                rows={benefitExtractionRows}
+                                fieldClass={fieldClass}
+                                editing={extractionEditing}
+                                onValueChange={handleExtractionFieldChange}
+                              />
+                            ) : null}
+                            {historyExtractionRows.length > 0 ? (
+                              <div
+                                className={
+                                  benefitExtractionRows.length > 0
+                                    ? "mt-6 pt-6 border-t border-slate-100"
+                                    : ""
+                                }
+                              >
+                                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-1">
+                                  History
+                                </h4>
+                                <p className="text-xs text-slate-500 mb-4">
+                                  Procedure history codes captured on the call.
+                                </p>
+                                <CallExtractionFieldGrid
+                                  rows={historyExtractionRows}
+                                  fieldClass={fieldClass}
+                                  editing={extractionEditing}
+                                  onValueChange={handleExtractionFieldChange}
+                                />
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {extractionEditing ? (
+                        <div className="mt-8 pt-6 border-t border-slate-200 flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={handleSubmitEligibility}
+                            disabled={saveEligibilityLoading}
+                            className="inline-flex items-center justify-center px-5 py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {saveEligibilityLoading
+                              ? "Submitting…"
+                              : "Submit to Sabrina"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelExtractionEdit}
+                            disabled={saveEligibilityLoading}
+                            className="inline-flex items-center justify-center px-4 py-2.5 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="rounded-xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-900">
+                      <p className="font-medium">No call extraction yet</p>
+                      <p className="text-xs text-amber-800/90 mt-1 leading-relaxed">
+                        Field keys from the application will fill in here as EVA
+                        captures answers on the verification call.
                       </p>
                     </div>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {STATIC_FIELDS.map(({ label, value }) => (
-                      <div key={label}>
-                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                          {label}
-                        </label>
-                        <input
-                          type="text"
-                          readOnly
-                          value={value}
-                          className={fieldClass}
-                        />
-                      </div>
-                    ))}
-                  </div>
+                  )}
                 </section>
               </div>
               <aside className="flex flex-col min-h-[min(52vh,480px)] md:min-h-0 w-full md:w-[min(440px,42vw)] shrink-0 border-t md:border-t-0 md:border-l border-slate-200 bg-slate-50/30 overflow-hidden">

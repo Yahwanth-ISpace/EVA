@@ -43,6 +43,23 @@ export type CreateAppointmentPayload = {
   officeId: string;
 };
 
+export type AppointmentBenefitInfoEntry = {
+  question?: string;
+  rule?: string;
+  answer?: string | null;
+  procedureCode?: string;
+  procedurecode?: string;
+  description?: string;
+};
+
+export type AppointmentVerificationFieldRef = {
+  field: string;
+  question?: string;
+  rule?: string;
+  order?: number;
+  procedureCode?: string;
+};
+
 export interface AppointmentRecord {
   id: string;
   /** Sabrina / Mongo appointment id when present (used to match active calls). */
@@ -62,4 +79,36 @@ export interface AppointmentRecord {
   payee: Payee;
   provider: Provider;
   office: Office;
+  /** Full application payload fields when returned from Mongo. */
+  patient?: {
+    patientId?: string;
+    patientName?: string;
+    patientDOB?: string;
+    memberId?: string;
+  };
+  subscriber?: {
+    subscriberId?: string;
+    subscriberName?: string;
+    subscriberDOB?: string;
+  };
+  insurance?: {
+    companyName?: string;
+    insuredName?: string;
+    groupNumber?: string;
+  };
+  benefitsInfo?: Record<string, AppointmentBenefitInfoEntry | unknown> & {
+    history?: AppointmentBenefitInfoEntry[];
+  };
+  verificationFields?: AppointmentVerificationFieldRef[];
+  eligibilityResult?: string;
+  tenantName?: string;
+  userName?: string;
+  source?: string;
+  InsuranceCompany_Phone?: string;
+  InsuranceCompany_Phone_Ext?: string;
+  eva?: {
+    transcript?: string;
+    extractedData?: Record<string, string | null>;
+    status?: string;
+  };
 }
