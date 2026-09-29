@@ -18,6 +18,7 @@ import { ChatModule } from './chat/chat.module';
 import { SchedulerModule } from './schedular/scheduler.module';
 import { BotTrackerModule } from './bot-tracker/bot-tracker.module';
 import { BargeInModule } from './barge-in/barge-in.module';
+import { AgentModule } from './agent/agent.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { BargeInModule } from './barge-in/barge-in.module';
     SchedulerModule,
     BotTrackerModule,
     BargeInModule,
+    AgentModule,
   ],
 })
 export class AppModule {}

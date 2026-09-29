@@ -9,6 +9,7 @@ import * as OfficeTypes from "./officeTypes";
 import * as ChatsTypes from "./chatsTypes";
 import * as InsuranceTypes from "./insuranceTypes";
 import * as VerificationTypes from "./verificationTypes";
+import * as AgentTypes from "./agentTypes";
 
 const apptypes = {
   iconTypes: IconsTypes,
@@ -22,6 +23,7 @@ const apptypes = {
   chats: ChatsTypes,
   insurances: InsuranceTypes,
   verifications: VerificationTypes,
+  agents: AgentTypes,
 };
 
 export default apptypes;

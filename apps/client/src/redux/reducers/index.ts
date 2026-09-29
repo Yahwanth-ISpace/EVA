@@ -6,6 +6,7 @@ import { officesReducer } from "./officesReducer";
 import { chatsReducer } from "./chatsReducer";
 import { payeeReducer } from "./payeeReducer";
 import { appointmentsReducer } from "./appointmentsReducer";
+import { agentsReducer } from "./agentsReducer";
 
 export const rootReducer = combineReducers({
   authState: authReducer,
@@ -15,6 +16,7 @@ export const rootReducer = combineReducers({
   chatsState: chatsReducer,
   payeeState: payeeReducer,
   appointmentsState: appointmentsReducer,
+  agentsState: agentsReducer,
 });
 
 export type AppState = ReturnType<typeof rootReducer>;
