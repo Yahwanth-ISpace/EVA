@@ -65,3 +65,20 @@ export const updateAgent =
       throw error;
     }
   };
+
+export const deleteAgent = (id: string) => async (dispatch: any) => {
+  dispatch({ type: apptypes.agents.DELETE_AGENT_REQUEST });
+  try {
+    await api.delete(`/agents/${encodeURIComponent(id)}`);
+    dispatch({
+      type: apptypes.agents.DELETE_AGENT_SUCCESS,
+      payload: id,
+    });
+  } catch (error: any) {
+    dispatch({
+      type: apptypes.agents.DELETE_AGENT_FAILURE,
+      payload: error.message,
+    });
+    throw error;
+  }
+};

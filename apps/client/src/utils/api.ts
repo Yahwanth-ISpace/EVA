@@ -17,30 +17,51 @@ const getAuthHeaders = (baseUrl?: string) => {
   });
 };
 
+const parseErrorMessage = (text: string): string => {
+  try {
+    const parsed = JSON.parse(text) as ErrorResponse & {
+      message?: string | string[];
+    };
+    if (Array.isArray(parsed.message)) {
+      return parsed.message.join(", ");
+    }
+    if (typeof parsed.message === "string" && parsed.message) {
+      return parsed.message;
+    }
+  } catch {
+    if (text.length <= 300) return text;
+  }
+  return "Request failed";
+};
+
 const handleResponse = async <T>(res: Response): Promise<T> => {
   const text = await res.text();
 
   if (!res.ok) {
-    try {
-      const error: ErrorResponse = text ? JSON.parse(text) : {};
+    const message = text ? parseErrorMessage(text) : "Request failed";
 
-      if (res.status === 401) {
-        if (error.message?.toLowerCase().includes("jwt expired")) {
-          window.location.href = "/session-expired";
-        } else {
-          window.location.href = "/login";
-        }
-      } else if (res.status === 403) {
-        window.location.href = "/unauthorized";
+    if (res.status === 401) {
+      if (message.toLowerCase().includes("jwt expired")) {
+        window.location.href = "/session-expired";
+      } else {
+        window.location.href = "/login";
       }
-
-      throw new Error(error.message || "Incorrect Credentials");
-    } catch {
-      throw new Error("API Error");
+    } else if (res.status === 403) {
+      window.location.href = "/unauthorized";
     }
+
+    throw new Error(message);
   }
 
-  return text ? JSON.parse(text) : ({} as T);
+  if (!text) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return {} as T;
+  }
 };
 
 export const api = {
