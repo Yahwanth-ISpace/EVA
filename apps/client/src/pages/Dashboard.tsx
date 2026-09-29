@@ -5,12 +5,13 @@ import { getAppointments } from "../redux/actions/appointmentsActions";
 import { getVerifications } from "../redux/actions/verificationActions";
 
 import AdminInsuranceTable from "../components/AdminInsuranceTable";
+import AdminAgentsTable from "../components/AdminAgentsTable";
 import Container from "../components/Container";
 import Navbar from "../components/Navbar";
 import PatientTabs from "../components/PatientTabs";
 import type { AppDispatch, RootState } from "../redux/store";
 
-type AdminTab = "appointments" | "verifications";
+type AdminTab = "appointments" | "verifications" | "agents";
 
 export default function Dashboard() {
   const dispatch = useDispatch<AppDispatch>();
@@ -89,6 +90,18 @@ export default function Dashboard() {
                   >
                     Verifications
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("agents")}
+                    className={`border-b-2 px-1 pb-3 text-sm font-semibold transition ${
+                      activeTab === "agents"
+                        ? "border-blue-600 text-blue-600"
+                        : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                    }`}
+                  >
+                    Agents
+                  </button>
                 </div>
               </div>
 
@@ -114,6 +127,12 @@ export default function Dashboard() {
                     appointments={appointments}
                     loading={verificationLoading}
                   />
+                </div>
+              )}
+
+              {activeTab === "agents" && (
+                <div className="mt-5 flex min-h-0 flex-1 flex-col">
+                  <AdminAgentsTable />
                 </div>
               )}
             </section>
