@@ -66,8 +66,12 @@ export const TPA_IVR_SPANISH_WAIT_MS = Number(
   process.env.TPA_IVR_SPANISH_WAIT_MS || 16000,
 );
 
-/** Brief reply when the TPA greets or asks how EVA is (no full intro yet — wait for their next line). */
-export const EVA_SOCIAL_GREETING_REPLY = "Hi, I'm doing great, thank you!";
+/** Plain hi/hello at call start — identity in one turn (not a how-are-you answer). */
+export const EVA_HELLO_OPENING_LINE =
+  "Yeah, hi — I'm Reena from Went Dentals.";
+
+/** @deprecated Prefer EVA_HELLO_OPENING_LINE for short hi/hello openers. */
+export const EVA_SOCIAL_GREETING_REPLY = EVA_HELLO_OPENING_LINE;
 
 /** Reply when the TPA asked how EVA is doing (no leading "Hi, I'm Reena" — intro follows in the same turn). */
 export const EVA_HOW_ARE_YOU_REPLY = "I'm doing great, thank you!";
@@ -95,7 +99,7 @@ export const EVA_TIME_OF_DAY_PURPOSE_FOLLOWUP =
 
 /** Mid-call hi/hello presence check — do not re-introduce. */
 export const EVA_MID_CALL_CONTINUE_LINE =
-  'Hi, sorry. Can we please continue now?';
+  "Yeah, I'm here. Shall we continue?";
 
 /** Optional extra phrasing (e.g. tests); voice uses `EVA_SIMPLE_PURPOSE_FOR_OPENING` only. */
 export const PURPOSE_OF_CALL_LINE_VARIANTS = [

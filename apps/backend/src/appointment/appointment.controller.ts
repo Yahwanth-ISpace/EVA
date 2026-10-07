@@ -26,6 +26,15 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { AgentDto } from 'src/schedular/dto/agent.dto';
 import { Public } from 'src/auth/decorators/public.decorator';
 
+/** Twilio terminal CallStatus values (call leg ended — agent should be released). */
+const TWILIO_TERMINAL_CALL_STATUSES = new Set([
+  'completed',
+  'no-answer',
+  'busy',
+  'failed',
+  'canceled',
+]);
+
 @ApiTags('appointments')
 @ApiBearerAuth('jwt-auth')
 @UseGuards(JwtAuthGuard)
@@ -59,12 +68,13 @@ export class AppointmentController {
     this.logger.log('STATUS CALLBACK RECEIVED');
     this.logger.log(JSON.stringify(body));
 
-    if (body.CallStatus !== 'completed') {
-      this.logger.log(`Ignoring status ${body.CallStatus}`);
+    const callStatus = String(body.CallStatus ?? '').toLowerCase();
+    if (!TWILIO_TERMINAL_CALL_STATUSES.has(callStatus)) {
+      this.logger.log(`Ignoring non-terminal status ${callStatus}`);
       return { success: true };
     }
 
-    this.logger.log('Call completed');
+    this.logger.log(`Call ended with status ${callStatus}`);
 
     const context = this.twilioService.getStreamContextForCall(body.CallSid);
 
