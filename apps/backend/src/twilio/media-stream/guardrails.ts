@@ -3,13 +3,13 @@
  */
 import type { PatientCallContext } from '../../verification/verification.service';
 import {
+  EVA_HELLO_OPENING_LINE,
   EVA_HOW_ARE_YOU_REPLY,
   EVA_INTRO_IDENTITY_LINE,
   EVA_INTRO_LINE,
   EVA_MID_CALL_CONTINUE_LINE,
   EVA_POST_VALUE_ACK_PHRASES,
   EVA_SIMPLE_PURPOSE_FOR_OPENING,
-  EVA_SOCIAL_GREETING_REPLY,
   EVA_TIME_OF_DAY_PURPOSE_FOLLOWUP,
 } from './constants';
 
@@ -45,7 +45,23 @@ export function tpaAskedHowAreYou(userSaid: string): boolean {
   );
 }
 
-/** Short hi / hello / good morning only — EVA says she is doing great and waits for the rep's next line. */
+/** Short hi / hello / hey only — not "how are you". */
+export function isTpaPlainHelloOnly(userSaid: string): boolean {
+  const t = userSaid.trim();
+  if (t.length < 2) return false;
+  if (tpaAskedHowAreYou(userSaid)) return false;
+  if (userAsksPurposeOfCallOrOpening(userSaid)) return false;
+  if (/\b(how can i help|how may i help|what can i do for you)\b/i.test(t)) {
+    return false;
+  }
+  if (detectIdentityAsk(userSaid)) return false;
+  if (tpaTimeOfDayGreeting(userSaid)) return false;
+  const words = t.split(/\s+/).filter(Boolean).length;
+  if (words > 8) return false;
+  return /^(hi|hello|hey)\b/i.test(t);
+}
+
+/** Short hi / hello / thanks-for-calling opener — not how-are-you. */
 export function isTpaSocialGreetingOnly(userSaid: string): boolean {
   const t = userSaid.trim();
   if (t.length < 2) return false;
@@ -156,9 +172,11 @@ export function isMidCallPresenceCheck(
   if (userAsksPurposeOfCallOrOpening(userSaid)) return false;
   if (detectIdentityAsk(userSaid)) return false;
   if (isTpaBenefitQnaHandoff(userSaid)) return false;
+  if (tpaAskedHowAreYou(userSaid)) return false;
   return (
     /^(hi|hello|hey|yo|are you there|you there|hello there)$/.test(t) ||
-    (/^(hi|hello|hey)\b/.test(t) && t.split(/\s+/).length <= 4)
+    /\b(are you (still )?there|you still there|can you hear me)\b/.test(t) ||
+    (/^(hi|hello|hey)\b/.test(t) && t.split(/\s+/).length <= 5)
   );
 }
 
@@ -439,12 +457,14 @@ export function composeEvaOpeningReply(
       purposeSaid: sameTurnPurpose,
     };
   }
-  if (isTpaSocialGreetingOnly(userSaid)) {
+  if (isTpaPlainHelloOnly(userSaid) || isTpaSocialGreetingOnly(userSaid)) {
+    const parts = [EVA_HELLO_OPENING_LINE];
+    if (sameTurnPurpose) parts.push(pickPurposeOfCallPhrase());
     return {
-      text: EVA_SOCIAL_GREETING_REPLY,
-      socialGreetOnly: true,
-      introIdentitySaid: false,
-      purposeSaid: false,
+      text: parts.join(' '),
+      socialGreetOnly: false,
+      introIdentitySaid: true,
+      purposeSaid: sameTurnPurpose,
     };
   }
   if (tpaIntroducedSelf(userSaid) && !sameTurnPurpose) {
@@ -1328,44 +1348,118 @@ export function isResumePhrase(text: string): boolean {
   );
 }
 
+const DEFAULT_BENEFIT_FIELDS = [
+  'coverage',
+  'deductible',
+  'copay',
+  'validity',
+] as const;
+
+function benefitFieldsOrDefault(orderedFields: string[]): string[] {
+  return orderedFields.length > 0 ? orderedFields : [...DEFAULT_BENEFIT_FIELDS];
+}
+
+function recallFieldPattern(field: string): RegExp {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(
+    `\\bwhat('s| is)?\\s+(the\\s+)?${escaped}\\b|\\b${escaped}\\s+(provided|did you get|do you have|was that|we said)|\\bwhat did (i say|you get|you have)\\s+(for\\s+)?(the\\s+)?${escaped}|\\b(do you have|what (value|number|did you get))\\s+(for\\s+)?(the\\s+)?${escaped}`,
+    'i',
+  );
+}
+
+/** Which benefit field the TPA is asking us to recall (if any). */
+export function getRecallFieldFromTranscript(
+  userSaid: string,
+  orderedFields: string[],
+): string | null {
+  const t = userSaid.trim().toLowerCase();
+  if (!t || t.length < 3) return null;
+  const fields = benefitFieldsOrDefault(orderedFields);
+  for (const field of fields) {
+    if (recallFieldPattern(field).test(t)) return field;
+  }
+  if (/\bwhat is the deductible\b/i.test(t)) return 'deductible';
+  if (/\bwhat is the (coverage|copay|validity)\b/i.test(t)) {
+    if (t.includes('coverage')) return 'coverage';
+    if (t.includes('copay')) return 'copay';
+    return 'validity';
+  }
+  return null;
+}
+
+/** First benefit field name explicitly mentioned in the transcript. */
+export function detectMentionedBenefitField(
+  userSaid: string,
+  orderedFields: string[],
+): string | null {
+  const t = userSaid.trim().toLowerCase();
+  if (!t) return null;
+  const fields = benefitFieldsOrDefault(orderedFields);
+  for (const field of fields) {
+    const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`\\b${escaped}\\b`, 'i').test(t)) return field;
+  }
+  return null;
+}
+
+export function isBenefitCorrectionIntent(transcript: string): boolean {
+  const t = transcript.trim();
+  if (!t) return false;
+  return /\b(update|updated|change|changed|correct|correction|fix|fixed|actually|instead|wrong|should\s+be|make\s+it|set\s+it)\b/i.test(
+    t,
+  );
+}
+
+/**
+ * TPA wants to change a value we already stored (or correct after recall).
+ * Resolves target field from explicit name, or "it/that" + lastDiscussedField.
+ */
+export function resolveBenefitFieldUpdateIntent(
+  transcript: string,
+  orderedFields: string[],
+  extractedData: Record<string, string | null>,
+  lastDiscussedField: string | null,
+): { field: string; rawValue: string } | null {
+  const t = transcript.trim();
+  if (!t || !transcriptHasValue(t)) return null;
+
+  const fields = benefitFieldsOrDefault(orderedFields);
+  const correctionIntent = isBenefitCorrectionIntent(t);
+  let targetField = detectMentionedBenefitField(t, fields);
+
+  if (
+    !targetField &&
+    correctionIntent &&
+    lastDiscussedField &&
+    fields.includes(lastDiscussedField) &&
+    /\b(it|that|this)\b/i.test(t)
+  ) {
+    targetField = lastDiscussedField;
+  }
+
+  if (!targetField) return null;
+
+  const hasExisting =
+    extractedData[targetField] != null &&
+    String(extractedData[targetField]).trim() !== '';
+  if (!correctionIntent && !hasExisting) return null;
+
+  const rawValue = extractValueForField(t, targetField);
+  if (!rawValue) return null;
+
+  return { field: targetField, rawValue };
+}
+
 /** If the user is asking what value we have for a benefit field (recall), return the reply from stored extractedData. */
 export function getRecallReply(
   userSaid: string,
   extractedData: Record<string, string | null>,
   orderedFields: string[],
 ): string | null {
-  const t = userSaid.trim().toLowerCase();
-  if (!t || t.length < 3) return null;
-  const fields = orderedFields.length
-    ? orderedFields
-    : ['coverage', 'deductible', 'copay', 'validity'];
-  for (const field of fields) {
-    const re = new RegExp(
-      `\\bwhat('s| is)?\\s+(the\\s+)?${field}\\b|\\b${field}\\s+(provided|did you get|do you have|was that|we said)|\\bwhat did (i say|you get|you have)\\s+(for\\s+)?(the\\s+)?${field}|\\b(do you have|what (value|number|did you get))\\s+(for\\s+)?(the\\s+)?${field}`,
-      'i',
-    );
-    if (re.test(t)) {
-      const val = extractedData[field];
-      if (val != null && String(val).trim())
-        return `I have the ${field} as ${val}.`;
-      return `I don't have that one yet.`;
-    }
-  }
-  if (/\bwhat is the deductible\b/i.test(t)) {
-    const val = extractedData.deductible;
-    if (val != null && String(val).trim())
-      return `I have the deductible as ${val}.`;
-    return `I don't have that one yet.`;
-  }
-  if (/\bwhat is the (coverage|copay|validity)\b/i.test(t)) {
-    const k = t.includes('coverage')
-      ? 'coverage'
-      : t.includes('copay')
-        ? 'copay'
-        : 'validity';
-    const val = extractedData[k];
-    if (val != null && String(val).trim()) return `I have the ${k} as ${val}.`;
-    return `I don't have that one yet.`;
-  }
-  return null;
+  const field = getRecallFieldFromTranscript(userSaid, orderedFields);
+  if (!field) return null;
+  const val = extractedData[field];
+  if (val != null && String(val).trim())
+    return `I have the ${field} as ${val}.`;
+  return `I don't have that one yet.`;
 }

@@ -5,6 +5,7 @@
  * - `constants.ts` — buffer/timing tunables and fixed phrases (`EVA_INTRO_LINE`, hold/resume lines, …)
  * - `speech.ts` — mulaw silence / end-of-turn detection and `streamModeUsesIvrTiming`
  * - `tpa-ivr.ts` — payer IVR phrase detection and DTMF builders
+ * - `ivr-detection/` — 4-layer IVR bypass (keywords, audio patterns, confidence FSM, Gemini fallback)
  * - `guardrails.ts` — user/EVA intent, identity Q&A, benefit heuristics, recall/hold/resume
  * - `stream-state.ts` — `StreamState`, `TpaIvrRuntimeState`, `PatientInfo`
  * - `static-context.ts` — fallback patient + `PatientCallContext` for inbound/demo
@@ -38,6 +39,7 @@ import { loadBenefitFieldOrderIfNeeded } from './media-stream/field-order-load';
 import {
   ANSWER_WINDOW_MS,
   EVA_ABORT_CALL_ON_NOISE,
+  EVA_HELLO_OPENING_LINE,
   EVA_HOW_ARE_YOU_REPLY,
   EVA_PRE_SPEAK_DELAY_MS,
   EVA_TTS_CHUNK_PACE_MS,
@@ -90,11 +92,21 @@ import {
   tpaIvrSoundsLikeSurveyStayOnLine,
 } from './media-stream/tpa-ivr';
 import {
+  applyIvrLlmClassification,
+  createIvrDetectionSession,
+  runIvrDetectionTurn,
+  type IvrDetectionSession,
+} from './media-stream/ivr-detection';
+import {
   detectIdentityAsk,
   resolveIdentityDirectReply,
+  detectMentionedBenefitField,
   extractValueForField,
   getFirstMissingField,
+  getRecallFieldFromTranscript,
   getRecallReply,
+  isBenefitCorrectionIntent,
+  resolveBenefitFieldUpdateIntent,
   getRepeatOnlyPrompt,
   isBareAcknowledgement,
   isBenefitFieldAsk,
@@ -118,6 +130,7 @@ import {
   isSubstantiveTpaOpener,
   isTpaBareAffirmative,
   isTpaLiveOpener,
+  isTpaPlainHelloOnly,
   isThankYouOrGoodbye,
   tpaAskedHowAreYou,
   isTpaPatientLocated,
@@ -165,6 +178,7 @@ export class MediaStreamHandlerService {
    */
 
   private readonly tpaIvrByCallSid = new Map<string, TpaIvrRuntimeState>();
+  private readonly ivrDetectionByCallSid = new Map<string, IvrDetectionSession>();
 
   /**
    * One line per turn: prep (until STT starts) → STT → LLM → TTS wall times, plus TPA and EVA text.
@@ -236,6 +250,7 @@ export class MediaStreamHandlerService {
       holdStartedAt: null,
       holdTimeoutId: null,
       lastAskedField: null,
+      lastDiscussedField: null,
       resumeCheckInterval: null,
       postGoodbyeUntil: null,
       postGoodbyeTimeoutId: null,
@@ -479,6 +494,7 @@ export class MediaStreamHandlerService {
       state.processing = true;
       const resumeCheckOnly = opts?.resumeCheckOnly === true;
       const turnStart = Date.now();
+      const trailingSilence = isSilenceAtEnd(combined);
       let prepMs = 0;
       let sttMs = 0;
       let llmMs: number | null = null;
@@ -670,10 +686,15 @@ export class MediaStreamHandlerService {
               ivr.surveyDone = true;
             }
 
-            const handoffLive =
-              tpaIvrSoundsLikeDentalTpaLiveIntro(t) ||
-              (ivr.surveyDone && tpaIvrSoundsLikeLiveAgent(t));
-            if (handoffLive) {
+            const handoff = await this.resolveTpaIvrHandoff({
+              state,
+              ivr,
+              transcript: t,
+              audioByteLength: combined.length,
+              trailingSilence,
+              dtmfRedirectPending: redirected,
+            });
+            if (handoff.shouldHandoff) {
               const ttsHandoff = await this.handoffToEvaSession(
                 state,
                 speak,
@@ -682,12 +703,12 @@ export class MediaStreamHandlerService {
               this.logCallTurn(state.callSid, {
                 prepMs,
                 sttMs,
-                llmMs: null,
+                llmMs: handoff.llmMs,
                 ttsMs: ttsHandoff,
                 totalMs: Date.now() - turnStart,
                 tpa: t,
                 eva: '—',
-                note: '(TPA IVR Part 2 → EVA live agent)',
+                note: `(TPA IVR Part 2 → EVA live agent) ${handoff.note}`,
               });
               state.processing = false;
               return;
@@ -696,12 +717,12 @@ export class MediaStreamHandlerService {
             this.logCallTurn(state.callSid, {
               prepMs,
               sttMs,
-              llmMs: null,
+              llmMs: handoff.llmMs,
               ttsMs: 0,
               totalMs: Date.now() - turnStart,
               tpa: t || '—',
               eva: '—',
-              note: `(TPA IVR Part 1 post-DOB — silent until live TPA) ${ivrDebugNote()}`,
+              note: `(TPA IVR Part 1 post-DOB — silent until live TPA) ${handoff.note} ${ivrDebugNote()}`,
             });
             state.processing = false;
             return;
@@ -1418,14 +1439,61 @@ export class MediaStreamHandlerService {
           state.extractedData,
           orderedF,
         );
+        const recallField = getRecallFieldFromTranscript(userSaid, orderedF);
+        if (recallField) state.lastDiscussedField = recallField;
+
+        let benefitUpdateReply: string | null = null;
+        const benefitUpdateIntent =
+          !recallReply && !isIdleOrEmpty
+            ? resolveBenefitFieldUpdateIntent(
+                userSaid,
+                orderedF,
+                state.extractedData,
+                state.lastDiscussedField,
+              )
+            : null;
+        if (benefitUpdateIntent) {
+          const oneUpdate: Record<string, string> = {
+            [benefitUpdateIntent.field]: benefitUpdateIntent.rawValue,
+          };
+          const validation =
+            this.aiService.validateAndNormalizeBenefitExtracted(
+              oneUpdate,
+              userSaid,
+              orderedF,
+            );
+          if (!validation.ok) {
+            benefitUpdateReply =
+              validation.correctionMessage ??
+              'Could you share that value again?';
+          } else {
+            const norm = validation.normalized[benefitUpdateIntent.field];
+            if (norm) {
+              state.extractedData[benefitUpdateIntent.field] = norm;
+              state.lastDiscussedField = benefitUpdateIntent.field;
+              benefitUpdateReply = `Updated. I have the ${benefitUpdateIntent.field} as ${norm}.`;
+            }
+          }
+        }
 
         // Identity short-circuit: when the TPA asks a crisp verification question
         // (NPI / Tax ID / member ID / patient or subscriber name or DOB / provider name)
         // and we have the cached value, answer directly — skip the LLM entirely. This is
         // what keeps EVA fast AND prevents the LLM from drifting to "I am calling to verify..."
+        const midCallPresenceReply =
+          state.openingGreetingPlayed &&
+          !recallReply &&
+          !benefitUpdateReply &&
+          isMidCallPresenceCheck(userSaid, { openingDone: true })
+            ? EVA_MID_CALL_CONTINUE_LINE
+            : null;
+
         const identityAsk = detectIdentityAsk(userSaid);
         const identityDirectReply =
-          !recallReply && state.callContext
+          !recallReply &&
+          !benefitUpdateReply &&
+          !midCallPresenceReply &&
+          state.callContext
             ? resolveIdentityDirectReply(userSaid, state.callContext)
             : null;
         const valueConfirmReply =
@@ -1485,6 +1553,7 @@ export class MediaStreamHandlerService {
 
         const skipLlmDueToNoise =
           !recallReply &&
+          !benefitUpdateReply &&
           !identityDirectReply &&
           state.consecutiveNoiseOrEmptyTurns >= MAX_NOISE_TURNS_BEFORE_SKIP_LLM;
 
@@ -1556,6 +1625,16 @@ export class MediaStreamHandlerService {
           extractedUpdates = {};
           endCall = false;
           llmMs = 0;
+        } else if (benefitUpdateReply) {
+          nextMessage = benefitUpdateReply;
+          extractedUpdates = {};
+          endCall = false;
+          llmMs = 0;
+        } else if (midCallPresenceReply) {
+          nextMessage = midCallPresenceReply;
+          extractedUpdates = {};
+          endCall = false;
+          llmMs = 0;
         } else if (!recallReply && !skipLlmDueToNoise) {
           const llmStart = Date.now();
           const result = await this.aiService.getNextConversationTurn(
@@ -1592,6 +1671,7 @@ export class MediaStreamHandlerService {
         // dollars"). In that case, we honour the LLM's routing into the matching money field and
         // leave validity to be asked again on the next turn.
         const expectedField = state.lastAskedField;
+        const mentionedField = detectMentionedBenefitField(userSaid, orderedF);
         const userIsMoney = transcriptIsMoney(userSaid);
         const userIsDate = transcriptIsDate(userSaid);
         const typeMismatch =
@@ -1601,13 +1681,42 @@ export class MediaStreamHandlerService {
             expectedField === 'coverage') &&
             userIsDate);
         if (
+          mentionedField &&
+          mentionedField !== expectedField &&
+          !isIdleOrEmpty &&
+          transcriptHasValue(userSaid) &&
+          (isBenefitCorrectionIntent(userSaid) ||
+            hasValue(state.extractedData[mentionedField] ?? null))
+        ) {
+          const hasMentionedUpdate = hasValue(
+            extractedUpdates[mentionedField as keyof typeof extractedUpdates] ??
+              null,
+          );
+          if (!hasMentionedUpdate) {
+            const corrected = extractValueForField(userSaid, mentionedField);
+            if (corrected) {
+              extractedUpdates = { [mentionedField]: corrected };
+            }
+          }
+        }
+        const llmFieldKeys = Object.keys(extractedUpdates ?? {}).filter((k) =>
+          orderedF.includes(k),
+        );
+        const correctingAnotherField =
+          Boolean(expectedField) &&
+          Boolean(mentionedField) &&
+          mentionedField !== expectedField &&
+          (isBenefitCorrectionIntent(userSaid) ||
+            llmFieldKeys.some((k) => k !== expectedField));
+        if (
           expectedField &&
           orderedF.includes(expectedField) &&
           !isIdleOrEmpty &&
           transcriptHasValue(userSaid) &&
           extractedUpdates &&
           Object.keys(extractedUpdates).length > 0 &&
-          !typeMismatch
+          !typeMismatch &&
+          !correctingAnotherField
         ) {
           const hasExpected = hasValue(
             extractedUpdates[expectedField as keyof typeof extractedUpdates] ??
@@ -2103,6 +2212,11 @@ export class MediaStreamHandlerService {
             // They asked purpose again — brief one-liner, no intro.
             toSpeak =
               'As I mentioned, we just need a few patient benefit details from your end.';
+          } else if (
+            state.openingGreetingPlayed &&
+            isMidCallPresenceCheck(userSaid, { openingDone: true })
+          ) {
+            toSpeak = EVA_MID_CALL_CONTINUE_LINE;
           } else if (tpaAskedHowAreYou(userSaid)) {
             if (!state.evaIntroIdentitySaid) {
               toSpeak =
@@ -2113,9 +2227,12 @@ export class MediaStreamHandlerService {
               toSpeak = EVA_HOW_ARE_YOU_REPLY;
             }
           } else if (
-            /how are you|doing good|doing great/i.test(userSaid.trim())
+            !state.openingGreetingPlayed &&
+            isTpaPlainHelloOnly(userSaid)
           ) {
-            toSpeak = EVA_HOW_ARE_YOU_REPLY;
+            toSpeak = EVA_HELLO_OPENING_LINE;
+            state.openingGreetingPlayed = true;
+            state.evaIntroIdentitySaid = true;
           } else if (transcriptHasValue(userSaid) && state.lastAskedField) {
             const corrected = extractValueForField(
               userSaid,
@@ -2644,6 +2761,7 @@ export class MediaStreamHandlerService {
         if (state.mode === 'tpa-ivr') {
           if (state.callSid) {
             this.ensureTpaIvrState(state.callSid);
+            this.ensureIvrDetectionSession(state.callSid);
           }
           void (async () => {
             if (!state.patientId?.trim()) return;
@@ -2930,6 +3048,107 @@ export class MediaStreamHandlerService {
     return s;
   }
 
+  private ensureIvrDetectionSession(
+    callSid: string | null,
+  ): IvrDetectionSession {
+    const sid = callSid?.trim();
+    if (!sid) return createIvrDetectionSession();
+    let session = this.ivrDetectionByCallSid.get(sid);
+    if (!session) {
+      session = createIvrDetectionSession();
+      this.ivrDetectionByCallSid.set(sid, session);
+    }
+    return session;
+  }
+
+  private tpaIvrScriptContext(ivr: TpaIvrRuntimeState): string {
+    return [
+      `ivrStarted=${ivr.ivrStarted}`,
+      `providerYes=${ivr.saidProviderYes}`,
+      `eligibility=${ivr.saidEligibilityBenefits}`,
+      `representative=${ivr.saidRepresentativeSummary}`,
+      `memberDtmf=${ivr.memberDtmfSent}`,
+      `dobDtmf=${ivr.dobDtmfSent}`,
+      `routingPull=${ivr.routingPullDone}`,
+      `agentOnline=${ivr.routingAgentOnlineDone}`,
+      `survey=${ivr.surveyDone}`,
+    ].join(' ');
+  }
+
+  private async resolveTpaIvrHandoff(params: {
+    state: StreamState;
+    ivr: TpaIvrRuntimeState;
+    transcript: string;
+    audioByteLength: number;
+    trailingSilence: boolean;
+    dtmfRedirectPending: boolean;
+  }): Promise<{ shouldHandoff: boolean; note: string; llmMs: number | null }> {
+    const session = this.ensureIvrDetectionSession(params.state.callSid);
+    const legacyDental = tpaIvrSoundsLikeDentalTpaLiveIntro(params.transcript);
+    const legacyLive = tpaIvrSoundsLikeLiveAgent(params.transcript);
+    const detection = runIvrDetectionTurn({
+      transcript: params.transcript,
+      audioByteLength: params.audioByteLength,
+      trailingSilence: params.trailingSilence,
+      legacyDentalLiveIntro: legacyDental,
+      legacyLiveAgentMatch: legacyLive,
+      script: {
+        ivrStarted: params.ivr.ivrStarted,
+        dobDtmfSent: params.ivr.dobDtmfSent,
+        memberDtmfSent: params.ivr.memberDtmfSent,
+        routingPullDone: params.ivr.routingPullDone,
+        routingAgentOnlineDone: params.ivr.routingAgentOnlineDone,
+        surveyDone: params.ivr.surveyDone,
+        dtmfRedirectPending: params.dtmfRedirectPending,
+        collectingKeypadInput:
+          tpaIvrSoundsLikeMemberIdPrompt(params.transcript) ||
+          tpaIvrSoundsLikeDobPrompt(params.transcript),
+      },
+      session,
+    });
+
+    const layerSnippet = detection.layerNotes.slice(0, 10).join('; ');
+    let note = `${detection.logSummary}${layerSnippet ? ` | ${layerSnippet}` : ''}`;
+    let llmMs: number | null = null;
+    let shouldHandoff = detection.shouldHandoffToEva;
+
+    if (
+      !shouldHandoff &&
+      detection.shouldInvokeLlmFallback &&
+      params.ivr.dobDtmfSent
+    ) {
+      const llmStart = Date.now();
+      try {
+        const llm = await this.aiService.classifyIvrConnectionState(
+          session.recentTranscripts,
+          this.tpaIvrScriptContext(params.ivr),
+        );
+        const applied = applyIvrLlmClassification(session, llm);
+        llmMs = Date.now() - llmStart;
+        if (applied.shouldHandoffToEva) shouldHandoff = true;
+        note += ` | ${applied.logLine}`;
+        this.logger.log(
+          `[MediaStream] ${applied.logLine} callSid=${params.state.callSid}`,
+        );
+      } catch (e: unknown) {
+        llmMs = Date.now() - llmStart;
+        note += ' | IVR_LLM error';
+        this.logger.warn(
+          '[MediaStream] IVR LLM fallback failed',
+          (e as Error)?.message,
+        );
+      }
+    }
+
+    if (shouldHandoff) {
+      this.logger.log(
+        `[MediaStream] IVR bypass handoff callSid=${params.state.callSid} ${detection.logSummary}`,
+      );
+    }
+
+    return { shouldHandoff, note, llmMs };
+  }
+
   /** Built-in IVR phase finished — begin normal EVA verification conversation. */
   private async handoffToEvaSession(
     state: StreamState,
@@ -2938,6 +3157,7 @@ export class MediaStreamHandlerService {
   ): Promise<number> {
     if (state.callSid) {
       this.tpaIvrByCallSid.delete(state.callSid);
+      this.ivrDetectionByCallSid.delete(state.callSid);
     }
     state.mode = 'eva';
     const sourceLabel = 'TPA_IVR';

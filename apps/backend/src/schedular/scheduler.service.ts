@@ -98,14 +98,6 @@ export class SchedulerService {
               this.logger.log(
                 `Processing appointment for ${appointment.patient.patientName} with agent ${agent.name}`,
               );
-              // un comment below lines  call appointment api for each agent and appointment and update agent status to IN_PROGRESS
-              const response = this.appointmentService.create(
-                appointment,
-                agent.id,
-              );
-              this.logger.log(
-                `API Response:::::::: ${JSON.stringify(response)}`,
-              );
 
               appointment.InsuranceCompany_Phone =
                 agent.twilioPhoneNumber ||

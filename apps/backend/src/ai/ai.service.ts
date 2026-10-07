@@ -5,6 +5,8 @@ import type { PatientCallContext } from '../verification/verification.service';
 import { VerificationService } from '../verification/verification.service';
 import {
   coerceUnavailableAnswerToNa,
+  detectMentionedBenefitField,
+  isBenefitCorrectionIntent,
   isEffectiveDateField,
   scrubRawBenefitValue,
   UNAVAILABLE_FIELD_VALUE,
@@ -341,8 +343,64 @@ Reply with ONLY one word: answer OR interruption`;
   }
 
   /**
-   * Handle user interruption: parse corrections (e.g. "copay is 25% not 60%") or identity/off-topic questions; return updates + reply to speak.
+   * Fallback classifier for TPA IVR bypass — used only when deterministic layers are ambiguous.
    */
+  public async classifyIvrConnectionState(
+    recentTranscripts: string[],
+    scriptContext: string,
+  ): Promise<{
+    classification: 'IVR' | 'HUMAN_TPA' | 'UNCERTAIN';
+    confidence: number;
+    rationale?: string;
+  }> {
+    const model = this.gemini.getGenerativeModel(this.getGeminiModelInit());
+    const joined = recentTranscripts
+      .filter((l) => l.trim())
+      .slice(0, 6)
+      .map((l, i) => `${i + 1}. "${l}"`)
+      .join('\n');
+    const prompt = `You classify who is speaking on an insurance benefit verification phone call.
+EVA (health care provider side) is silent during this segment. The audio is from the payer/TPA line.
+
+Known scripted IVR progress (DTMF / prompts already handled by rules):
+${scriptContext}
+
+Recent STT snippets (newest first):
+${joined || '(no transcript yet)'}
+
+Classify the CURRENT situation:
+- IVR: automated phone tree, hold messages, "press 1", surveys, recording disclaimers, enter member ID prompts.
+- HUMAN_TPA: live insurance representative intro ("my name is…", "how can I help you"), natural conversational help.
+- UNCERTAIN: not enough evidence.
+
+Reply with ONLY JSON, no markdown:
+{"classification":"IVR"|"HUMAN_TPA"|"UNCERTAIN","confidence":0.0-1.0,"rationale":"short reason"}`;
+
+    const result = await model.generateContent(prompt);
+    let jsonString = result.response.text()?.trim() ?? '{}';
+    if (jsonString.startsWith('```')) {
+      jsonString = jsonString.replace(/```json|```/gi, '').trim();
+    }
+    try {
+      const parsed = JSON.parse(jsonString);
+      const rawClass = String(parsed.classification ?? 'UNCERTAIN').toUpperCase();
+      const classification =
+        rawClass === 'HUMAN_TPA' || rawClass === 'HUMAN'
+          ? 'HUMAN_TPA'
+          : rawClass === 'IVR'
+            ? 'IVR'
+            : 'UNCERTAIN';
+      let confidence = Number(parsed.confidence);
+      if (!Number.isFinite(confidence)) confidence = 0;
+      confidence = Math.max(0, Math.min(1, confidence));
+      const rationale =
+        typeof parsed.rationale === 'string' ? parsed.rationale.trim() : undefined;
+      return { classification, confidence, rationale };
+    } catch {
+      return { classification: 'UNCERTAIN', confidence: 0, rationale: 'parse_error' };
+    }
+  }
+
   /**
    * @param patientInfo Optional patient (payee) details from the DB; when provided, EVA can answer questions about patient name, DOB, SSN/tax ID.
    */
@@ -878,7 +936,15 @@ Respond with ONLY a JSON object. No markdown. Format:
         if (keys.length === 1 && keys[0] !== nextFieldToAsk) {
           const wrongKey = keys[0];
           const value = extractedUpdates[wrongKey];
+          const mentionedField = detectMentionedBenefitField(tr, fields);
+          const explicitCorrection =
+            isBenefitCorrectionIntent(tr) &&
+            (mentionedField === wrongKey || mentionedField === null);
+          const skipReassign =
+            mentionedField === wrongKey ||
+            (explicitCorrection && fields.includes(wrongKey));
           if (
+            !skipReassign &&
             value &&
             typeof value === 'string' &&
             this.valueFitsField(value, nextFieldToAsk)

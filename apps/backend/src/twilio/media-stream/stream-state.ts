@@ -40,6 +40,8 @@ export interface StreamState {
   holdStartedAt: number | null;
   holdTimeoutId: ReturnType<typeof setTimeout> | null;
   lastAskedField: string | null;
+  /** Last benefit field discussed (recall or correction) — used for "update it to …". */
+  lastDiscussedField: string | null;
   resumeCheckInterval: ReturnType<typeof setInterval> | null;
   postGoodbyeUntil: number | null;
   postGoodbyeTimeoutId: ReturnType<typeof setTimeout> | null;
