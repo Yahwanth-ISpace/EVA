@@ -9,6 +9,7 @@ import {
   type User,
 } from "../types/authTypes";
 import { persistor } from "../store";
+import { redirectToLogin } from "../../utils/session";
 
 interface LoginResponse {
   token: string;
@@ -49,10 +50,7 @@ export const register =
   };
 
 export const logout = () => (dispatch: Dispatch) => {
-  window.location.href = "/login";
-
-  localStorage.removeItem("token");
-  localStorage.removeItem("user");
   dispatch({ type: LOGOUT });
   persistor.purge();
+  redirectToLogin();
 };

@@ -1,7 +1,8 @@
 // src/api/axiosInstance.ts
 import axios from "axios";
-import store from "../redux/store"; // if using Redux
-import actions from "../redux/actions";
+import store from "../redux/store";
+import { LOGOUT } from "../redux/types/authTypes";
+import { isPublicAuthRequest, redirectToLogin } from "./session";
 
 const backendBase = import.meta.env.VITE_BACKEND_URL || "";
 
@@ -16,16 +17,13 @@ const axiosInstance = axios.create({
 
 axiosInstance.interceptors.response.use(
   (response: any) => response,
-  (error: { response: { status: number } }) => {
-    if (error.response?.status === 401) {
-      // Auto logout if desired
-      store.dispatch(actions.auth.logout());
-
-      // Redirect to session expired page
-      window.location.href = "/session-expired";
+  (error: { response?: { status: number }; config?: { url?: string } }) => {
+    const url = error.config?.url ?? "";
+    if (error.response?.status === 401 && !isPublicAuthRequest(url)) {
+      store.dispatch({ type: LOGOUT });
+      redirectToLogin();
     }
 
-    // For other errors, just throw them
     return Promise.reject(error);
   }
 );

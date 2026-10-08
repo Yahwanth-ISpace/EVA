@@ -7,23 +7,42 @@ import {
   LOGOUT,
   type AuthState,
 } from "../types/authTypes";
+import {
+  clearAuthStorage,
+  isJwtExpired,
+  loggedOutAuthState,
+} from "../../utils/session";
 
 interface Action {
   type: string;
   payload?: any;
 }
 
-const userFromStorage = localStorage.getItem("user");
-const tokenFromStorage = localStorage.getItem("token");
+const readStoredSession = (): AuthState => {
+  const token = localStorage.getItem("token");
+  const userRaw = localStorage.getItem("user");
 
-const initialState: AuthState = {
-  loading: false,
-  error: null,
-  user: userFromStorage ? JSON.parse(userFromStorage) : null,
-  token: tokenFromStorage || null,
-  isAuthenticated: !!tokenFromStorage,
-  role: userFromStorage ? JSON.parse(userFromStorage).role : null,
+  if (!token || !userRaw || isJwtExpired(token)) {
+    if (token || userRaw) clearAuthStorage();
+    return loggedOutAuthState();
+  }
+
+  try {
+    const user = JSON.parse(userRaw);
+    return {
+      ...loggedOutAuthState(),
+      user,
+      token,
+      isAuthenticated: true,
+      role: user.role ?? null,
+    };
+  } catch {
+    clearAuthStorage();
+    return loggedOutAuthState();
+  }
 };
+
+const initialState: AuthState = readStoredSession();
 
 export const authReducer = (
   state = initialState,
@@ -61,13 +80,8 @@ export const authReducer = (
       };
 
     case LOGOUT:
-      localStorage.removeItem("user");
-      localStorage.removeItem("token");
-      return {
-        ...initialState,
-        isAuthenticated: false,
-        role: null,
-      };
+      clearAuthStorage();
+      return loggedOutAuthState();
 
     default:
       return state;
