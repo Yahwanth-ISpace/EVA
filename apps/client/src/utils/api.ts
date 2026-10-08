@@ -1,6 +1,8 @@
 // src/utils/api.ts
 import store from "../redux/store";
+import { LOGOUT } from "../redux/types/authTypes";
 import { withNgrokBypass } from "./ngrokHeaders";
+import { isPublicAuthRequest, redirectToLogin } from "./session";
 
 interface ErrorResponse {
   message: string;
@@ -34,18 +36,15 @@ const parseErrorMessage = (text: string): string => {
   return "Request failed";
 };
 
-const handleResponse = async <T>(res: Response): Promise<T> => {
+const handleResponse = async <T>(res: Response, url: string): Promise<T> => {
   const text = await res.text();
 
   if (!res.ok) {
     const message = text ? parseErrorMessage(text) : "Request failed";
 
-    if (res.status === 401) {
-      if (message.toLowerCase().includes("jwt expired")) {
-        window.location.href = "/session-expired";
-      } else {
-        window.location.href = "/login";
-      }
+    if (res.status === 401 && !isPublicAuthRequest(url)) {
+      store.dispatch({ type: LOGOUT });
+      redirectToLogin();
     } else if (res.status === 403) {
       window.location.href = "/unauthorized";
     }
@@ -70,7 +69,7 @@ export const api = {
     const res = await fetch(`${base}${url}`, {
       headers: getAuthHeaders(baseUrl),
     });
-    return handleResponse<T>(res);
+    return handleResponse<T>(res, url);
   },
 
   post: async <TResponse, TRequest = unknown>(
@@ -84,7 +83,7 @@ export const api = {
       headers: getAuthHeaders(baseUrl),
       body: JSON.stringify(body),
     });
-    return handleResponse<TResponse>(res);
+    return handleResponse<TResponse>(res, url);
   },
 
   put: async <TResponse, TRequest = unknown>(
@@ -98,7 +97,7 @@ export const api = {
       headers: getAuthHeaders(baseUrl),
       body: JSON.stringify(body),
     });
-    return handleResponse<TResponse>(res);
+    return handleResponse<TResponse>(res, url);
   },
 
   delete: async <T>(url: string, baseUrl?: string): Promise<T> => {
@@ -107,6 +106,6 @@ export const api = {
       method: "DELETE",
       headers: getAuthHeaders(baseUrl),
     });
-    return handleResponse<T>(res);
+    return handleResponse<T>(res, url);
   },
 };

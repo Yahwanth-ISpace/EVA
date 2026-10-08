@@ -20,9 +20,13 @@ import Login from "./pages/Login";
 import SignUp from "./pages/SignUp";
 import type { RootState } from "./redux/store";
 import ProtectedRoute from "./utils/ProtectedRoute";
+import { hasValidSession } from "./utils/session";
 
 function App() {
-  const { user, loading } = useSelector((state: RootState) => state.authState);
+  const { user, token, loading } = useSelector(
+    (state: RootState) => state.authState
+  );
+  const sessionValid = hasValidSession(user, token);
   
 
   if (loading) return <div>Loading...</div>;
@@ -34,18 +38,18 @@ function App() {
           {/* Public routes without Layout */}
           <Route
             path="/login"
-            element={user ? <Navigate to="/dashboard" /> : <Login />}
+            element={sessionValid ? <Navigate to="/dashboard" /> : <Login />}
           />
           <Route
             path="/signup"
-            element={user ? <Navigate to="/dashboard" /> : <SignUp />}
+            element={sessionValid ? <Navigate to="/dashboard" /> : <SignUp />}
           />
 
           {/* Protected routes with Layout */}
           <Route element={<Layout />}>
             <Route
               path="/"
-              element={<Navigate to={user ? "/dashboard" : "/login"} />}
+              element={<Navigate to={sessionValid ? "/dashboard" : "/login"} />}
             />
             <Route
               path="/dashboard"
