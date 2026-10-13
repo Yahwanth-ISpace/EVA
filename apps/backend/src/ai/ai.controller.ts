@@ -6,13 +6,13 @@ import { AiAskDto, AiIngestTextDto } from './dto/ai-proxy.dto';
 @ApiTags('ai')
 @Controller('ai')
 export class AiController {
-  private aiBase = process.env.AI_SERVER_URL || 'http://localhost:8001';
+  private aiBase = process.env.AI_SERVER_URL || 'http://localhost:8000';
 
   @Post('ingest-text')
   @ApiOperation({
     summary: 'Proxy: ingest text into RAG',
     description:
-      'Forwards JSON body to `POST {AI_SERVER_URL}/rag/ingest/text`. Set `AI_SERVER_URL` (default `http://localhost:8001`).',
+      'Forwards JSON body to `POST {AI_SERVER_URL}/rag/ingest/text`. Set `AI_SERVER_URL` (default `http://localhost:8000`).',
   })
   @ApiBody({ type: AiIngestTextDto })
   async ingestText(@Body() body: AiIngestTextDto) {

@@ -2,7 +2,7 @@
 import axios from "axios";
 import store from "../redux/store";
 import { LOGOUT } from "../redux/types/authTypes";
-import { isPublicAuthRequest, redirectToLogin } from "./session";
+import { isPublicAuthRequest, redirectToSessionExpired } from "./session";
 
 const backendBase = import.meta.env.VITE_BACKEND_URL || "";
 
@@ -21,7 +21,7 @@ axiosInstance.interceptors.response.use(
     const url = error.config?.url ?? "";
     if (error.response?.status === 401 && !isPublicAuthRequest(url)) {
       store.dispatch({ type: LOGOUT });
-      redirectToLogin();
+      redirectToSessionExpired();
     }
 
     return Promise.reject(error);

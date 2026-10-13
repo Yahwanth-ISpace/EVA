@@ -2,7 +2,7 @@
 import store from "../redux/store";
 import { LOGOUT } from "../redux/types/authTypes";
 import { withNgrokBypass } from "./ngrokHeaders";
-import { isPublicAuthRequest, redirectToLogin } from "./session";
+import { isPublicAuthRequest, redirectToSessionExpired } from "./session";
 
 interface ErrorResponse {
   message: string;
@@ -44,7 +44,7 @@ const handleResponse = async <T>(res: Response, url: string): Promise<T> => {
 
     if (res.status === 401 && !isPublicAuthRequest(url)) {
       store.dispatch({ type: LOGOUT });
-      redirectToLogin();
+      redirectToSessionExpired();
     } else if (res.status === 403) {
       window.location.href = "/unauthorized";
     }

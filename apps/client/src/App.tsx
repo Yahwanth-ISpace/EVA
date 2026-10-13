@@ -12,6 +12,7 @@ import AppointmentDetail from "./pages/AppointmentDetail";
 import Dashboard from "./pages/Dashboard";
 import ErrorPage from "./pages/ErrorPage";
 import InsuranceDetails from "./pages/InsuranceDetails";
+import NotFoundPage from "./pages/NotFoundPage";
 import SessionExpiredPage from "./pages/SessionExpired";
 import UnauthorizedPage from "./pages/UnauthorizedPage";
 
@@ -35,22 +36,37 @@ function App() {
     <Router>
       <div className="main-container">
         <Routes>
-          {/* Public routes without Layout */}
+          <Route
+            path="/"
+            element={<Navigate to={sessionValid ? "/dashboard" : "/login"} replace />}
+          />
+
+          {/* Signed-out auth screens */}
           <Route
             path="/login"
-            element={sessionValid ? <Navigate to="/dashboard" /> : <Login />}
+            element={sessionValid ? <Navigate to="/dashboard" replace /> : <Login />}
           />
           <Route
             path="/signup"
-            element={sessionValid ? <Navigate to="/dashboard" /> : <SignUp />}
+            element={sessionValid ? <Navigate to="/dashboard" replace /> : <SignUp />}
+          />
+          <Route
+            path="/session-expired"
+            element={
+              sessionValid ? (
+                <Navigate to="/dashboard" replace />
+              ) : (
+                <SessionExpiredPage />
+              )
+            }
           />
 
-          {/* Protected routes with Layout */}
+          {/* Standalone status screens */}
+          <Route path="/unauthorized" element={<UnauthorizedPage />} />
+          <Route path="/error" element={<ErrorPage />} />
+
+          {/* Signed-in app screens */}
           <Route element={<Layout />}>
-            <Route
-              path="/"
-              element={<Navigate to={sessionValid ? "/dashboard" : "/login"} />}
-            />
             <Route
               path="/dashboard"
               element={
@@ -83,12 +99,9 @@ function App() {
                 </ProtectedRoute>
               }
             />
-
-            {/* Error/utility pages */}
-            <Route path="/unauthorized" element={<UnauthorizedPage />} />
-            <Route path="/session-expired" element={<SessionExpiredPage />} />
-            <Route path="/error" element={<ErrorPage />} />
           </Route>
+
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </div>
     </Router>
