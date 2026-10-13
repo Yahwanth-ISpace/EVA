@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import * as fs from 'fs';
-import * as FormData from 'form-data';
+import FormData from 'form-data';
 
 export type TpaEmotionCategory = 'angry' | 'happy' | 'normal';
 
