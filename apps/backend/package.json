@@ -140,5 +140,16 @@
     "validator": "13.15.35",
     "webpack": "5.111.1",
     "yauzl": "3.4.0"
+  },
+  "allowScripts": {
+    "@parcel/watcher": true,
+    "@prisma/client": true,
+    "@prisma/engines": true,
+    "@scarf/scarf": false,
+    "@swc/core": true,
+    "bcrypt": true,
+    "prisma": true,
+    "sqlite3": true,
+    "unrs-resolver": true
   }
 }

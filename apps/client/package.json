@@ -50,6 +50,6 @@
     "source-map-js": "1.2.2"
   },
   "allowScripts": {
-    "esbuild@0.28.2": true
+    "esbuild": true
   }
 }
