@@ -9,7 +9,7 @@ export function loggedOutAuthState() {
   };
 }
 
-let loginRedirectStarted = false;
+let authRedirectStarted = false;
 
 export function isJwtExpired(token: string | null | undefined): boolean {
   if (!token) return true;
@@ -42,12 +42,21 @@ export function hasValidSession(
   return Boolean(user && token && !isJwtExpired(token));
 }
 
+function redirectOnce(path: string) {
+  clearAuthStorage();
+  if (authRedirectStarted || window.location.pathname === path) return;
+  authRedirectStarted = true;
+  window.location.replace(path);
+}
+
 /** Drop stored credentials and load the login page once. */
 export function redirectToLogin() {
-  clearAuthStorage();
-  if (loginRedirectStarted || window.location.pathname === "/login") return;
-  loginRedirectStarted = true;
-  window.location.replace("/login");
+  redirectOnce("/login");
+}
+
+/** Drop stored credentials and show the session-expired page once. */
+export function redirectToSessionExpired() {
+  redirectOnce("/session-expired");
 }
 
 export function isPublicAuthRequest(url: string) {

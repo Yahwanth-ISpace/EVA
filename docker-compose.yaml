@@ -21,7 +21,7 @@ services:
       context: ./apps/ai-server
       dockerfile: Dockerfile
     ports:
-      - "5001:5001"
+      - "8000:8000"
     working_dir: /app/apps/ai-server
     volumes:
       - ./apps/ai-server:/app/apps/ai-server

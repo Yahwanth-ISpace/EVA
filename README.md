@@ -49,13 +49,13 @@ cd claimBot
 
 # This will create a image in local docker to give you whisper services
 docker build -f Docker/Dockerfile -t whisper-ai-server .
-docker run -p 5001:5001 whisper-ai-server
+docker run -p 8000:8000 whisper-ai-server
 
 # Make sure Ollama is running (if installed run this from terminal/cmd):
 ollama run mistral
 
 # Find the FastAPI docs with this URL:
-http://localhost:5001/redoc
+http://localhost:8000/redoc
 ```
 
 ### 4. Frontend (React + Tailwind)

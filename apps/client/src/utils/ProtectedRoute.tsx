@@ -2,7 +2,7 @@
 import { Navigate } from "react-router-dom";
 import { useSelector } from "react-redux";
 import type { RootState } from "../redux/store";
-import { hasValidSession } from "./session";
+import { hasValidSession, isJwtExpired } from "./session";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -15,12 +15,15 @@ export default function ProtectedRoute({
 }: ProtectedRouteProps) {
   const { user, token } = useSelector((state: RootState) => state.authState);
 
-  if (!user || !hasValidSession(user, token)) {
-    return <Navigate to="/login" replace />;
+  if (!hasValidSession(user, token)) {
+    const sessionExpired = Boolean(token && isJwtExpired(token));
+    return (
+      <Navigate to={sessionExpired ? "/session-expired" : "/login"} replace />
+    );
   }
 
-  if (allowedRoles && !allowedRoles.includes(user.role)) {
-    return <Navigate to="/unauthorized" replace />;
+  if (!user || (allowedRoles && !allowedRoles.includes(user.role))) {
+    return <Navigate to={user ? "/unauthorized" : "/login"} replace />;
   }
 
   return <>{children}</>;
