@@ -7,41 +7,37 @@ export class ProviderService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateProviderDto) {
-    return this.prisma.provider.create({
-      data: {
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        npi: dto.npi,
-        network: dto.network,
-        specialty: dto.specialty
-        // Offices should be created separately with providerId
-      },
-      include: {
-        offices: true // show associated offices if any
-      }
+    const db = await this.prisma.client();
+    const created = await db.orm.Provider.create({
+      firstName: dto.firstName,
+      lastName: dto.lastName,
+      npi: dto.npi,
+      network: dto.network,
+      specialty: dto.specialty,
     });
+    const provider = await db.orm.Provider.where({ _id: created._id })
+      .include('offices')
+      .first();
+    return this.prisma.withIds(provider);
   }
 
   async findAll() {
-    return this.prisma.provider.findMany({
-      include: {
-        offices: true
-      }
-    });
+    const db = await this.prisma.client();
+    return this.prisma.withIds(
+      await db.orm.Provider.include('offices').all(),
+    );
   }
 
   async findOne(id: string) {
-    const provider = await this.prisma.provider.findUnique({
-      where: { id },
-      include: {
-        offices: true
-      }
-    });
+    const db = await this.prisma.client();
+    const provider = await db.orm.Provider.where({ _id: id })
+      .include('offices')
+      .first();
 
     if (!provider) {
       throw new NotFoundException('Provider not found');
     }
 
-    return provider;
+    return this.prisma.withIds(provider);
   }
 }

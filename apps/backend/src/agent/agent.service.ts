@@ -3,8 +3,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AgentStatus, Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { AgentStatus } from '../prisma/enums';
+import { isDuplicateKey, PrismaService } from '../prisma/prisma.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 
@@ -12,37 +12,35 @@ import { UpdateAgentDto } from './dto/update-agent.dto';
 export class AgentService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll() {
-    return this.prisma.agent.findMany({
-      orderBy: { name: 'asc' },
-    });
+  async findAll() {
+    const db = await this.prisma.client();
+    const agents = await db.orm.Agent.orderBy({ name: 1 }).all();
+    return this.prisma.withIds(agents);
   }
 
   async findOne(id: string) {
-    const agent = await this.prisma.agent.findUnique({ where: { id } });
+    const db = await this.prisma.client();
+    const agent = await db.orm.Agent.where({ _id: id }).first();
     if (!agent) {
       throw new NotFoundException(`Agent with id ${id} not found`);
     }
-    return agent;
+    return this.prisma.withIds(agent);
   }
 
   async create(dto: CreateAgentDto) {
+    const db = await this.prisma.client();
     try {
-      return await this.prisma.agent.create({
-        data: {
-          name: dto.name.trim(),
-          twilioPhoneNumber: dto.twilioPhoneNumber.trim(),
-          twilioPhoneNumberExt: dto.twilioPhoneNumberExt?.trim() || '+1',
-          status: dto.status ?? AgentStatus.READY,
-        },
+      const agent = await db.orm.Agent.create({
+        name: dto.name.trim(),
+        twilioPhoneNumber: dto.twilioPhoneNumber.trim(),
+        twilioPhoneNumberExt: dto.twilioPhoneNumberExt?.trim() || '+1',
+        status: dto.status ?? AgentStatus.READY,
+        startTime: null,
+        endTime: null,
       });
+      return this.prisma.withIds(agent);
     } catch (err: unknown) {
-      if (
-        typeof err === 'object' &&
-        err !== null &&
-        'code' in err &&
-        (err as { code: string }).code === 'P2002'
-      ) {
+      if (isDuplicateKey(err)) {
         throw new ConflictException(
           `An agent named "${dto.name}" already exists`,
         );
@@ -53,8 +51,9 @@ export class AgentService {
 
   async update(id: string, dto: UpdateAgentDto) {
     await this.findOne(id);
+    const db = await this.prisma.client();
 
-    const data: Prisma.AgentUpdateInput = {};
+    const data: Record<string, string> = {};
     if (dto.name !== undefined) data.name = dto.name.trim();
     if (dto.twilioPhoneNumber !== undefined) {
       data.twilioPhoneNumber = dto.twilioPhoneNumber.trim();
@@ -65,17 +64,10 @@ export class AgentService {
     if (dto.status !== undefined) data.status = dto.status;
 
     try {
-      return await this.prisma.agent.update({
-        where: { id },
-        data,
-      });
+      const agent = await db.orm.Agent.where({ _id: id }).update(data);
+      return this.prisma.withIds(agent);
     } catch (err: unknown) {
-      if (
-        typeof err === 'object' &&
-        err !== null &&
-        'code' in err &&
-        (err as { code: string }).code === 'P2002'
-      ) {
+      if (isDuplicateKey(err)) {
         throw new ConflictException(
           `An agent named "${dto.name}" already exists`,
         );
@@ -86,6 +78,7 @@ export class AgentService {
 
   async remove(id: string): Promise<void> {
     await this.findOne(id);
-    await this.prisma.agent.delete({ where: { id } });
+    const db = await this.prisma.client();
+    await db.orm.Agent.where({ _id: id }).delete();
   }
 }

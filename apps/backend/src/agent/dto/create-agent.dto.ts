@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { AgentStatus } from '@prisma/client';
+import { AgentStatus } from '../../prisma/enums';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 
 export class CreateAgentDto {

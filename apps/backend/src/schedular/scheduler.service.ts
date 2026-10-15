@@ -3,7 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { ServiceBusClient } from '@azure/service-bus';
 import axios from 'axios';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { AgentStatus } from '@prisma/client';
+import { AgentStatus } from 'src/prisma/enums';
 import { AgentDto } from './dto/agent.dto';
 import {
   AppointmentDetailsDto,
@@ -80,12 +80,12 @@ export class SchedulerService {
       }
 
       while (pendingAppointments.length > 0) {
-        const agents = await this.prisma.agent.findMany({
-          where: {
-            status: AgentStatus.READY,
-          },
-          take: noOfAgents,
-        });
+        const db = await this.prisma.client();
+        const agents = this.prisma.withIds(
+          await db.orm.Agent.where({ status: AgentStatus.READY })
+            .limit(noOfAgents)
+            .all(),
+        );
 
         if (agents.length > 0) {
           this.logger.debug(`Fetched ${agents.length} available agents.`);
@@ -135,12 +135,10 @@ export class SchedulerService {
     this.logger.log(
       `Calling appointment API for ${appointment.patient.patientName} with agent ${agent.name}`,
     );
-    await this.prisma.agent.update({
-      where: { id: agent.id },
-      data: {
-        status: AgentStatus.IN_PROGRESS,
-        startTime: new Date(),
-      },
+    const db = await this.prisma.client();
+    await db.orm.Agent.where({ _id: agent.id }).update({
+      status: AgentStatus.IN_PROGRESS,
+      startTime: new Date(),
     });
 
     await this.appointmentService.create(appointment, agent.id);

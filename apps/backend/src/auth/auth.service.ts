@@ -6,8 +6,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { Prisma, Role as PrismaRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { Role } from '../prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
 
@@ -19,9 +19,8 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
+    const db = await this.prisma.client();
+    const existingUser = await db.orm.User.where({ email: dto.email }).first();
 
     if (existingUser) {
       throw new BadRequestException('Email is already registered');
@@ -29,34 +28,30 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
-    const role: PrismaRole = dto.role
-      ? (dto.role as PrismaRole)
-      : PrismaRole.OPERATOR;
- 
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        password: hashedPassword,
-        role,
-        dob: dto.dob ? new Date(dto.dob) : null,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
+    const role: Role = dto.role ? (dto.role as Role) : Role.OPERATOR;
 
-        payee:
-          role === PrismaRole.OPERATOR
-            ? {
-                create: {
-                  firstName: dto.firstName,
-                  lastName: dto.lastName,
-                  dob: dto.dob ? new Date(dto.dob) : null,
-                },
-              }
-            : undefined,
-      },
-      include: {
-        payee: true,
-      },
+    const created = await db.orm.User.create({
+      email: dto.email,
+      password: hashedPassword,
+      role,
+      dob: dto.dob ? new Date(dto.dob) : null,
+      firstName: dto.firstName ?? null,
+      lastName: dto.lastName ?? null,
     });
+
+    const payee =
+      role === Role.OPERATOR
+        ? await db.orm.Payee.create({
+            firstName: dto.firstName,
+            lastName: dto.lastName,
+            dob: dto.dob ? new Date(dto.dob) : null,
+            ssn: null,
+            userId: created._id,
+            payerId: null,
+          })
+        : null;
+
+    const user = this.prisma.withIds({ ...created, payee });
 
     return {
       message: 'User registered successfully',
@@ -64,12 +59,12 @@ export class AuthService {
         id: user.id,
 
         firstName:
-          user.role === PrismaRole.OPERATOR
+          user.role === Role.OPERATOR
             ? user.payee?.firstName
             : user.firstName,
 
         lastName:
-          user.role === PrismaRole.OPERATOR
+          user.role === Role.OPERATOR
             ? user.payee?.lastName
             : user.lastName,
 
@@ -82,12 +77,11 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-      include: {
-        payee: true,
-      },
-    });
+    const db = await this.prisma.client();
+    const found = await db.orm.User.where({ email: dto.email })
+      .include('payee')
+      .first();
+    const user = found ? this.prisma.withIds(found) : null;
 
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
@@ -119,12 +113,12 @@ export class AuthService {
         email: user.email,
         role: user.role,
 
-        ...(user.role === PrismaRole.OPERATOR &&
+        ...(user.role === Role.OPERATOR &&
           user.payee?.id && {
             payeeId: user.payee.id,
           }),
 
-        ...(user.role === PrismaRole.OPERATOR && {
+        ...(user.role === Role.OPERATOR && {
           payee: user.payee,
         }),
       },
@@ -132,8 +126,8 @@ export class AuthService {
   }
 
   async validateUser(userId: string) {
-    return this.prisma.user.findUnique({
-      where: { id: userId },
-    });
+    const db = await this.prisma.client();
+    const user = await db.orm.User.where({ _id: userId }).first();
+    return user ? this.prisma.withIds(user) : null;
   }
 }

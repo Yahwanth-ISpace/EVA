@@ -36,12 +36,12 @@ export class VerificationRequirementService {
         'verificationFields must be a non-empty array of { field, required, order }',
       );
     }
-    return this.prisma.verificationRequirement.create({
-      data: {
-        payeeId: dto.payeeId,
-        verificationFields: verificationFields as object,
-      },
+    const db = await this.prisma.client();
+    const created = await db.orm.VerificationRequirement.create({
+      payeeId: dto.payeeId,
+      verificationFields: verificationFields as object,
     });
+    return this.prisma.withIds(created);
   }
 
   async findByPayeeId(payeeId: string) {
@@ -50,18 +50,19 @@ export class VerificationRequirementService {
         'Patient not found in appointments collection (payeeId path param is PatientID)',
       );
     }
-    return this.prisma.verificationRequirement.findMany({
-      where: { payeeId },
-      orderBy: { createdAt: 'asc' },
-    });
+    const db = await this.prisma.client();
+    return this.prisma.withIds(
+      await db.orm.VerificationRequirement.where({ payeeId })
+        .orderBy({ createdAt: 1 })
+        .all(),
+    );
   }
 
   async findOne(id: string) {
-    const req = await this.prisma.verificationRequirement.findUnique({
-      where: { id },
-    });
+    const db = await this.prisma.client();
+    const req = await db.orm.VerificationRequirement.where({ _id: id }).first();
     if (!req) throw new NotFoundException('Verification requirement not found');
-    return req;
+    return this.prisma.withIds(req);
   }
 
   async update(id: string, dto: UpdateVerificationRequirementDto) {
@@ -77,17 +78,19 @@ export class VerificationRequirementService {
     }
     if (dto.verificationFields != null)
       data.verificationFields = dto.verificationFields as object;
-    return this.prisma.verificationRequirement.update({
-      where: { id },
+    const db = await this.prisma.client();
+    const updated = await db.orm.VerificationRequirement.where({ _id: id }).update(
       data,
-    });
+    );
+    return this.prisma.withIds(updated);
   }
 
   async remove(id: string) {
     await this.findOne(id);
-    return this.prisma.verificationRequirement.delete({
-      where: { id },
-    });
+    const db = await this.prisma.client();
+    return this.prisma.withIds(
+      await db.orm.VerificationRequirement.where({ _id: id }).delete(),
+    );
   }
 
   /**
@@ -100,18 +103,19 @@ export class VerificationRequirementService {
     requirementId?: string | null,
   ): Promise<VerificationFieldEntry[]> {
     if (requirementId) {
-      const req = await this.prisma.verificationRequirement.findFirst({
-        where: { id: requirementId, payeeId },
-      });
+      const db = await this.prisma.client();
+      const req = await db.orm.VerificationRequirement.where({ _id: requirementId })
+        .where({ payeeId })
+        .first();
       if (req && Array.isArray(req.verificationFields))
         return (req.verificationFields as VerificationFieldEntry[]).sort(
           (a, b) => (a.order ?? 999) - (b.order ?? 999),
         );
     }
-    const req = await this.prisma.verificationRequirement.findFirst({
-      where: { payeeId },
-      orderBy: { createdAt: 'asc' },
-    });
+    const db = await this.prisma.client();
+    const req = await db.orm.VerificationRequirement.where({ payeeId })
+      .orderBy({ createdAt: 1 })
+      .first();
     if (req && Array.isArray(req.verificationFields))
       return (req.verificationFields as VerificationFieldEntry[]).sort(
         (a, b) => (a.order ?? 999) - (b.order ?? 999),
@@ -140,17 +144,17 @@ export class VerificationRequirementService {
   async getOrderedFieldsAndRequirementId(
     payeeId: string,
   ): Promise<{ orderedFields: string[]; requirementId: string | null }> {
-    const req = await this.prisma.verificationRequirement.findFirst({
-      where: { payeeId },
-      orderBy: { createdAt: 'asc' },
-    });
+    const db = await this.prisma.client();
+    const req = await db.orm.VerificationRequirement.where({ payeeId })
+      .orderBy({ createdAt: 1 })
+      .first();
     if (req && Array.isArray(req.verificationFields)) {
       const entries = (req.verificationFields as VerificationFieldEntry[]).sort(
         (a, b) => (a.order ?? 999) - (b.order ?? 999),
       );
       return {
         orderedFields: entries.map((e) => e.field),
-        requirementId: req.id,
+        requirementId: this.prisma.withIds(req).id,
       };
     }
     return {

@@ -73,14 +73,15 @@ export class AppointmentService {
       );
     }
 
-    const dbUser = await this.prisma.user.findUnique({
-      where: { id: user.userId },
-      select: {
-        firstName: true,
-        lastName: true,
-        dob: true,
-      },
-    });
+    const db = await this.prisma.client();
+    const foundUser = await db.orm.User.where({ _id: user.userId }).first();
+    const dbUser = foundUser
+      ? {
+          firstName: foundUser.firstName,
+          lastName: foundUser.lastName,
+          dob: foundUser.dob,
+        }
+      : null;
 
     if (!dbUser) {
       throw new NotFoundException('User not found');
@@ -141,16 +142,15 @@ export class AppointmentService {
     }
 
     if (user.role === 'OPERATOR') {
-      const dbUser = await this.prisma.user.findUnique({
-        where: {
-          id: user.userId,
-        },
-        select: {
-          firstName: true,
-          lastName: true,
-          dob: true,
-        },
-      });
+      const db = await this.prisma.client();
+      const foundUser = await db.orm.User.where({ _id: user.userId }).first();
+      const dbUser = foundUser
+        ? {
+            firstName: foundUser.firstName,
+            lastName: foundUser.lastName,
+            dob: foundUser.dob,
+          }
+        : null;
 
       if (!dbUser) {
         throw new NotFoundException('User not found');
