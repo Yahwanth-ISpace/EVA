@@ -103,6 +103,7 @@
   "overrides": {
     "@babel/core": "8.0.7",
     "@eslint/plugin-kit": "0.7.3",
+    "@hono/node-server": "2.1.5",
     "@humanfs/node": "0.17.0",
     "@isaacs/brace-expansion": "5.0.1",
     "@tootallnate/once": "3.0.1",
@@ -120,6 +121,7 @@
     "flatted": "3.4.4",
     "follow-redirects": "1.16.1",
     "glob": "13.0.6",
+    "hono": "4.13.13",
     "http-cache-semantics": "4.3.0",
     "ip-address": "10.7.4",
     "js-yaml": "5.4.3",
@@ -138,6 +140,7 @@
     "tar-fs": "3.1.3",
     "tmp": "0.2.7",
     "uuid": "$uuid",
+    "valibot": "1.5.0",
     "validator": "13.15.35",
     "webpack": "5.111.1",
     "yauzl": "3.4.0"
