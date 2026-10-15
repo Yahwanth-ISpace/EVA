@@ -7,20 +7,25 @@ export class PayerService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(createPayerDto: CreatePayerDto) {
-    return this.prisma.payer.create({
-      data: createPayerDto,
+    const db = await this.prisma.client();
+    const payer = await db.orm.Payer.create({
+      ...createPayerDto,
+      phoneExt: createPayerDto.phoneExt ?? null,
     });
+    return this.prisma.withIds(payer);
   }
 
   async findAll() {
-    return this.prisma.payer.findMany();
+    const db = await this.prisma.client();
+    return this.prisma.withIds(await db.orm.Payer.all());
   }
 
   async findOne(id: string) {
-    const payer = await this.prisma.payer.findUnique({ where: { id } });
+    const db = await this.prisma.client();
+    const payer = await db.orm.Payer.where({ _id: id }).first();
     if (!payer) {
       throw new NotFoundException(`Payer with id ${id} not found`);
     }
-    return payer;
+    return this.prisma.withIds(payer);
   }
 }

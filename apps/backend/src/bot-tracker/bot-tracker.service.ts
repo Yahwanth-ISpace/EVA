@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { BotTrackerDto } from './dto/bot-tracker.dto';
 import { CreateBotTrackerDto } from './dto/create-bot-tracker.dto';
@@ -11,7 +10,7 @@ export class BotTrackerService {
   private mapTracker(tracker: {
     id: string;
     payeeId: string;
-    callLog: Prisma.JsonValue | null;
+    callLog: unknown;
     createdAt: Date;
   }): BotTrackerDto {
     return {
@@ -23,54 +22,40 @@ export class BotTrackerService {
     };
   }
 
-  /**
-   * Create a new tracker record asynchronously
-   * @param createBotTrackerDto - PatientID (external id) and callLog (stored as Prisma Json)
-   */
   async create(createBotTrackerDto: CreateBotTrackerDto): Promise<BotTrackerDto> {
     const { PatientID, callLog } = createBotTrackerDto;
-
-    const tracker = await this.prisma.botTracker.create({
-      data: {
+    const db = await this.prisma.client();
+    const tracker = this.prisma.withIds(
+      await db.orm.BotTracker.create({
         payeeId: PatientID,
-        callLog: callLog as Prisma.InputJsonValue,
-      },
-    });
+        callLog: callLog ?? null,
+      }),
+    );
 
     return this.mapTracker(tracker);
   }
 
-  /**
-   * Retrieve all tracker records for a specific patient / legacy payee key
-   */
   async findByPatientID(PatientID: string): Promise<BotTrackerDto[]> {
-    const trackers = await this.prisma.botTracker.findMany({
-      where: { payeeId: PatientID },
-      orderBy: { createdAt: 'desc' },
-    });
+    const db = await this.prisma.client();
+    const trackers = this.prisma.withIds(
+      await db.orm.BotTracker.where({ payeeId: PatientID })
+        .orderBy({ createdAt: -1 })
+        .all(),
+    );
 
     return trackers.map((t) => this.mapTracker(t));
   }
 
-  /** @alias findByPatientID — path param is the same external id used as `payeeId` on the media stream. */
   async findByPayeeId(payeeId: string): Promise<BotTrackerDto[]> {
     return this.findByPatientID(payeeId);
   }
 
-  /**
-   * Retrieve a specific tracker record by ID
-   */
   async findById(id: string): Promise<BotTrackerDto | null> {
-    const tracker = await this.prisma.botTracker.findUnique({
-      where: { id },
-    });
-
-    return tracker ? this.mapTracker(tracker) : null;
+    const db = await this.prisma.client();
+    const tracker = await db.orm.BotTracker.where({ _id: id }).first();
+    return tracker ? this.mapTracker(this.prisma.withIds(tracker)) : null;
   }
 
-  /**
-   * Update a tracker record
-   */
   async update(
     id: string,
     updateData: Partial<BotTrackerDto>,
@@ -83,21 +68,19 @@ export class BotTrackerService {
     delete data.id;
     delete data.createdAt;
 
-    const tracker = await this.prisma.botTracker.update({
-      where: { id },
-      data: data as Prisma.BotTrackerUpdateInput,
-    });
+    const db = await this.prisma.client();
+    const tracker = this.prisma.withIds(
+      await db.orm.BotTracker.where({ _id: id }).update(data),
+    );
 
     return this.mapTracker(tracker);
   }
 
-  /**
-   * Delete a tracker record
-   */
   async delete(id: string): Promise<BotTrackerDto> {
-    const tracker = await this.prisma.botTracker.delete({
-      where: { id },
-    });
+    const db = await this.prisma.client();
+    const tracker = this.prisma.withIds(
+      await db.orm.BotTracker.where({ _id: id }).delete(),
+    );
 
     return this.mapTracker(tracker);
   }

@@ -21,7 +21,7 @@ import { JwtAuthGuard } from 'src/auth/guards/jwtAuthGuard';
 import { AppointmentDetailsDto } from './dto/appointment-details.dto';
 import { SaveEligibilityDto } from './dto/save-eligibility.dto';
 import { TwilioService } from 'src/twilio/twilio.service';
-import { AgentStatus } from '@prisma/client';
+import { AgentStatus } from 'src/prisma/enums';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AgentDto } from 'src/schedular/dto/agent.dto';
 import { Public } from 'src/auth/decorators/public.decorator';
@@ -88,14 +88,12 @@ export class AppointmentController {
     this.logger.log(`Updating agent ${context.AgentId}`);
 
     try {
-      const updated = await this.prisma.agent.update({
-        where: {
-          id: context.AgentId,
-        },
-        data: {
-          status: AgentStatus.READY,
-          endTime: new Date(),
-        },
+      const db = await this.prisma.client();
+      const updated = await db.orm.Agent.where({
+        _id: context.AgentId,
+      }).update({
+        status: AgentStatus.READY,
+        endTime: new Date(),
       });
 
       this.logger.log(`Updated Agent: ${JSON.stringify(updated)}`);
