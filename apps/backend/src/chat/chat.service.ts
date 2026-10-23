@@ -28,7 +28,7 @@ export class ChatService {
   }
 
   /**
-   * Mock DB call — replace with Prisma, Mongo, or RAG
+   * Mock DB call — replace with MongoDB or RAG
    */
   async fetchFromDatabase(question: string): Promise<string> {
     // Example: query DB by keywords or vector search

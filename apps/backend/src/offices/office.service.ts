@@ -1,14 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Document } from 'mongodb';
+import { MongoService } from '../mongo/mongo.service';
 import { CreateOfficeDto } from './dto/create-office.dto';
 
 @Injectable()
 export class OfficeService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly mongoService: MongoService) {}
 
   async create(dto: CreateOfficeDto) {
-    const db = await this.prisma.client();
-    const created = await db.orm.Office.create({
+    const office = {
       name: dto.name,
       address1: dto.address1,
       address2: dto.address2 ?? null,
@@ -16,34 +16,44 @@ export class OfficeService {
       state: dto.state,
       zip: dto.zip,
       code: dto.code,
-      providerId: dto.providerId,
-    });
-    const office = await db.orm.Office.where({ _id: created._id })
-      .include('provider')
-      .first();
-    return this.prisma.withIds(office);
+      providerId: this.mongoService.toObjectId(dto.providerId),
+    };
+    const result = await (await this.mongoService.collection('Office'))
+      .insertOne(office);
+    return this.withProvider({ ...office, _id: result.insertedId });
   }
 
   async findAll() {
-    const db = await this.prisma.client();
-    return this.prisma.withIds(await db.orm.Office.include('provider').all());
+    const offices = await (await this.mongoService.collection('Office'))
+      .find({})
+      .toArray();
+    return Promise.all(offices.map((office) => this.withProvider(office)));
   }
 
   async findByProviderId(providerId: string) {
-    const db = await this.prisma.client();
-    return this.prisma.withIds(
-      await db.orm.Office.where({ providerId }).include('provider').all(),
-    );
+    const offices = await (await this.mongoService.collection('Office'))
+      .find({ providerId: this.mongoService.toObjectId(providerId) })
+      .toArray();
+    return Promise.all(offices.map((office) => this.withProvider(office)));
   }
 
   async findOne(id: string) {
-    const db = await this.prisma.client();
-    const office = await db.orm.Office.where({ _id: id })
-      .include('provider')
-      .first();
+    const office = await (await this.mongoService.collection('Office'))
+      .findOne(this.mongoService.idFilter(id));
 
     if (!office) throw new NotFoundException('Office not found');
 
-    return this.prisma.withIds(office);
+    return this.withProvider(office);
+  }
+
+  private async withProvider<T extends Document>(office: T) {
+    const providerId = office.providerId;
+    const provider =
+      providerId != null
+        ? await (await this.mongoService.collection('Provider')).findOne({
+            _id: providerId,
+          })
+        : null;
+    return this.mongoService.withIds({ ...office, provider });
   }
 }

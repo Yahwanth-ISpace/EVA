@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
-import { PrismaModule } from 'src/prisma/prisma.module';
+import { MongoModule } from 'src/mongo/mongo.module';
 import { OfficeController } from './office.controller';
 import { OfficeService } from './office.service';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [MongoModule],
   controllers: [OfficeController],
   providers: [OfficeService],
 })

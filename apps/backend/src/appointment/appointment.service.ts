@@ -6,7 +6,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ObjectId } from 'mongodb';
-import { PrismaService } from '../prisma/prisma.service';
 import { TwilioService } from 'src/twilio/twilio.service';
 import { AppointmentDetailsDto } from './dto/appointment-details.dto';
 import { MongoService } from 'src/mongo/mongo.service';
@@ -19,7 +18,6 @@ export class AppointmentService {
   private readonly logger = new Logger(AppointmentService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
     private readonly twilioService: TwilioService,
     private readonly mongoService: MongoService,
     private readonly verificationService: VerificationService,
@@ -73,8 +71,9 @@ export class AppointmentService {
       );
     }
 
-    const db = await this.prisma.client();
-    const foundUser = await db.orm.User.where({ _id: user.userId }).first();
+    const foundUser = await (
+      await this.mongoService.collection('User')
+    ).findOne(this.mongoService.idFilter(user.userId));
     const dbUser = foundUser
       ? {
           firstName: foundUser.firstName,
@@ -142,8 +141,9 @@ export class AppointmentService {
     }
 
     if (user.role === 'OPERATOR') {
-      const db = await this.prisma.client();
-      const foundUser = await db.orm.User.where({ _id: user.userId }).first();
+      const foundUser = await (
+        await this.mongoService.collection('User')
+      ).findOne(this.mongoService.idFilter(user.userId));
       const dbUser = foundUser
         ? {
             firstName: foundUser.firstName,

@@ -2,7 +2,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
-import { PrismaModule } from './prisma/prisma.module';
+import { MongoModule } from './mongo/mongo.module';
 import { PayeeModule } from './payee/payee.module';
 import { VerificationModule } from './verification/verification.module';
 import { AiModule } from './ai/ai.module';
@@ -23,7 +23,7 @@ import { AgentModule } from './agent/agent.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    PrismaModule,
+    MongoModule,
     PayeeModule,
     ProviderModule,
     AppointmentModule,

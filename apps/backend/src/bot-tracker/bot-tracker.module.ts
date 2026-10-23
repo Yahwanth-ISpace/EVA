@@ -1,13 +1,12 @@
 import { Module } from '@nestjs/common';
 import { BotTrackerService } from './bot-tracker.service';
 import { BotTrackerController } from './bot-tracker.controller';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { PrismaModule } from 'src/prisma/prisma.module';
+import { MongoModule } from 'src/mongo/mongo.module';
 
 @Module({
   controllers: [BotTrackerController],
-  imports: [PrismaModule],
-  providers: [BotTrackerService, PrismaService],
+  imports: [MongoModule],
+  providers: [BotTrackerService],
   exports: [BotTrackerService],
 })
 export class BotTrackerModule {}

@@ -31,7 +31,6 @@
     "@nestjs/platform-express": "^12.1.3",
     "@nestjs/schedule": "^12.0.2",
     "@nestjs/swagger": "^12.0.2",
-    "@prisma/orm-mongo": "8.0.0-rc.17",
     "axios": "^1.20.0",
     "bcrypt": "^6.0.0",
     "class": "^0.1.4",
@@ -74,7 +73,6 @@
     "globals": "^16.0.0",
     "jest": "^30.5.2",
     "prettier": "^3.4.2",
-    "prisma": "8.0.0-rc.22",
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",
     "ts-jest": "^29.4.14",
@@ -91,6 +89,9 @@
       "ts"
     ],
     "rootDir": "src",
+    "moduleNameMapper": {
+      "^src/(.*)$": "<rootDir>/$1"
+    },
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
@@ -148,11 +149,9 @@
   },
   "allowScripts": {
     "@parcel/watcher": true,
-    "@prisma/engines": true,
     "@scarf/scarf": false,
     "@swc/core": true,
     "bcrypt": true,
-    "prisma": true,
     "sqlite3": true,
     "unrs-resolver": true
   }

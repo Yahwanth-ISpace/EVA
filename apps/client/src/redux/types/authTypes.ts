@@ -8,7 +8,7 @@ export const LOGOUT = "LOGOUT";
 // Roles available in your system
 export type UserRole = "ADMIN" | "OPERATOR";
 
-// Core User interface returned from Prisma
+// Core User interface returned from the backend
 export interface User {
   id: string;
   firstName: string | null;
