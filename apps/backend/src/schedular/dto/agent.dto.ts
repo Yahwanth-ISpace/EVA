@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { AgentStatus } from '../../prisma/enums';
+import { AgentStatus } from '../../mongo/enums';
 
 export class AgentDto {
   @ApiProperty({

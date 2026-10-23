@@ -3,7 +3,6 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { MongoService } from '../mongo/mongo.service';
 import { CreateVerificationRequirementDto } from './dto/create-verification-requirement.dto';
 import { UpdateVerificationRequirementDto } from './dto/update-verification-requirement.dto';
@@ -12,7 +11,6 @@ import type { VerificationFieldEntry } from './dto/verification-field.dto';
 @Injectable()
 export class VerificationRequirementService {
   constructor(
-    private readonly prisma: PrismaService,
     private readonly mongoService: MongoService,
   ) {}
 
@@ -36,12 +34,16 @@ export class VerificationRequirementService {
         'verificationFields must be a non-empty array of { field, required, order }',
       );
     }
-    const db = await this.prisma.client();
-    const created = await db.orm.VerificationRequirement.create({
+    const created = {
       payeeId: dto.payeeId,
       verificationFields: verificationFields as object,
-    });
-    return this.prisma.withIds(created);
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const result = await (
+      await this.mongoService.collection('VerificationRequirement')
+    ).insertOne(created);
+    return this.mongoService.withIds({ ...created, _id: result.insertedId });
   }
 
   async findByPayeeId(payeeId: string) {
@@ -50,24 +52,30 @@ export class VerificationRequirementService {
         'Patient not found in appointments collection (payeeId path param is PatientID)',
       );
     }
-    const db = await this.prisma.client();
-    return this.prisma.withIds(
-      await db.orm.VerificationRequirement.where({ payeeId })
-        .orderBy({ createdAt: 1 })
-        .all(),
-    );
+    const requirements = await (
+      await this.mongoService.collection('VerificationRequirement')
+    )
+      .find({ payeeId })
+      .sort({ createdAt: 1 })
+      .toArray();
+    return this.mongoService.withIds(requirements);
   }
 
   async findOne(id: string) {
-    const db = await this.prisma.client();
-    const req = await db.orm.VerificationRequirement.where({ _id: id }).first();
+    const req = await (
+      await this.mongoService.collection('VerificationRequirement')
+    ).findOne(this.mongoService.idFilter(id));
     if (!req) throw new NotFoundException('Verification requirement not found');
-    return this.prisma.withIds(req);
+    return this.mongoService.withIds(req);
   }
 
   async update(id: string, dto: UpdateVerificationRequirementDto) {
     await this.findOne(id);
-    const data: { payeeId?: string; verificationFields?: object } = {};
+    const data: {
+      payeeId?: string;
+      verificationFields?: object;
+      updatedAt: Date;
+    } = { updatedAt: new Date() };
     if (dto.payeeId != null) {
       if (!(await this.mongoService.patientHasAppointment(dto.payeeId))) {
         throw new NotFoundException(
@@ -78,19 +86,18 @@ export class VerificationRequirementService {
     }
     if (dto.verificationFields != null)
       data.verificationFields = dto.verificationFields as object;
-    const db = await this.prisma.client();
-    const updated = await db.orm.VerificationRequirement.where({ _id: id }).update(
-      data,
-    );
-    return this.prisma.withIds(updated);
+    await (
+      await this.mongoService.collection('VerificationRequirement')
+    ).updateOne(this.mongoService.idFilter(id), { $set: data });
+    return this.findOne(id);
   }
 
   async remove(id: string) {
     await this.findOne(id);
-    const db = await this.prisma.client();
-    return this.prisma.withIds(
-      await db.orm.VerificationRequirement.where({ _id: id }).delete(),
-    );
+    const deleted = await (
+      await this.mongoService.collection('VerificationRequirement')
+    ).findOneAndDelete(this.mongoService.idFilter(id));
+    return this.mongoService.withIds(deleted);
   }
 
   /**
@@ -103,19 +110,24 @@ export class VerificationRequirementService {
     requirementId?: string | null,
   ): Promise<VerificationFieldEntry[]> {
     if (requirementId) {
-      const db = await this.prisma.client();
-      const req = await db.orm.VerificationRequirement.where({ _id: requirementId })
-        .where({ payeeId })
-        .first();
+      const req = await (
+        await this.mongoService.collection('VerificationRequirement')
+      ).findOne({
+        ...this.mongoService.idFilter(requirementId),
+        payeeId,
+      });
       if (req && Array.isArray(req.verificationFields))
         return (req.verificationFields as VerificationFieldEntry[]).sort(
           (a, b) => (a.order ?? 999) - (b.order ?? 999),
         );
     }
-    const db = await this.prisma.client();
-    const req = await db.orm.VerificationRequirement.where({ payeeId })
-      .orderBy({ createdAt: 1 })
-      .first();
+    const req = await (
+      await this.mongoService.collection('VerificationRequirement')
+    )
+      .find({ payeeId })
+      .sort({ createdAt: 1 })
+      .limit(1)
+      .next();
     if (req && Array.isArray(req.verificationFields))
       return (req.verificationFields as VerificationFieldEntry[]).sort(
         (a, b) => (a.order ?? 999) - (b.order ?? 999),
@@ -144,17 +156,20 @@ export class VerificationRequirementService {
   async getOrderedFieldsAndRequirementId(
     payeeId: string,
   ): Promise<{ orderedFields: string[]; requirementId: string | null }> {
-    const db = await this.prisma.client();
-    const req = await db.orm.VerificationRequirement.where({ payeeId })
-      .orderBy({ createdAt: 1 })
-      .first();
+    const req = await (
+      await this.mongoService.collection('VerificationRequirement')
+    )
+      .find({ payeeId })
+      .sort({ createdAt: 1 })
+      .limit(1)
+      .next();
     if (req && Array.isArray(req.verificationFields)) {
       const entries = (req.verificationFields as VerificationFieldEntry[]).sort(
         (a, b) => (a.order ?? 999) - (b.order ?? 999),
       );
       return {
         orderedFields: entries.map((e) => e.field),
-        requirementId: this.prisma.withIds(req).id,
+        requirementId: this.mongoService.withIds(req).id,
       };
     }
     return {

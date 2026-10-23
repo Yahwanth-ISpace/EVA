@@ -2,8 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ServiceBusClient } from '@azure/service-bus';
 import axios from 'axios';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { AgentStatus } from 'src/prisma/enums';
+import { AgentStatus } from 'src/mongo/enums';
 import { AgentDto } from './dto/agent.dto';
 import {
   AppointmentDetailsDto,
@@ -35,9 +34,8 @@ export class SchedulerService {
   private isProcessing = false;
 
   constructor(
-    private prisma: PrismaService,
-    private readonly appointmentService: AppointmentService,
     private readonly mongoService: MongoService,
+    private readonly appointmentService: AppointmentService,
   ) {}
   @Cron(CronExpression.EVERY_MINUTE)
   async handleCron() {
@@ -70,8 +68,8 @@ export class SchedulerService {
         //save finalAppointments to mongo collection named processed_appointments for reference and debugging
         await this.saveTransformedAppointmentDataToMongo(finalAppointments);
 
-        // clear all verification data from Verification collection where appointmentId and payeeId=patientId in prisma before saving new data by using mongoService
-        this.mongoService.deleteVerificationData(
+        // Clear previous verification data for this patient and appointment.
+        await this.mongoService.deleteVerificationData(
           appointmentData.appointmentId,
           appointmentData.patient.patientId,
         );
@@ -80,12 +78,20 @@ export class SchedulerService {
       }
 
       while (pendingAppointments.length > 0) {
-        const db = await this.prisma.client();
-        const agents = this.prisma.withIds(
-          await db.orm.Agent.where({ status: AgentStatus.READY })
+        const agents = (
+          await (await this.mongoService.collection('Agent'))
+            .find({ status: AgentStatus.READY })
             .limit(noOfAgents)
-            .all(),
-        );
+            .toArray()
+        ).map((agent) => ({
+          id: String(agent._id),
+          name: String(agent.name),
+          twilioPhoneNumber: String(agent.twilioPhoneNumber),
+          twilioPhoneNumberExt: String(agent.twilioPhoneNumberExt),
+          status: agent.status as AgentStatus,
+          startTime: (agent.startTime as Date | null) ?? null,
+          endTime: (agent.endTime as Date | null) ?? null,
+        }));
 
         if (agents.length > 0) {
           this.logger.debug(`Fetched ${agents.length} available agents.`);
@@ -135,10 +141,13 @@ export class SchedulerService {
     this.logger.log(
       `Calling appointment API for ${appointment.patient.patientName} with agent ${agent.name}`,
     );
-    const db = await this.prisma.client();
-    await db.orm.Agent.where({ _id: agent.id }).update({
-      status: AgentStatus.IN_PROGRESS,
-      startTime: new Date(),
+    await (
+      await this.mongoService.collection('Agent')
+    ).updateOne(this.mongoService.idFilter(agent.id), {
+      $set: {
+        status: AgentStatus.IN_PROGRESS,
+        startTime: new Date(),
+      },
     });
 
     await this.appointmentService.create(appointment, agent.id);

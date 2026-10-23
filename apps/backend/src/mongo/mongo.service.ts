@@ -1,16 +1,22 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import { Collection, Document, MongoClient, Db } from 'mongodb';
+import { Collection, Document, MongoClient, Db, ObjectId } from 'mongodb';
 
 /** Mongo collection that holds Sabrina / scheduler appointment + patient + payer + office + provider denormalized documents. */
 export const DEFAULT_APPOINTMENTS_COLLECTION = 'appointments';
 export const SUBRINA_APPOINTMENTS_COLLECTION = 'sabrina_appointments';
 export const SUBRINA_RESPONSE_COLLECTION = 'sabrina_response';
 
+export type WithMongoIds<T> = T extends null | undefined
+  ? T
+  : T extends readonly (infer Item)[]
+    ? WithMongoIds<Item>[]
+    : T & { id: string };
+
 @Injectable()
 export class MongoService implements OnModuleDestroy {
   private readonly logger = new Logger(MongoService.name);
   private mongoClient?: MongoClient;
-  private mongoDb?: Db;
+  private dbPromise?: Promise<Db>;
 
   getAppointmentsCollectionName(): string {
     const name = process.env.MONGO_APPOINTMENTS_COLLECTION?.trim();
@@ -29,6 +35,27 @@ export class MongoService implements OnModuleDestroy {
   async appointmentsCollection(): Promise<Collection<Document>> {
     const db = await this.getDb();
     return db.collection(this.getAppointmentsCollectionName());
+  }
+
+  async collection(name: string): Promise<Collection<Document>> {
+    const db = await this.getDb();
+    return db.collection(name);
+  }
+
+  idFilter(id: string): Document {
+    const ids: (string | ObjectId)[] = [id];
+    if (/^[a-f\d]{24}$/i.test(id)) {
+      ids.unshift(new ObjectId(id));
+    }
+    return { _id: { $in: ids } };
+  }
+
+  toObjectId(id: string): ObjectId | string {
+    return /^[a-f\d]{24}$/i.test(id) ? new ObjectId(id) : id;
+  }
+
+  withIds<T>(value: T): WithMongoIds<T> {
+    return mapIds(value) as WithMongoIds<T>;
   }
 
   async subrinaAppointmentsCollection(): Promise<Collection<Document>> {
@@ -94,7 +121,15 @@ export class MongoService implements OnModuleDestroy {
   }
 
   async patientHasAppointment(patientId: string): Promise<boolean> {
-    const doc = await this.findAppointmentDocument(patientId, null);
+    const id = patientId.trim();
+    if (!id) return false;
+    const col = await this.appointmentsCollection();
+    const doc = await col.findOne(
+      {
+        $or: [{ 'patient.patientId': id }, { PatientID: id }],
+      },
+      { projection: { _id: 1 } },
+    );
     return doc != null;
   }
 
@@ -201,22 +236,25 @@ export class MongoService implements OnModuleDestroy {
   }
 
   async getDb(): Promise<Db> {
-    if (this.mongoDb) {
-      return this.mongoDb;
+    if (!this.dbPromise) {
+      const uri = process.env.DATABASE_URL;
+      if (!uri) {
+        throw new Error(
+          'DATABASE_URL is required to connect to MongoDB directly',
+        );
+      }
+      this.dbPromise = this.connect(uri);
     }
+    return this.dbPromise;
+  }
 
-    const uri = process.env.DATABASE_URL;
-    if (!uri) {
-      throw new Error(
-        'DATABASE_URL is required to connect to MongoDB directly',
-      );
-    }
-
-    this.mongoClient = new MongoClient(uri);
-    await this.mongoClient.connect();
-    this.mongoDb = this.mongoClient.db();
+  private async connect(uri: string): Promise<Db> {
+    const client = new MongoClient(uri);
+    this.mongoClient = client;
+    await client.connect();
+    const db = client.db();
     this.logger.log('Connected to MongoDB directly using native MongoClient');
-    return this.mongoDb;
+    return db;
   }
 
   async onModuleDestroy() {
@@ -235,17 +273,36 @@ export class MongoService implements OnModuleDestroy {
       payeeId: String(patientId),
     };
 
-    collection
-      .deleteMany(query)
-      .then((result) => {
-        this.logger.log(
-          `Deleted ${result.deletedCount} documents from Verification collection for AppointmentIDs: ${appointmentId} and PayeeIDs: ${patientId}`,
-        );
-      })
-      .catch((error) => {
-        this.logger.error(
-          `Error deleting documents from Verification collection for AppointmentIDs: ${appointmentId} and PayeeIDs: ${patientId}: ${error}`,
-        );
-      });
+    const result = await collection.deleteMany(query);
+    this.logger.log(
+      `Deleted ${result.deletedCount} documents from Verification collection for AppointmentIDs: ${appointmentId} and PayeeIDs: ${patientId}`,
+    );
   }
+}
+
+function mapIds(value: unknown): unknown {
+  if (value == null || typeof value !== 'object') return value;
+  if (value instanceof Date) return value;
+  if (Array.isArray(value)) return value.map(mapIds);
+  const bson = value as { _bsontype?: string; toHexString?: () => string };
+  if (bson._bsontype === 'ObjectId' && typeof bson.toHexString === 'function') {
+    return bson.toHexString();
+  }
+
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    out[key] = mapIds(child);
+  }
+  if (out._id != null) out.id = String(out._id);
+  return out;
+}
+
+export function isDuplicateKey(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const error = err as { code?: unknown; message?: unknown; cause?: unknown };
+  if (error.code === 11000 || error.code === '11000') return true;
+  if (typeof error.message === 'string' && error.message.includes('E11000')) {
+    return true;
+  }
+  return isDuplicateKey(error.cause);
 }

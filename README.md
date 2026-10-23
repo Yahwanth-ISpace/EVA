@@ -31,11 +31,9 @@ cd apps/backend
 npm install
 
 # Create .env file with:
-# DATABASE_URL="file:./dev.db"
+# DATABASE_URL="mongodb://localhost:27017/eva"
 # JWT_SECRET="your-secret-key"
 # OLLAMA_URL="http://localhost:11434"
-
-npx prisma generate
 
 npm run start:dev
 ```
@@ -75,7 +73,7 @@ npm run dev
 3. The audio file is sent to the backend.
 4. The backend calls the FastAPI server to transcribe the audio using Whisper.
 5. The transcript is then passed to Mistral via Ollama to extract insurance details.
-6. Details are stored in the database via Prisma.
+6. Details are stored in MongoDB.
 7. The frontend displays verified data to the user.
 
 ---
@@ -95,7 +93,7 @@ Make sure to attach a valid `.mp3` file in your requests.
 
 ## 🧱 Technologies Used
 
-- 📦 NestJS + Prisma + JWT (backend)
+- 📦 NestJS + MongoDB + JWT (backend)
 - 🧠 FastAPI + Whisper + Ollama (AI services)
 - 💻 React + Tailwind CSS (frontend)
 - 📞 Jambonz / Bitrix24 for call automation

@@ -27,7 +27,7 @@ EVA is a **dental insurance verification** platform:
 | Layer | Stack | Role |
 |--------|--------|------|
 | **Frontend** | React + Vite + Redux | Ops UI: dashboard, appointments, live call activity, verifications |
-| **Backend** | NestJS + Prisma (MongoDB) + legacy Mongo appointments | REST, Twilio media stream, scheduler (Sabrina/Azure), barge-in, bot tracker |
+| **Backend** | NestJS + native MongoDB driver | REST, Twilio media stream, scheduler (Sabrina/Azure), barge-in, bot tracker |
 | **Voice brain (today)** | **Google Gemini** in `apps/backend/src/ai/ai.service.ts` | Live dialog, extraction, classification |
 | **AI server** | FastAPI (`apps/ai-server`) | Whisper transcription, RAG (Qdrant), emotion |
 
@@ -57,7 +57,7 @@ Short, actionable items to move EVA toward a polished product.
 - **Split large modules** — `media-stream.handler.ts` (~3k lines) and `ai.service.ts` (~2k lines) into testable units (state machine, prompts, persistence).
 - **Global `ValidationPipe` + DTO enforcement** — not wired in `main.ts`; reduces bad payloads on voice and REST.
 - **Registration hardening** — do not allow self-serve `ADMIN` via `RegisterDto.role`; use invite-only or admin-only promotion.
-- **Single source of appointments** — Prisma + raw Mongo + Sabrina scheduler; finish migration and drop legacy `AppointmentID` paths.
+- **Single source of appointments** — native MongoDB collections + Sabrina scheduler; finish migration and drop legacy `AppointmentID` paths.
 - **Wire or remove chat** — `ChatService` is a stub; connect to `/ai/ask` + RAG or remove the endpoint.
 - **Health & readiness** — `/health` for DB, Mongo, Twilio, ffmpeg, Gemini, ai-server; use in deploys.
 - **Structured logging** — replace debug `console.log` (e.g. WebSocket URL in `main.ts`); correlate by `CallSid` / `appointmentId`.

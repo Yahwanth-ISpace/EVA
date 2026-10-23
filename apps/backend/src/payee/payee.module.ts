@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { PayeeService } from './payee.service';
 import { PayeeController } from './payee.controller';
-import { PrismaModule } from '../prisma/prisma.module';
+import { MongoModule } from '../mongo/mongo.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [MongoModule],
   controllers: [PayeeController],
   providers: [PayeeService],
 })

@@ -7,20 +7,21 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { Role } from '../prisma/enums';
-import { PrismaService } from '../prisma/prisma.service';
+import { Document } from 'mongodb';
+import { Role } from '../mongo/enums';
+import { MongoService } from '../mongo/mongo.service';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
 
 @Injectable()
 export class AuthService {
   constructor(
-    private prisma: PrismaService,
+    private readonly mongoService: MongoService,
     private jwtService: JwtService,
   ) {}
 
   async register(dto: RegisterDto) {
-    const db = await this.prisma.client();
-    const existingUser = await db.orm.User.where({ email: dto.email }).first();
+    const users = await this.mongoService.collection('User');
+    const existingUser = await users.findOne({ email: dto.email });
 
     if (existingUser) {
       throw new BadRequestException('Email is already registered');
@@ -30,28 +31,44 @@ export class AuthService {
 
     const role: Role = dto.role ? (dto.role as Role) : Role.OPERATOR;
 
-    const created = await db.orm.User.create({
+    const created = {
       email: dto.email,
       password: hashedPassword,
       role,
       dob: dto.dob ? new Date(dto.dob) : null,
       firstName: dto.firstName ?? null,
       lastName: dto.lastName ?? null,
-    });
+    };
+    const userResult = await users.insertOne(created);
 
     const payee =
       role === Role.OPERATOR
-        ? await db.orm.Payee.create({
-            firstName: dto.firstName,
-            lastName: dto.lastName,
-            dob: dto.dob ? new Date(dto.dob) : null,
-            ssn: null,
-            userId: created._id,
-            payerId: null,
-          })
+        ? await (async () => {
+            const newPayee = {
+              firstName: dto.firstName,
+              lastName: dto.lastName,
+              dob: dto.dob ? new Date(dto.dob) : null,
+              ssn: null,
+              userId: userResult.insertedId,
+              payerId: null,
+            };
+            const result = await (
+              await this.mongoService.collection('Payee')
+            ).insertOne(newPayee);
+            return {
+              ...newPayee,
+              _id: result.insertedId,
+              id: String(result.insertedId),
+            };
+          })()
         : null;
 
-    const user = this.prisma.withIds({ ...created, payee });
+    const user = this.mongoService.withIds({
+      ...created,
+      _id: userResult.insertedId,
+      id: String(userResult.insertedId),
+      payee,
+    }) as Document & { id: string; payee: (Document & { id: string }) | null };
 
     return {
       message: 'User registered successfully',
@@ -77,11 +94,44 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const db = await this.prisma.client();
-    const found = await db.orm.User.where({ email: dto.email })
-      .include('payee')
-      .first();
-    const user = found ? this.prisma.withIds(found) : null;
+    const found = await (await this.mongoService.collection('User')).findOne({
+      email: dto.email,
+    });
+    const foundPayee = found
+      ? await (await this.mongoService.collection('Payee')).findOne({
+          userId: found._id,
+        })
+      : null;
+    const payee = foundPayee
+      ? {
+          ...foundPayee,
+          _id: String(foundPayee._id),
+          id: String(foundPayee._id),
+        }
+      : null;
+    const user: (Document & {
+      id: string;
+      email: string;
+      password: string;
+      role: Role;
+      firstName: string | null;
+      lastName: string | null;
+      dob: Date | null;
+      payee: (Document & { id: string }) | null;
+    }) | null = found
+      ? {
+          ...found,
+          _id: String(found._id),
+          email: found.email,
+          password: found.password,
+          role: found.role as Role,
+          firstName: found.firstName ?? null,
+          lastName: found.lastName ?? null,
+          dob: found.dob ?? null,
+          payee,
+          id: String(found._id),
+        }
+      : null;
 
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
@@ -126,8 +176,9 @@ export class AuthService {
   }
 
   async validateUser(userId: string) {
-    const db = await this.prisma.client();
-    const user = await db.orm.User.where({ _id: userId }).first();
-    return user ? this.prisma.withIds(user) : null;
+    const user = await (await this.mongoService.collection('User')).findOne(
+      this.mongoService.idFilter(userId),
+    );
+    return user ? this.mongoService.withIds(user) : null;
   }
 }

@@ -3,42 +3,49 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AgentStatus } from '../prisma/enums';
-import { isDuplicateKey, PrismaService } from '../prisma/prisma.service';
+import { AgentStatus } from '../mongo/enums';
+import { isDuplicateKey, MongoService } from '../mongo/mongo.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 
 @Injectable()
 export class AgentService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly mongoService: MongoService) {}
 
   async findAll() {
-    const db = await this.prisma.client();
-    const agents = await db.orm.Agent.orderBy({ name: 1 }).all();
-    return this.prisma.withIds(agents);
+    const agents = await (await this.mongoService.collection('Agent'))
+      .find({})
+      .sort({ name: 1 })
+      .toArray();
+    return this.mongoService.withIds(agents);
   }
 
   async findOne(id: string) {
-    const db = await this.prisma.client();
-    const agent = await db.orm.Agent.where({ _id: id }).first();
+    const agent = await (await this.mongoService.collection('Agent')).findOne(
+      this.mongoService.idFilter(id),
+    );
     if (!agent) {
       throw new NotFoundException(`Agent with id ${id} not found`);
     }
-    return this.prisma.withIds(agent);
+    return this.mongoService.withIds(agent);
   }
 
   async create(dto: CreateAgentDto) {
-    const db = await this.prisma.client();
+    const collection = await this.mongoService.collection('Agent');
     try {
-      const agent = await db.orm.Agent.create({
+      const agent = {
         name: dto.name.trim(),
         twilioPhoneNumber: dto.twilioPhoneNumber.trim(),
         twilioPhoneNumberExt: dto.twilioPhoneNumberExt?.trim() || '+1',
         status: dto.status ?? AgentStatus.READY,
         startTime: null,
         endTime: null,
+      };
+      const result = await collection.insertOne(agent);
+      return this.mongoService.withIds({
+        ...agent,
+        _id: result.insertedId,
       });
-      return this.prisma.withIds(agent);
     } catch (err: unknown) {
       if (isDuplicateKey(err)) {
         throw new ConflictException(
@@ -51,7 +58,7 @@ export class AgentService {
 
   async update(id: string, dto: UpdateAgentDto) {
     await this.findOne(id);
-    const db = await this.prisma.client();
+    const collection = await this.mongoService.collection('Agent');
 
     const data: Record<string, string> = {};
     if (dto.name !== undefined) data.name = dto.name.trim();
@@ -64,8 +71,10 @@ export class AgentService {
     if (dto.status !== undefined) data.status = dto.status;
 
     try {
-      const agent = await db.orm.Agent.where({ _id: id }).update(data);
-      return this.prisma.withIds(agent);
+      await collection.updateOne(this.mongoService.idFilter(id), {
+        $set: data,
+      });
+      return this.findOne(id);
     } catch (err: unknown) {
       if (isDuplicateKey(err)) {
         throw new ConflictException(
@@ -78,7 +87,7 @@ export class AgentService {
 
   async remove(id: string): Promise<void> {
     await this.findOne(id);
-    const db = await this.prisma.client();
-    await db.orm.Agent.where({ _id: id }).delete();
+    const collection = await this.mongoService.collection('Agent');
+    await collection.deleteOne(this.mongoService.idFilter(id));
   }
 }

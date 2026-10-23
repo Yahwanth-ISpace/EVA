@@ -1,31 +1,36 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { MongoService } from '../mongo/mongo.service';
 import { CreatePayerDto } from './dto/create-payer.dto';
 
 @Injectable()
 export class PayerService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly mongoService: MongoService) {}
 
   async create(createPayerDto: CreatePayerDto) {
-    const db = await this.prisma.client();
-    const payer = await db.orm.Payer.create({
+    const payer = {
       ...createPayerDto,
       phoneExt: createPayerDto.phoneExt ?? null,
-    });
-    return this.prisma.withIds(payer);
+    };
+    const result = await (await this.mongoService.collection('Payer')).insertOne(
+      payer,
+    );
+    return this.mongoService.withIds({ ...payer, _id: result.insertedId });
   }
 
   async findAll() {
-    const db = await this.prisma.client();
-    return this.prisma.withIds(await db.orm.Payer.all());
+    const payers = await (await this.mongoService.collection('Payer'))
+      .find({})
+      .toArray();
+    return this.mongoService.withIds(payers);
   }
 
   async findOne(id: string) {
-    const db = await this.prisma.client();
-    const payer = await db.orm.Payer.where({ _id: id }).first();
+    const payer = await (await this.mongoService.collection('Payer')).findOne(
+      this.mongoService.idFilter(id),
+    );
     if (!payer) {
       throw new NotFoundException(`Payer with id ${id} not found`);
     }
-    return this.prisma.withIds(payer);
+    return this.mongoService.withIds(payer);
   }
 }

@@ -26,7 +26,7 @@ EVA has a **strong voice-agent core** (outbound calling, generic TPA IVR navigat
 
 ## Scope Clarification
 
-The BRD names the agent **Sabrina Verification Agent** integrated with **Sabrina** (system of record). Current build is **EVA**, with Sabrina-shaped data in **Mongo** and results in **Prisma Verification** — not live Sabrina HTTP APIs.
+The BRD names the agent **Sabrina Verification Agent** integrated with **Sabrina** (system of record). Current build is **EVA**, with Sabrina-shaped data and verification results stored in MongoDB — not live Sabrina HTTP APIs.
 
 Items explicitly **out of EVA scope** per BRD (Sabrina / ops platform):
 - BCP file ingestion into Sabrina
@@ -49,7 +49,7 @@ Items explicitly **out of EVA scope** per BRD (Sabrina / ops platform):
 | R7 | Six mandatory fields (Preventive/Basic/Major %, Yearly Max $, Ind/Family Deductible $) | **Partial** | Defined in sample JSON as `Preventive(D0120)`, etc. | Only collected when full `verificationFields` loaded; no special “mandatory six” logic |
 | R8 | Schema-driven agent — add/remove fields without code change | **Partial** | Dynamic `verificationSteps` from appointment | Validation/normalization still hardcoded for coverage/deductible/copay/validity |
 | R9 | Convert captured data to required Sabrina format | **Partial** | `mapSubrinaAnswers()` maps to Sabrina-shaped Mongo doc | No production API payload contract / field mapping sign-off |
-| R10 | Write results + call status back to **Sabrina via API** | **Gap** | Saves to Prisma `Verification` + Mongo `sabrina_response` (debug) | No Sabrina HTTP client, status codes, or writeback on completion | EVA Team |
+| R10 | Write results + call status back to **Sabrina via API** | **Gap** | Saves to MongoDB `Verification` + `sabrina_response` (debug) | No Sabrina HTTP client, status codes, or writeback on completion | EVA Team |
 | R11 | Read case context from **Sabrina via API** | **Partial** | Mongo `appointments` / `sabrina_appointments`; `POST /appointments` accepts Sabrina payload | No inbound Sabrina webhook/API for case initiation |
 | R12 | Call complete when all existing-plan fields captured | **Partial** | EVA ends call when all fields in **its** ordered list are filled | List may be 4 fields, not 25; completion not synced to Sabrina |
 | R13 | **Retry policy:** max 2 attempts on call drop after connecting to rep | **Gap** | In-call validation retry only | No case-level attempt counter or requeue | Sabrina |
@@ -74,7 +74,7 @@ These align well with BRD intent and reduce remaining work:
 5. **Configurable field list** — `verificationFields` / `verificationSteps` from appointment (scheduler transforms all 25+ fields including procedure history).
 6. **Verbatim questions** — spoken from appointment payload, not improvised.
 7. **Hold / resume**, recall, corrections, two-step call closing.
-8. **Transcript + extracted data persistence** — Prisma verification record, bot tracker, client UI.
+8. **Transcript + extracted data persistence** — MongoDB verification record, bot tracker, client UI.
 9. **Sabrina-shaped data model** — appointment DTO, Mongo collections, answer mapping for writeback shape.
 
 ---

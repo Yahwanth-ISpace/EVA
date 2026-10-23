@@ -4,7 +4,7 @@ import type { StreamState } from './stream-state';
 
 /**
  * Loads ordered benefit field keys and verbatim question text once per call:
- * prefers Mongo appointment `verificationSteps`, otherwise Prisma verification requirement.
+ * prefers Mongo appointment `verificationSteps`, otherwise the MongoDB verification requirement.
  */
 export async function loadBenefitFieldOrderIfNeeded(
   state: StreamState,

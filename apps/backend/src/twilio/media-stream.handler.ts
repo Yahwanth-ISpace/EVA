@@ -10,7 +10,7 @@
  * - `stream-state.ts` — `StreamState`, `TpaIvrRuntimeState`, `PatientInfo`
  * - `static-context.ts` — fallback patient + `PatientCallContext` for inbound/demo
  * - `call-context-sync.ts` — map appointment `verificationSteps` → `fieldQuestionByKey`
- * - `field-order-load.ts` — lazy-load ordered fields + questions (Mongo vs Prisma)
+ * - `field-order-load.ts` — lazy-load ordered fields + questions from MongoDB
  * - `logging.ts` — log line truncation
  */
 import { Injectable, Logger } from '@nestjs/common';

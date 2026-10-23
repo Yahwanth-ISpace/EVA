@@ -17,9 +17,6 @@ RUN npm install
 # Copy remaining project files
 COPY . .
 
-# ✅ Ensure Prisma CLI is available (install it as a dev dependency if not already)
-RUN npx prisma generate --schema=./prisma/schema.prisma
-
 # 👇 Build the NestJS app
 RUN npm run build
 

@@ -5,13 +5,18 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as fs from 'fs';
-import { PrismaService } from '../prisma/prisma.service';
+import { Document, Filter } from 'mongodb';
 import { AiService } from '../ai/ai.service';
-import { TranscriptionService } from 'src/transcription/transcription.service';
-import { MongoService } from 'src/mongo/mongo.service';
+import { TranscriptionService } from '../transcription/transcription.service';
+import { MongoService } from '../mongo/mongo.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { EligibilityPayloadUtil } from './eligibility-payload.util';
+
+type VerificationDocument = Document & {
+  id: string;
+  verificationRequirement: Document | null;
+};
 
 /** One benefit question from the appointment / requirement payload (ask this verbatim). */
 export type PatientVerificationStep = {
@@ -74,52 +79,90 @@ export class VerificationService {
   private readonly logger = new Logger(VerificationService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
     private readonly aiService: AiService,
     private readonly transcriptionService: TranscriptionService,
     private readonly mongoService: MongoService,
     private readonly httpService: HttpService,
   ) {}
 
-  private async createVerification(data: Record<string, unknown>) {
-    const db = await this.prisma.client();
-    const created = await db.orm.Verification.create(data);
-    return this.prisma.withIds(
-      await db.orm.Verification.where({ _id: created._id })
-        .include('verificationRequirement')
-        .first(),
+  private async createVerification(
+    data: Record<string, unknown>,
+  ): Promise<VerificationDocument> {
+    const document = {
+      createdAt: new Date(),
+      ...data,
+      ...(typeof data.verificationRequirementId === 'string' && {
+        verificationRequirementId: this.mongoService.toObjectId(
+          data.verificationRequirementId,
+        ),
+      }),
+    };
+    const result = await (
+      await this.mongoService.collection('Verification')
+    ).insertOne(document);
+    const created = await this.verificationWithRequirement(
+      result.insertedId.toHexString(),
     );
+    if (!created) {
+      throw new Error('Inserted verification could not be loaded');
+    }
+    return created;
   }
 
-  private async updateVerification(id: string, data: Record<string, unknown>) {
-    const db = await this.prisma.client();
-    await db.orm.Verification.where({ _id: id }).update(data);
-    return this.prisma.withIds(
-      await db.orm.Verification.where({ _id: id })
-        .include('verificationRequirement')
-        .first(),
-    );
+  private async updateVerification(
+    id: string,
+    data: Record<string, unknown>,
+  ): Promise<VerificationDocument> {
+    const update = {
+      ...data,
+      ...(typeof data.verificationRequirementId === 'string' && {
+        verificationRequirementId: this.mongoService.toObjectId(
+          data.verificationRequirementId,
+        ),
+      }),
+    };
+    await (
+      await this.mongoService.collection('Verification')
+    ).updateOne(this.mongoService.idFilter(id), { $set: update });
+    const updated = await this.verificationWithRequirement(id);
+    if (!updated) throw new NotFoundException('Verification not found');
+    return updated;
   }
 
-  private async verificationWithRequirement(id: unknown) {
-    const db = await this.prisma.client();
-    const row = await db.orm.Verification.where({ _id: id })
-      .include('verificationRequirement')
-      .first();
-    return row ? this.prisma.withIds(row) : null;
+  private async verificationWithRequirement(
+    id: unknown,
+  ): Promise<VerificationDocument | null> {
+    const row = await (
+      await this.mongoService.collection('Verification')
+    ).findOne(this.mongoService.idFilter(String(id)));
+    if (!row) return null;
+
+    const requirement =
+      row.verificationRequirementId != null
+        ? await (
+            await this.mongoService.collection('VerificationRequirement')
+          ).findOne(
+            this.mongoService.idFilter(
+              String(row.verificationRequirementId),
+            ),
+          )
+        : null;
+    return this.mongoService.withIds({
+      ...row,
+      verificationRequirement: requirement,
+    }) as VerificationDocument;
   }
 
   private async findLatestVerification(
-    filters: Array<(fields: any) => unknown>,
+    filter: Filter<Document>,
   ) {
-    const db = await this.prisma.client();
-    const runtime = await db.runtime();
-    let query = db.query.from('Verification');
-    for (const filter of filters) query = query.match(filter);
-    const rows = await runtime.query(
-      query.sort({ createdAt: -1 }).limit(1).build(),
-    );
-    const row = rows[0];
+    const row = await (
+      await this.mongoService.collection('Verification')
+    )
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .limit(1)
+      .next();
     if (!row) return null;
     return this.verificationWithRequirement(row._id);
   }
@@ -183,11 +226,11 @@ export class VerificationService {
       // 3. FIND OR CREATE VERIFICATION RECORD
       // Find the most recent verification for this payeeId (within the last hour to avoid merging old calls)
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-      const existingVerification = await this.findLatestVerification([
-        (fields) => fields.payeeId.eq(payeeId),
-        (fields) => fields.createdAt.gte(oneHourAgo),
-        (fields) => fields.appointmentId.eq(null),
-      ]);
+      const existingVerification = await this.findLatestVerification({
+        payeeId,
+        createdAt: { $gte: oneHourAgo },
+        appointmentId: null,
+      });
 
       // Helper function to check if a value is meaningful (not null, undefined, or empty string)
       const hasValue = (value: string | null | undefined): boolean => {
@@ -301,8 +344,9 @@ export class VerificationService {
         throw new Error('Missing payee user ID');
       }
 
-      const db = await this.prisma.client();
-      const found = await db.orm.User.where({ _id: user.userId }).first();
+      const found = await (
+        await this.mongoService.collection('User')
+      ).findOne(this.mongoService.idFilter(user.userId));
       const u = found
         ? {
             firstName: found.firstName,
@@ -320,24 +364,23 @@ export class VerificationService {
         return [];
       }
 
-      const runtime = await db.runtime();
-      const rows = await runtime.query(
-        db.query
-          .from('Verification')
-          .match((fields) => fields.payeeId.in(patientIds))
-          .sort({ createdAt: -1 })
-          .build(),
-      );
+      const rows = await (
+        await this.mongoService.collection('Verification')
+      )
+        .find({ payeeId: { $in: patientIds } })
+        .sort({ createdAt: -1 })
+        .toArray();
       return Promise.all(
         rows.map((row) => this.verificationWithRequirement(row._id)),
       );
     }
 
-    const db = await this.prisma.client();
-    return this.prisma.withIds(
-      await db.orm.Verification.include('verificationRequirement')
-        .orderBy({ createdAt: -1 })
-        .all(),
+    const rows = await (await this.mongoService.collection('Verification'))
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
+    return Promise.all(
+      rows.map((row) => this.verificationWithRequirement(row._id)),
     );
   }
 
@@ -391,19 +434,22 @@ export class VerificationService {
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
     const existing = apptId
       ? await (async () => {
-          const db = await this.prisma.client();
-          const row = await db.orm.Verification.where({ payeeId })
-            .where({ appointmentId: apptId })
-            .orderBy({ createdAt: -1 })
-            .include('verificationRequirement')
-            .first();
-          return row ? this.prisma.withIds(row) : null;
+          const row = await (
+            await this.mongoService.collection('Verification')
+          )
+            .find({ payeeId, appointmentId: apptId })
+            .sort({ createdAt: -1 })
+            .limit(1)
+            .next();
+          return row
+            ? this.verificationWithRequirement(row._id)
+            : null;
         })()
-      : await this.findLatestVerification([
-          (fields) => fields.payeeId.eq(payeeId),
-          (fields) => fields.createdAt.gte(oneHourAgo),
-          (fields) => fields.appointmentId.eq(null),
-        ]);
+      : await this.findLatestVerification({
+          payeeId,
+          createdAt: { $gte: oneHourAgo },
+          appointmentId: null,
+        });
 
     const hasValue = (v: string | null | undefined) =>
       v !== null && v !== undefined && String(v).trim().length > 0;
