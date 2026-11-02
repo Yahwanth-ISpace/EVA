@@ -7,7 +7,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Initialize Qdrant client
-qc = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, check_compatibility=False)
+if not QDRANT_API_KEY:
+    logger.warning("QDRANT_API_KEY is not set. Enable it before exposing Qdrant.")
+qc = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY or None, check_compatibility=False)
 
 def ensure_collection(name=COLLECTION):
     """

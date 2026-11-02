@@ -14,7 +14,7 @@
  * - `logging.ts` — log line truncation
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -549,8 +549,8 @@ export class MediaStreamHandlerService {
         Promise.resolve(null);
 
       try {
-        fs.writeFileSync(rawPath, combined);
-        this.mulawRawToWav(rawPath, wavPath);
+        await fs.promises.writeFile(rawPath, combined);
+        await this.mulawRawToWav(rawPath, wavPath);
 
         emotionPromise = streamModeUsesIvrTiming(state.mode)
           ? Promise.resolve(null)
@@ -3378,16 +3378,32 @@ export class MediaStreamHandlerService {
 }
 
   /** Convert raw mulaw (8kHz mono) file to wav for transcription API */
-  private mulawRawToWav(rawPath: string, wavPath: string): void {
-    const result = spawnSync(
-      'ffmpeg',
-      ['-f', 'mulaw', '-ar', '8000', '-ac', '1', '-i', rawPath, '-y', wavPath],
-      { encoding: 'buffer', timeout: 10_000 },
-    );
-    if (result.status !== 0 || result.error) {
-      const stderr = (result.stderr ?? Buffer.alloc(0)).toString('utf-8');
-      const errMsg = getFfmpegErrorMessage(result.error, stderr);
-      throw new Error(errMsg);
-    }
+  private mulawRawToWav(rawPath: string, wavPath: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(
+        'ffmpeg',
+        ['-f', 'mulaw', '-ar', '8000', '-ac', '1', '-i', rawPath, '-y', wavPath],
+        { stdio: ['ignore', 'ignore', 'pipe'] },
+      );
+      const chunks: Buffer[] = [];
+      child.stderr.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      const timer = setTimeout(() => {
+        child.kill();
+        reject(new Error('ffmpeg timed out'));
+      }, 10_000);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(new Error(getFfmpegErrorMessage(err, '')));
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        const stderr = Buffer.concat(chunks).toString('utf8');
+        reject(new Error(getFfmpegErrorMessage(undefined, stderr)));
+      });
+    });
   }
 }

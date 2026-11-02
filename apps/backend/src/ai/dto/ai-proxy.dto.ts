@@ -1,25 +1,61 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsInt, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
 
-/** Body for `POST /ai/ingest-text` — forwarded to external RAG (`AI_SERVER_URL`). Shape matches your RAG `/rag/ingest/text` API. */
+/** Body for `POST /ai/ingest-text` — forwarded to external RAG (`AI_SERVER_URL`). */
 export class AiIngestTextDto {
-  @ApiProperty({
-    example: 'Plan covers preventive at 100%.',
-    description: 'Example field; add fields your ingest endpoint expects.',
-  })
-  text?: string;
+  @ApiProperty()
+  @IsString()
+  text: string;
+
+  @ApiProperty()
+  @IsString()
+  payerId: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  tenant_id?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  doc_id?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
 }
 
 /** Body for `POST /ai/ask` — RAG query. */
 export class AiAskDto {
-  @ApiPropertyOptional({ example: 'tenant-uuid-123' })
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   tenant_id?: string;
 
-  @ApiProperty({
-    example: 'What is the copay for specialist visits?',
-    description: 'Natural language question for the RAG pipeline.',
-  })
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  payerId?: string;
+
+  @ApiProperty()
+  @IsString()
   question: string;
 
-  @ApiPropertyOptional({ example: 5, description: 'Number of chunks to retrieve.' })
+  @ApiPropertyOptional({ example: 5 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
   top_k?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  min_score?: number;
 }

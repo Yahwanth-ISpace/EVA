@@ -1,30 +1,25 @@
 # apps/backend/Dockerfile
 
-FROM node:20-alpine
+FROM node:22-alpine
 
-# ffmpeg required for Media Stream: MP3→mulaw (TTS) and mulaw→WAV (transcription)
-RUN apk add --no-cache ffmpeg
+RUN apk add --no-cache ffmpeg \
+  && addgroup -S app \
+  && adduser -S app -G app
 
-# Set working directory
 WORKDIR /app
 
-# Copy only package files first (leveraging Docker layer caching)
 COPY package*.json ./
+RUN npm ci \
+  && mkdir -p uploads \
+  && chown -R app:app /app
 
-# Install dependencies
-RUN npm install
-
-# Copy remaining project files
 COPY . .
+RUN npx prisma generate --schema=./prisma/schema.prisma \
+  && npm run build \
+  && chown -R app:app /app
 
-# ✅ Ensure Prisma CLI is available (install it as a dev dependency if not already)
-RUN npx prisma generate --schema=./prisma/schema.prisma
+USER app
 
-# 👇 Build the NestJS app
-RUN npm run build
-
-# Expose NestJS default port
 EXPOSE 3000
 
-# Start the production build (assumes you've prebuilt with tsc)
 CMD ["npm", "run", "start:prod"]

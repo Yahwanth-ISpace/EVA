@@ -172,23 +172,35 @@ function CallExtractionFieldGrid({
   fieldClass,
   editing,
   onValueChange,
+  onRemove,
 }: {
   rows: CallExtractionRow[];
   fieldClass: string;
   editing?: boolean;
   onValueChange?: (fieldKey: string, value: string) => void;
+  onRemove?: (fieldKey: string) => void;
 }) {
   if (rows.length === 0) return null;
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {rows.map((row) => (
-        <CallExtractionField
-          key={row.fieldKey}
-          row={row}
-          fieldClass={fieldClass}
-          editing={editing}
-          onValueChange={onValueChange}
-        />
+        <div key={row.fieldKey} className="relative">
+          {editing && onRemove ? (
+            <button
+              type="button"
+              onClick={() => onRemove(row.fieldKey)}
+              className="absolute right-0 top-0 text-xs font-semibold text-red-600 hover:text-red-800"
+            >
+              Remove
+            </button>
+          ) : null}
+          <CallExtractionField
+            row={row}
+            fieldClass={fieldClass}
+            editing={editing}
+            onValueChange={onValueChange}
+          />
+        </div>
       ))}
     </div>
   );
@@ -543,6 +555,31 @@ export default function AppointmentDetail() {
     [],
   );
 
+  const handleRemoveExtractionField = useCallback((fieldKey: string) => {
+    setExtractionDraft((prev) => {
+      const next = { ...prev };
+      delete next[fieldKey];
+      return next;
+    });
+  }, []);
+
+  const handleAddExtractionField = useCallback(() => {
+    const name = window.prompt("Field name to add");
+    if (!name) return;
+    const key = name.trim();
+    if (!/^[A-Za-z0-9_().-]{1,80}$/.test(key)) {
+      setSaveEligibilityError(
+        "Field names can use letters, numbers, and . _ ( ) -",
+      );
+      return;
+    }
+    setExtractionDraft((prev) =>
+      Object.prototype.hasOwnProperty.call(prev, key) ? prev : { ...prev, [key]: "" },
+    );
+    setExtractionEditing(true);
+    setSaveEligibilityError(null);
+  }, []);
+
   const handleSubmitEligibility = useCallback(async () => {
     if (!id) return;
     setSaveEligibilityLoading(true);
@@ -895,13 +932,13 @@ export default function AppointmentDetail() {
                         "Values captured on the verification call—compare to application fields above.",
                       )}
                     </div>
-                    {hasExtractionFields && !extractionEditing ? (
+                    {!extractionEditing ? (
                       <button
                         type="button"
-                        onClick={handleStartExtractionEdit}
+                        onClick={hasExtractionFields ? handleStartExtractionEdit : handleAddExtractionField}
                         className="shrink-0 text-xs font-semibold uppercase tracking-wide text-indigo-700 hover:text-indigo-900 px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50/80 hover:bg-indigo-50 transition-colors"
                       >
-                        Edit
+                        {hasExtractionFields ? "Edit" : "Add field"}
                       </button>
                     ) : null}
                   </div>
@@ -915,7 +952,7 @@ export default function AppointmentDetail() {
                       {saveEligibilityError}
                     </p>
                   ) : null}
-                  {hasExtractionFields ? (
+                  {hasExtractionFields || extractionEditing ? (
                     <>
                       <p className="mb-5 text-xs font-medium text-slate-600">
                         {callExtractionCounts.filled} of{" "}
@@ -937,6 +974,7 @@ export default function AppointmentDetail() {
                               fieldClass={fieldClass}
                               editing={extractionEditing}
                               onValueChange={handleExtractionFieldChange}
+                              onRemove={handleRemoveExtractionField}
                             />
                           </div>
                         ) : null}
@@ -955,9 +993,10 @@ export default function AppointmentDetail() {
                               <CallExtractionFieldGrid
                                 rows={benefitExtractionRows}
                                 fieldClass={fieldClass}
-                                editing={extractionEditing}
-                                onValueChange={handleExtractionFieldChange}
-                              />
+                              editing={extractionEditing}
+                              onValueChange={handleExtractionFieldChange}
+                              onRemove={handleRemoveExtractionField}
+                            />
                             ) : null}
                             {historyExtractionRows.length > 0 ? (
                               <div
@@ -978,6 +1017,7 @@ export default function AppointmentDetail() {
                                   fieldClass={fieldClass}
                                   editing={extractionEditing}
                                   onValueChange={handleExtractionFieldChange}
+                                  onRemove={handleRemoveExtractionField}
                                 />
                               </div>
                             ) : null}
@@ -987,6 +1027,13 @@ export default function AppointmentDetail() {
 
                       {extractionEditing ? (
                         <div className="mt-8 pt-6 border-t border-slate-200 flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={handleAddExtractionField}
+                            className="inline-flex items-center justify-center px-4 py-2.5 rounded-lg border border-indigo-200 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
+                          >
+                            Add field
+                          </button>
                           <button
                             type="button"
                             onClick={handleSubmitEligibility}

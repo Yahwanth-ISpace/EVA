@@ -1,16 +1,13 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { ObjectId } from 'mongodb';
-import { PrismaService } from '../prisma/prisma.service';
+import { Document, ObjectId } from 'mongodb';
 import { TwilioService } from 'src/twilio/twilio.service';
 import { AppointmentDetailsDto } from './dto/appointment-details.dto';
 import { MongoService } from 'src/mongo/mongo.service';
-import { AgentDto } from 'src/schedular/dto/agent.dto';
 import { mapMongoAppointmentToClient } from './appointment.mapper';
 import { VerificationService } from 'src/verification/verification.service';
 
@@ -19,14 +16,15 @@ export class AppointmentService {
   private readonly logger = new Logger(AppointmentService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
     private readonly twilioService: TwilioService,
     private readonly mongoService: MongoService,
     private readonly verificationService: VerificationService,
   ) {}
 
   async create(appointment: AppointmentDetailsDto, agentId: string) {
-    this.logger.debug(`Creating appointment: ${JSON.stringify(appointment)}`);
+    this.logger.debug(
+      `Creating appointment ${appointment.appointmentId} for patient ${appointment.patient?.patientId}`,
+    );
 
     const phone = (appointment.InsuranceCompany_Phone ?? '').trim();
     const ext = (appointment.InsuranceCompany_Phone_Ext ?? '').trim();
@@ -53,126 +51,54 @@ export class AppointmentService {
     return appointment;
   }
 
-  private userDobToYmd(d: Date): string {
-    return d.toISOString().slice(0, 10);
-  }
-
-  async findAll(user: { userId: string; role: 'ADMIN' | 'OPERATOR' }) {
+  async findAll() {
     const col = await this.mongoService.appointmentsCollection();
-
-    if (user.role === 'ADMIN') {
-      const docs = await col
-        .find({})
-        .sort({
-          appointmentDate: 1,
-          savedAt: -1,
-        })
-        .toArray();
-      return docs.map((d) =>
-        mapMongoAppointmentToClient(d as Record<string, unknown>),
-      );
-    }
-
-    const db = await this.prisma.client();
-    const foundUser = await db.orm.User.where({ _id: user.userId }).first();
-    const dbUser = foundUser
-      ? {
-          firstName: foundUser.firstName,
-          lastName: foundUser.lastName,
-          dob: foundUser.dob,
-        }
-      : null;
-
-    if (!dbUser) {
-      throw new NotFoundException('User not found');
-    }
-
-    const dobYmd = dbUser.dob ? this.userDobToYmd(dbUser.dob) : undefined;
-
-    const patientIds = await this.mongoService.findPatientIdsByUserProfile(
-      dbUser.firstName,
-      dbUser.lastName,
-      dobYmd,
-    );
-
-    if (!patientIds.length) {
-      return [];
-    }
-
     const docs = await col
-      .find({
-        'patient.patientId': {
-          $in: patientIds,
-        },
-      })
+      .find({})
       .sort({
         appointmentDate: 1,
         savedAt: -1,
       })
       .toArray();
-    return docs.map((d) =>
+    const sealed: Document[] = [];
+    for (const doc of docs) {
+      sealed.push(await this.mongoService.sealAppointmentSsns(col, doc));
+    }
+    return sealed.map((d) =>
       mapMongoAppointmentToClient(d as Record<string, unknown>),
     );
   }
 
-  async findOne(id: string, user: { userId: string; role: 'ADMIN' | 'OPERATOR' }) {
+  async findOne(id: string) {
     const col = await this.mongoService.appointmentsCollection();
-
-    const doc =
-      id.length === 24 && ObjectId.isValid(id)
-        ? await col.findOne({
-            _id: new ObjectId(id),
-          })
-        : await col.findOne({
-            $or: [
-              {
-                'patient.patientId': id,
-              },
-              {
-                appointmentId: Number(id),
-              },
-              {
-                appointmentId: id,
-              },
-            ],
-          });
-
-    if (!doc) {
-      throw new NotFoundException('Appointment not found');
-    }
-
-    if (user.role === 'OPERATOR') {
-      const db = await this.prisma.client();
-      const foundUser = await db.orm.User.where({ _id: user.userId }).first();
-      const dbUser = foundUser
-        ? {
-            firstName: foundUser.firstName,
-            lastName: foundUser.lastName,
-            dob: foundUser.dob,
-          }
-        : null;
-
-      if (!dbUser) {
-        throw new NotFoundException('User not found');
-      }
-
-      const dobYmd = dbUser.dob ? this.userDobToYmd(dbUser.dob) : undefined;
-
-      const allowedPatientIds =
-        await this.mongoService.findPatientIdsByUserProfile(
-          dbUser.firstName,
-          dbUser.lastName,
-          dobYmd,
-        );
-
-      const patientId = String(doc.patient?.patientId ?? '');
-
-      if (!allowedPatientIds.includes(patientId)) {
-        throw new ForbiddenException('Access denied to this appointment');
-      }
-    }
-
+    const doc = await this.findAppointmentDocument(col, id);
+    if (!doc) throw new NotFoundException('Appointment not found');
+    await this.mongoService.sealAppointmentSsns(col, doc);
     return mapMongoAppointmentToClient(doc as Record<string, unknown>);
+  }
+
+  async remove(id: string) {
+    const col = await this.mongoService.appointmentsCollection();
+    const doc = await this.findAppointmentDocument(col, id);
+    if (!doc) throw new NotFoundException('Appointment not found');
+    await col.deleteOne({ _id: doc._id });
+    return { deleted: true, id };
+  }
+
+  private async findAppointmentDocument(
+    col: Awaited<ReturnType<MongoService['appointmentsCollection']>>,
+    id: string,
+  ) {
+    if (id.length === 24 && ObjectId.isValid(id)) {
+      return col.findOne({ _id: new ObjectId(id) });
+    }
+    return col.findOne({
+      $or: [
+        { 'patient.patientId': id },
+        { appointmentId: Number(id) },
+        { appointmentId: id },
+      ],
+    });
   }
 
   async saveEligibilityToSabrina(
@@ -180,7 +106,7 @@ export class AppointmentService {
     user: { userId: string; role: 'ADMIN' | 'OPERATOR' },
     extractedData: Record<string, string | null | undefined>,
   ) {
-    const appt = await this.findOne(id, user);
+    const appt = await this.findOne(id);
     const record = appt as Record<string, unknown>;
     const payeeId = String(
       record.payeeId ?? (record.patient as { patientId?: string })?.patientId ?? '',

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
 
 /** Body for `POST /twilio/call` — start outbound verification call. */
 export class TwilioInitiateCallDto {
@@ -7,6 +7,8 @@ export class TwilioInitiateCallDto {
     example: '+15551234567',
     description: 'E.164 phone number to dial.',
   })
+  @IsString()
+  @Matches(/^\+?[0-9]{8,15}$/)
   to: string;
 
   @ApiProperty({
@@ -14,6 +16,8 @@ export class TwilioInitiateCallDto {
     description:
       'Payee (patient) ID — links stream to verification requirement.',
   })
+  @IsString()
+  @Matches(/^[A-Za-z0-9_-]{1,80}$/)
   payeeId: string;
 
   @ApiPropertyOptional({

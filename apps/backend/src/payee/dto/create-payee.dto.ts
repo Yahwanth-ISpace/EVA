@@ -17,7 +17,7 @@ export class CreatePayeeDto {
 
   @ApiProperty({ example: 'TempPass1!' })
   @IsString()
-  @MinLength(6)
+  @MinLength(12)
   password: string;
 
   @ApiProperty({ example: 'John' })
@@ -34,6 +34,8 @@ export class CreatePayeeDto {
   dob?: Date;
 
   @ApiPropertyOptional({ example: '987-65-4321' })
+  @IsOptional()
+  @IsString()
   ssn?: string;
 
   @ApiPropertyOptional({ type: PayerDto })

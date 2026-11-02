@@ -57,8 +57,7 @@ export default function Dashboard() {
             pb-12
           "
         >
-          {isAdmin && (
-            <section className="flex min-h-0 flex-1 flex-col">
+          <section className="flex min-h-0 flex-1 flex-col">
               {/* ========================================= */}
               {/* APPOINTMENTS / VERIFICATIONS TABS         */}
               {/* ========================================= */}
@@ -91,6 +90,7 @@ export default function Dashboard() {
                     Verifications
                   </button>
 
+                  {isAdmin ? (
                   <button
                     type="button"
                     onClick={() => setActiveTab("agents")}
@@ -102,6 +102,7 @@ export default function Dashboard() {
                   >
                     Agents
                   </button>
+                  ) : null}
                 </div>
               </div>
 
@@ -130,13 +131,12 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {activeTab === "agents" && (
+              {isAdmin && activeTab === "agents" && (
                 <div className="mt-5 flex min-h-0 flex-1 flex-col">
                   <AdminAgentsTable />
                 </div>
               )}
             </section>
-          )}
         </Container>
       </div>
     </div>

@@ -12,6 +12,8 @@ import { MongoService } from 'src/mongo/mongo.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { EligibilityPayloadUtil } from './eligibility-payload.util';
+import { firstSsnValue, ssnLastFour } from '../common/security/ssn';
+import { sabrinaApiBase } from '../common/security/sabrina-config';
 
 /** One benefit question from the appointment / requirement payload (ask this verbatim). */
 export type PatientVerificationStep = {
@@ -295,50 +297,21 @@ export class VerificationService {
     );
   }
 
-  async findAll(user: { userId: string; role: string }) {
-    if (user.role === 'OPERATOR') {
-      if (!user.userId) {
-        throw new Error('Missing payee user ID');
-      }
-
-      const db = await this.prisma.client();
-      const found = await db.orm.User.where({ _id: user.userId }).first();
-      const u = found
-        ? {
-            firstName: found.firstName,
-            lastName: found.lastName,
-            dob: found.dob,
-          }
-        : null;
-      const dobYmd = u?.dob ? u.dob.toISOString().slice(0, 10) : undefined;
-      const patientIds = await this.mongoService.findPatientIdsByUserProfile(
-        u?.firstName,
-        u?.lastName,
-        dobYmd,
-      );
-      if (patientIds.length === 0) {
-        return [];
-      }
-
-      const runtime = await db.runtime();
-      const rows = await runtime.query(
-        db.query
-          .from('Verification')
-          .match((fields) => fields.payeeId.in(patientIds))
-          .sort({ createdAt: -1 })
-          .build(),
-      );
-      return Promise.all(
-        rows.map((row) => this.verificationWithRequirement(row._id)),
-      );
-    }
-
+  async findAll() {
     const db = await this.prisma.client();
     return this.prisma.withIds(
       await db.orm.Verification.include('verificationRequirement')
         .orderBy({ createdAt: -1 })
         .all(),
     );
+  }
+
+  async delete(id: string) {
+    const existing = await this.verificationWithRequirement(id);
+    if (!existing) throw new NotFoundException('Verification not found');
+    const db = await this.prisma.client();
+    await db.orm.Verification.where({ _id: id }).delete();
+    return { deleted: true, id };
   }
 
   /** Type for extracted verification fields (legacy 4 or dynamic from VerificationRequirement). */
@@ -367,7 +340,7 @@ export class VerificationService {
     transcriptToAppend?: string,
     verificationRequirementId?: string | null,
     appointmentId?: string | null,
-    options?: { replaceTranscript?: boolean },
+    options?: { replaceTranscript?: boolean; replace?: boolean },
   ) {
     // if (!(await this.mongoService.patientHasAppointment(payeeId))) {
     //   throw new NotFoundException(
@@ -410,13 +383,15 @@ export class VerificationService {
 
     const existingData =
       (existing?.extractedData as Record<string, string | null> | null) ?? {};
-    const merged: Record<string, string | null> = { ...existingData };
-    for (const [k, v] of Object.entries(
-      extracted as Record<string, string | null | undefined>,
-    )) {
+    const incoming = extracted as Record<string, string | null | undefined>;
+    const merged: Record<string, string | null> = options?.replace
+      ? {}
+      : { ...existingData };
+    for (const [k, v] of Object.entries(incoming)) {
       if (hasValue(v)) {
         merged[k] = String(v).trim();
       } else if (
+        !options?.replace &&
         existingData[k] != null &&
         String(existingData[k]).trim().length > 0
       ) {
@@ -457,9 +432,7 @@ export class VerificationService {
 
   async findById(id: string) {
     const verification = await this.verificationWithRequirement(id);
-
     if (!verification) throw new NotFoundException('Verification not found');
-
     return verification;
   }
 
@@ -512,10 +485,7 @@ export class VerificationService {
       fullName: `${fn} ${ln}`.trim(),
       dob,
       dobFormatted,
-      ssn:
-        doc.SSN != null && String(doc.SSN).trim() !== ''
-          ? String(doc.SSN)
-          : null,
+      ssn: ssnLastFour(firstSsnValue(doc)),
     };
   }
 
@@ -659,9 +629,7 @@ export class VerificationService {
       doc as Record<string, unknown>,
     );
 
-    this.logger.log(
-      `Verification Steps: ${JSON.stringify(verificationSteps, null, 2)}`,
-    );
+    this.logger.log(`Verification steps loaded: ${verificationSteps.length}`);
 
     const patientName = String(patient.patientName ?? '').trim();
     const nameSlice = patientName.split(/\s+/);
@@ -673,10 +641,7 @@ export class VerificationService {
         fullName: patientName,
         dob: patientDob,
         dobFormatted: patientDobFormatted,
-        ssn:
-          doc.SSN != null && String(doc.SSN).trim() !== ''
-            ? String(doc.SSN)
-            : null,
+        ssn: ssnLastFour(firstSsnValue(doc)),
       },
       subscriber: {
         firstName: subscriberFirstName,
@@ -1133,6 +1098,7 @@ export class VerificationService {
       transcriptToAppend ?? undefined,
       null,
       apptId,
+      { replace: true },
     );
 
     const appointment = await this.mongoService.findAppointmentDocument(
@@ -1175,17 +1141,14 @@ export class VerificationService {
     }
 
     const payload = this.buildEligibilityPayload(appointment, extracted);
-    const sabrinaApiUrl =
-      process.env.SABRINA_API_URL || 'https://sabrinauatapi.ispace.com/api';
+    const sabrinaApiUrl = sabrinaApiBase();
     const headers = {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       'Ocp-Apim-Subscription-Key': process.env.SABRINA_SUBSCRIPTION_KEY,
     };
 
-    this.logger.log(
-      `SaveEligibility payload for payee ${payeeId}: ${JSON.stringify(payload, null, 2)}`,
-    );
+    this.logger.log(`SaveEligibility queued for payee ${payeeId}`);
 
     const response = await firstValueFrom(
       this.httpService.post(
@@ -1243,14 +1206,7 @@ export class VerificationService {
       required: boolean;
       order: number;
     }> = [];
-    this.logger.log(
-      'Parsing transcript for verification with payeeId: {}',
-      payeeId,
-    );
-    this.logger.log('Transcript to append: {}', transcriptToAppend);
-
-    this.logger.log('Appointment ID: {}', appointmentId);
-    this.logger.log('Extracted data: {}', extracted);
+    this.logger.log(`Parsing transcript for payee ${payeeId}`);
     // If verification requirement is provided, get the fields from it
     if (extracted) {
       const verReq = Object.keys(extracted);
@@ -1332,11 +1288,11 @@ export class VerificationService {
       'Ocp-Apim-Subscription-Key': process.env.SABRINA_SUBSCRIPTION_KEY,
     };
 
-    this.logger.log(`Eligibility Payload: ${JSON.stringify(payload, null, 2)}`);
+    this.logger.log(`Eligibility payload queued for payee ${payeeId}`);
 
     const response = await firstValueFrom(
       this.httpService.post(
-        'https://sabrinauatapi.ispace.com/api/appointments/SaveEligibility',
+        `${sabrinaApiBase()}/appointments/SaveEligibility`,
         payload,
         {
           headers,
@@ -1345,7 +1301,7 @@ export class VerificationService {
     );
 
     this.logger.log(
-      `Eligibility response: ${JSON.stringify(response?.data ?? response, null, 2)}`,
+      `Eligibility response status ${response?.status ?? 'unknown'} for payee ${payeeId}`,
     );
 
     return sabrinaData;

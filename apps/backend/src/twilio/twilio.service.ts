@@ -1,10 +1,9 @@
-import { HttpException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, HttpException, Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
 import twilio from 'twilio';
 import { v4 as uuidv4 } from 'uuid';
-import * as https from 'https';
 import FormData from 'form-data';
 import { AgentDto } from 'src/schedular/dto/agent.dto';
 
@@ -252,7 +251,24 @@ export class TwilioService {
   /**
    * STEP 4: Download recording from Twilio
    */
+  private assertTwilioRecordingUrl(raw: string): URL {
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      throw new BadRequestException('Invalid recording URL');
+    }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
+      throw new BadRequestException('Recording URL must be https and must not include credentials');
+    }
+    if (parsed.hostname.toLowerCase() !== 'api.twilio.com') {
+      throw new BadRequestException('Recording host is not allowed');
+    }
+    return parsed;
+  }
+
   private async downloadRecording(url: string): Promise<string> {
+    const recording = this.assertTwilioRecordingUrl(url);
     const uploadDir = path.join(process.cwd(), 'uploads', 'calls');
     if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
@@ -260,13 +276,16 @@ export class TwilioService {
     const filePath = path.join(uploadDir, fileName);
 
     const writer = fs.createWriteStream(filePath);
-    const agent = new https.Agent({ rejectUnauthorized: false });
+    const maxBytes = 25 * 1024 * 1024;
 
     const response = await axios({
-      url: `${url}.wav`,
+      url: `${recording.toString()}.wav`,
       method: 'GET',
       responseType: 'stream',
-      httpsAgent: agent,
+      timeout: 30_000,
+      maxRedirects: 0,
+      maxContentLength: maxBytes,
+      maxBodyLength: maxBytes,
       headers: {
         Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`,
       },

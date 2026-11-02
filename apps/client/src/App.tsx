@@ -1,5 +1,6 @@
 // src/App.tsx
-import { useSelector } from "react-redux";
+import { useEffect, useState } from "react";
+import { useDispatch, useSelector } from "react-redux";
 import {
   Navigate,
   Route,
@@ -7,7 +8,6 @@ import {
   Routes,
 } from "react-router-dom";
 
-import AppointmentForm from "./pages/AppointmentForm";
 import AppointmentDetail from "./pages/AppointmentDetail";
 import Dashboard from "./pages/Dashboard";
 import ErrorPage from "./pages/ErrorPage";
@@ -19,18 +19,30 @@ import UnauthorizedPage from "./pages/UnauthorizedPage";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import SignUp from "./pages/SignUp";
-import type { RootState } from "./redux/store";
+import type { AppDispatch, RootState } from "./redux/store";
+import { restoreSession } from "./redux/actions/authActions";
 import ProtectedRoute from "./utils/ProtectedRoute";
 import { hasValidSession } from "./utils/session";
 
 function App() {
-  const { user, token, loading } = useSelector(
+  const dispatch = useDispatch<AppDispatch>();
+  const { user, isAuthenticated } = useSelector(
     (state: RootState) => state.authState
   );
-  const sessionValid = hasValidSession(user, token);
-  
+  const [sessionReady, setSessionReady] = useState(false);
+  const sessionValid = hasValidSession(user, isAuthenticated);
 
-  if (loading) return <div>Loading...</div>;
+  useEffect(() => {
+    let active = true;
+    dispatch(restoreSession()).finally(() => {
+      if (active) setSessionReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, [dispatch]);
+
+  if (!sessionReady) return <div>Loading...</div>;
 
   return (
     <Router>
@@ -72,14 +84,6 @@ function App() {
               element={
                 <ProtectedRoute allowedRoles={["ADMIN", "OPERATOR"]}>
                   <Dashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/appointment-form"
-              element={
-                <ProtectedRoute allowedRoles={["ADMIN", "OPERATOR"]}>
-                  <AppointmentForm />
                 </ProtectedRoute>
               }
             />

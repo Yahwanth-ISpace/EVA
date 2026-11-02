@@ -4,6 +4,7 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import * as fs from 'fs';
 import FormData from 'form-data';
+import { aiServiceAuthHeaders } from '../common/security/ai-client';
 
 export type TpaEmotionCategory = 'angry' | 'happy' | 'normal';
 
@@ -58,7 +59,7 @@ export class AudioEmotionService {
           `${base}/emotion/classify`,
           form,
           {
-            headers: form.getHeaders(),
+            headers: { ...form.getHeaders(), ...aiServiceAuthHeaders() },
             timeout: 45_000,
             maxBodyLength: Infinity,
             maxContentLength: Infinity,

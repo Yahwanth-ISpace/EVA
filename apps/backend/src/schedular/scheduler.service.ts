@@ -11,6 +11,8 @@ import {
 } from 'src/appointment/dto/appointment-details.dto';
 import { AppointmentService } from 'src/appointment/appointment.service';
 import { MongoService } from 'src/mongo/mongo.service';
+import { sabrinaApiBase, sabrinaVerificationCode } from 'src/common/security/sabrina-config';
+import { encryptSsnFields } from 'src/common/security/ssn';
 
 // Ensure @nestjs/schedule is installed: npm install @nestjs/schedule
 
@@ -22,9 +24,6 @@ const today = new Date();
 
 const fromDate = new Date(today);
 fromDate.setDate(today.getDate() - 2);
-
-const sabrinaApiUrl =
-  process.env.SABRINA_API_URL || 'https://sabrinauatapi.ispace.com/api';
 
 const serviceBusConnectionString = process.env.SERVICE_BUS_CONNECTION_STRING;
 const serviceBusQueueName = process.env.SERVICE_BUS_QUEUE_NAME;
@@ -50,7 +49,9 @@ export class SchedulerService {
       let appointmentData = await this.getAppointments();
       let finalAppointments: AppointmentDetailsDto;
       let pendingAppointments: AppointmentDetailsDto[] = [];
-      this.logger.debug(`Appointment data fetched::: `, appointmentData);
+      this.logger.debug(
+        `Appointment data fetched for ${appointmentData?.appointmentId ?? 'none'}`,
+      );
       if (
         appointmentData &&
         !(Array.isArray(appointmentData) && appointmentData.length === 0)
@@ -65,7 +66,7 @@ export class SchedulerService {
         }
 
         this.logger.debug(
-          `Final appointments::: ${JSON.stringify(finalAppointments)}`,
+          `Final appointment ${finalAppointments?.appointmentId ?? 'none'} ready to save`,
         );
         //save finalAppointments to mongo collection named processed_appointments for reference and debugging
         await this.saveTransformedAppointmentDataToMongo(finalAppointments);
@@ -145,12 +146,12 @@ export class SchedulerService {
   }
 
   async loginToSabrina() {
-    const loginUrl = `${sabrinaApiUrl}/login/login`;
+    const loginUrl = `${sabrinaApiBase()}/login/login`;
 
     const payload = {
       username: process.env.SABRINA_USERNAME,
       password: process.env.SABRINA_PASSWORD,
-      verificationCode: process.env.SABRINA_VERIFICATION_CODE || '123456',
+      verificationCode: sabrinaVerificationCode(),
     };
 
     const headers = {
@@ -181,7 +182,7 @@ export class SchedulerService {
         await this.tryReadAppointmentFromServiceBus();
 
       this.logger.debug(
-        `ServiceBus data: ${JSON.stringify(serviceBusAppointment)}`,
+        `Service bus appointment ${serviceBusAppointment?.appointmentId ?? 'none'}`,
       );
 
       if (serviceBusAppointment) {
@@ -307,11 +308,11 @@ export class SchedulerService {
       }
     }
 
-    const document = {
+    const document = encryptSsnFields({
       ...appointmentData,
       savedAt: new Date(),
       source: 'scheduler',
-    };
+    });
     const result = await collection.insertOne(document);
     this.logger.log(
       `Saved raw appointment data to MongoDB: ${result.insertedId}`,
@@ -342,11 +343,11 @@ export class SchedulerService {
       }
     }
 
-    const document = {
+    const document = encryptSsnFields({
       ...appointmentData,
       savedAt: new Date(),
       source: 'scheduler',
-    };
+    });
     const result = await collection.insertOne(document);
     this.logger.log(
       `Saved raw appointment data to MongoDB: ${result.insertedId}`,

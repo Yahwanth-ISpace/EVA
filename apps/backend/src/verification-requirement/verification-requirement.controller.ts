@@ -7,6 +7,7 @@ import {
   Param,
   Delete,
 } from '@nestjs/common';
+import { Roles } from '../auth/decorators/roles.decorator';
 import {
   ApiOperation,
   ApiParam,
@@ -24,6 +25,7 @@ export class VerificationRequirementController {
   ) {}
 
   @Post()
+  @Roles('ADMIN')
   @ApiOperation({
     summary: 'Create verification requirement',
     description:
@@ -51,6 +53,7 @@ export class VerificationRequirementController {
   }
 
   @Patch(':id')
+  @Roles('ADMIN')
   @ApiOperation({ summary: 'Update requirement', description: 'Partial update of payeeId and/or verificationFields.' })
   @ApiParam({ name: 'id', example: 'requirement-uuid-here' })
   update(
@@ -61,6 +64,7 @@ export class VerificationRequirementController {
   }
 
   @Delete(':id')
+  @Roles('ADMIN')
   @ApiOperation({ summary: 'Delete requirement' })
   @ApiParam({ name: 'id', example: 'requirement-uuid-here' })
   remove(@Param('id') id: string) {

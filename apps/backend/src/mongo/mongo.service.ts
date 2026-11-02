@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { Collection, Document, MongoClient, Db } from 'mongodb';
+import { applySsnEncryption, encryptSsnFields } from '../common/security/ssn';
 
 /** Mongo collection that holds Sabrina / scheduler appointment + patient + payer + office + provider denormalized documents. */
 export const DEFAULT_APPOINTMENTS_COLLECTION = 'appointments';
@@ -75,7 +76,7 @@ export class MongoService implements OnModuleDestroy {
     const aid = appointmentId?.trim();
     if (!aid) return null;
 
-    return col.findOne(
+    const doc = await col.findOne(
       {
         $and: [
           this.appointmentIdQuery(aid),
@@ -91,6 +92,17 @@ export class MongoService implements OnModuleDestroy {
         sort: { savedAt: -1 },
       },
     );
+    if (!doc) return null;
+    return this.sealAppointmentSsns(col, doc);
+  }
+
+  /** Encrypt any plaintext SSN fields and write them back. */
+  async sealAppointmentSsns(col: Collection<Document>, doc: Document): Promise<Document> {
+    const updates = applySsnEncryption(doc);
+    if (Object.keys(updates).length > 0 && doc._id) {
+      await col.updateOne({ _id: doc._id }, { $set: updates });
+    }
+    return doc;
   }
 
   async patientHasAppointment(patientId: string): Promise<boolean> {
@@ -104,7 +116,7 @@ export class MongoService implements OnModuleDestroy {
     await col.updateOne(
       this.appointmentIdQuery(String(appointment.appointmentId)),
       {
-        $set: appointment,
+        $set: encryptSsnFields(appointment),
       },
       {
         upsert: true,
@@ -136,10 +148,14 @@ export class MongoService implements OnModuleDestroy {
 
   async findAllAppointmentsSorted(): Promise<Document[]> {
     const col = await this.appointmentsCollection();
-    return col
+    const docs = await col
       .find({})
       .sort({ AppointmentDate: 1, savedAt: 1 } as Document)
       .toArray();
+    for (const doc of docs) {
+      await this.sealAppointmentSsns(col, doc);
+    }
+    return docs;
   }
 
   async getSubrinaAppointments(
@@ -159,7 +175,8 @@ export class MongoService implements OnModuleDestroy {
         sort: { AppointmentDate: -1, savedAt: -1 } as Document,
       },
     );
-    return doc;
+    if (!doc) return null;
+    return this.sealAppointmentSsns(col, doc);
   }
 
   async saveSubrinaDebugData(
@@ -169,7 +186,7 @@ export class MongoService implements OnModuleDestroy {
   ) {
     try {
       this.logger.log(
-        `Saving Subrina debug data for PayeeID: ${payeeId}, AppointmentID: ${appointmentId}, Data: ${JSON.stringify(subrinaData)}`,
+        `Saving Subrina debug data for PayeeID: ${payeeId}, AppointmentID: ${appointmentId}`,
       );
       const col = await this.subrinaResponseCollection();
 
@@ -188,9 +205,7 @@ export class MongoService implements OnModuleDestroy {
       const { _id, ...dataToSave } = (subrinaData || {}) as any;
 
       // Insert new document
-      const result = await col.insertOne({
-        ...dataToSave,
-      });
+      const result = await col.insertOne(encryptSsnFields({ ...dataToSave }));
 
       this.logger.log(
         `Saved Subrina debug data to MongoDB: ${result.insertedId}`,

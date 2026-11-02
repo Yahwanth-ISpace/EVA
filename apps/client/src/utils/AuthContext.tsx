@@ -6,6 +6,7 @@ import {
   useEffect,
   useCallback,
 } from "react";
+import { sanitizeStoredUser } from "./sanitizeUser";
 
 interface PayeeType {
   id: string;
@@ -46,23 +47,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    const savedUser = localStorage.getItem("user");
-    const savedRole = localStorage.getItem("role");
-
-    if (token && savedUser && savedRole) {
-      setIsAuthenticated(true);
-      setUser(JSON.parse(savedUser));
-      setRole(savedRole);
-    }
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    localStorage.removeItem("role");
     setLoading(false);
   }, []);
 
-  const login = useCallback((token: string, user: UserType) => {
-    localStorage.setItem("token", token);
-    localStorage.setItem("user", JSON.stringify(user));
-    localStorage.setItem("role", user.role);
-
+  const login = useCallback((_token: string, rawUser: UserType) => {
+    const user = sanitizeStoredUser(rawUser);
     setIsAuthenticated(true);
     setUser(user);
     setRole(user.role);

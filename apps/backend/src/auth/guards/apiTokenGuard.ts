@@ -5,8 +5,7 @@ import {
   UnauthorizedException,
   Logger,
 } from '@nestjs/common';
-// Uncomment if you want to use ConfigService for env variables
-// import { ConfigService } from '@nestjs/config';
+import { secretsEqual } from '../../common/security/timing-safe';
 
 @Injectable()
 export class ApiTokenGuard implements CanActivate {
@@ -28,23 +27,14 @@ export class ApiTokenGuard implements CanActivate {
     }
 
     if (!authHeader.toLowerCase().startsWith('bearer ')) {
-      this.logger.warn(`Invalid Authorization header format: ${authHeader}`);
+      this.logger.warn('Invalid Authorization header format');
       throw new UnauthorizedException('Invalid Authorization header format');
     }
 
-    const token = authHeader.substring(7).trim(); // Remove "Bearer " prefix and trim
-
-    // If using ConfigService:
-    // const expectedToken = this.configService.get<string>('VERIFICATIONS_API_TOKEN')?.trim();
-
-    // Using process.env directly:
+    const token = authHeader.substring(7).trim();
     const expectedToken = (process.env.VERIFICATIONS_API_TOKEN ?? '').trim();
 
-    this.logger.log(`Incoming token: "${token}"`);
-    this.logger.log(`Expected token: "${expectedToken}"`);
-
-    if (token === expectedToken && expectedToken !== '') {
-      console.log('API token is valid');
+    if (expectedToken && secretsEqual(token, expectedToken)) {
       return true;
     }
 

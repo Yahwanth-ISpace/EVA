@@ -1,5 +1,5 @@
 import { useSelector } from "react-redux";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 import Logo from "../assets/logo1.png";
 import Icon from "./Icons";
@@ -10,7 +10,6 @@ import { useAppDispatch } from "../utils/hooks";
 
 export default function Navbar() {
   const navigate = useNavigate();
-  const location = useLocation();
   const dispatch = useAppDispatch();
 
   const { user } = useSelector((state: RootState) => state.authState);
@@ -62,14 +61,6 @@ export default function Navbar() {
 
       {/* Right Side - Actions */}
       <div className="wrapper flex gap-3 items-center">
-        {location.pathname !== "/appointment-form" && (
-          <button
-            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow transition-all outline-none"
-            onClick={() => navigate("/appointment-form")}
-          >
-            Book Appointment
-          </button>
-        )}
         <Icon iconName="logout" iconColor="" size="sm" onClick={handleLogout} />
       </div>
     </nav>

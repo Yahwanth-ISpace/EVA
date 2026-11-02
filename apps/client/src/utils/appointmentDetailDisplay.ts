@@ -358,7 +358,7 @@ export function getApplicationDetailSections(
         field(
           "ssn",
           "SSN (on file)",
-          payee?.ssn ? "On file" : doc.SSN ? "On file" : "—",
+          payee?.ssn || doc.ssnOnFile || doc.SSN ? "On file" : "—",
         ),
       ],
     },
@@ -672,13 +672,19 @@ export function applyDraftToCallExtractionRows(
   rows: CallExtractionRow[],
   draft: Record<string, string>,
 ): CallExtractionRow[] {
-  return rows.map((row) => {
-    const value = draft[row.fieldKey] ?? row.extractedValue ?? "";
+  const byKey = new Map(rows.map((row) => [row.fieldKey, row]));
+  return Object.entries(draft).map(([key, value]) => {
+    const existing = byKey.get(key);
     const trimmed = value.trim();
+    if (existing) {
+      return { ...existing, extractedValue: value, filled: trimmed.length > 0 };
+    }
     return {
-      ...row,
+      fieldKey: key,
+      label: key,
       extractedValue: value,
-      filled: trimmed !== "",
+      filled: trimmed.length > 0,
+      category: "benefit" as const,
     };
   });
 }

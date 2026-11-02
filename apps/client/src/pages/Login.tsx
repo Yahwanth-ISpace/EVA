@@ -22,8 +22,8 @@ export default function Login() {
   const [passwordError, setPasswordError] = useState("");
 
   const validatePassword = (pwd: string) => {
-    if (pwd.length < 6) {
-      setPasswordError("Password must be at least 6 characters");
+    if (!pwd) {
+      setPasswordError("Password is required");
       return false;
     }
     setPasswordError("");
@@ -37,8 +37,8 @@ export default function Login() {
     }
 
     try {
-      const res = await dispatch(login(email, password));
-      if (res?.token) {
+      const res = await dispatch(login(email, password, rememberMe));
+      if (res?.user) {
         navigate("/dashboard");
       }
     } catch {

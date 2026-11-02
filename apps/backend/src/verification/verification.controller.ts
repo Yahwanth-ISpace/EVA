@@ -2,11 +2,11 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
   Query,
-  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -25,21 +25,13 @@ import { VerificationService } from './verification.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwtAuthGuard';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { TranscriptionService } from 'src/transcription/transcription.service';
-import { diskStorage } from 'multer';
-import { v4 as uuidv4 } from 'uuid';
-import * as path from 'path';
 import { ApiTokenGuard } from 'src/auth/guards/apiTokenGuard';
+import { Public } from 'src/auth/decorators/public.decorator';
+import { audioUploadOptions } from '../common/upload/audio-upload';
 import {
   VerifyPayeeTranscriptDto,
   PushExtractedDto,
 } from './dto/verification-request.dto';
-
-interface Request {
-  user?: {
-    userId: string;
-    role: string;
-  };
-}
 
 @ApiTags('verifications')
 @Controller('verifications')
@@ -49,6 +41,7 @@ export class VerificationController {
     private readonly transcriptionService: TranscriptionService,
   ) {}
 
+  @Public()
   @UseGuards(ApiTokenGuard)
   @Post(':payeeId')
   @ApiBearerAuth('verifications-api-token')
@@ -74,6 +67,7 @@ export class VerificationController {
   }
 
   /** Push extracted benefit data from a call (e.g. media stream). Creates or updates verification for payeeId. */
+  @Public()
   @UseGuards(ApiTokenGuard)
   @Post(':payeeId/push-extracted')
   @ApiBearerAuth('verifications-api-token')
@@ -99,6 +93,7 @@ export class VerificationController {
   }
 
   /** Same as verifyFromAudio but accepts extracted call fields in the body (no audio file). */
+  @Public()
   @UseGuards(ApiTokenGuard)
   @Post('from-extracted-call/:payeeId')
   @ApiBearerAuth('verifications-api-token')
@@ -143,6 +138,7 @@ export class VerificationController {
   }
 
   @Post('from-audio/:payeeId')
+  @Public()
   @UseGuards(ApiTokenGuard)
   @ApiBearerAuth('verifications-api-token')
   @ApiOperation({
@@ -173,17 +169,7 @@ export class VerificationController {
       },
     },
   })
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: diskStorage({
-        destination: './uploads',
-        filename: (req, file, cb) => {
-          const ext = path.extname(file.originalname);
-          cb(null, `${uuidv4()}${ext}`);
-        },
-      }),
-    }),
-  )
+  @UseInterceptors(FileInterceptor('file', audioUploadOptions()))
   async verifyFromAudio(
     @Param('payeeId') payeeId: string,
     @Query('payeeId') queryPayeeId: string,
@@ -213,24 +199,35 @@ export class VerificationController {
   @Get()
   @ApiBearerAuth('jwt-auth')
   @ApiOperation({
-    summary: 'List verifications for current user',
-    description: 'Returns verifications scoped to the logged-in user (JWT).',
+    summary: 'List verifications',
+    description:
+      'Administrators and operators both see every verification. Access is not limited to the signed-in person.',
   })
-  async findAll(@Req() req: Request) {
-    const user = req.user as { userId: string; role: string };
-    return this.verificationService.findAll(user);
+  async findAll() {
+    return this.verificationService.findAll();
   }
 
-  // ✅ Only logged-in users can see all their verifications
+  @UseGuards(JwtAuthGuard)
+  @Delete(':id')
+  @ApiBearerAuth('jwt-auth')
+  @ApiOperation({
+    summary: 'Delete a verification',
+    description: 'Available to administrators and operators.',
+  })
+  async delete(@Param('id') id: string) {
+    return this.verificationService.delete(id);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get(':id')
   @ApiBearerAuth('jwt-auth')
   @ApiOperation({ summary: 'Get verification by ID' })
   @ApiParam({ name: 'id', example: 'verification-uuid-here' })
-  async findById(@Param('id') id: string, @Req() req: Request) {
+  async findById(@Param('id') id: string) {
     return this.verificationService.findById(id);
   }
 
+  @Public()
   @UseGuards(ApiTokenGuard)
   @Post(':payeeId/parse-transcript')
   @ApiBearerAuth('verifications-api-token')

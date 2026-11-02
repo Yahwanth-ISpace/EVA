@@ -48,4 +48,10 @@ coverage/
 
 # Tests
 test-output/
-package-lock.json
+
+# Python and local artefacts
+__pycache__/
+*.pyc
+desktop.ini
+apps/outputcalls/
+/e

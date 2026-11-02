@@ -5,6 +5,7 @@ import {
   Res,
   NotFoundException,
 } from '@nestjs/common';
+import { Public } from '../auth/decorators/public.decorator';
 import { ApiOperation, ApiParam, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import * as fs from 'fs';
@@ -13,6 +14,7 @@ import * as path from 'path';
 @ApiTags('audio')
 @Controller('audio')
 export class AudioController {
+  @Public()
   @Get(':filename')
   @ApiOperation({
     summary: 'Serve static audio file',
@@ -21,7 +23,7 @@ export class AudioController {
   @ApiParam({ name: 'filename', example: 'greeting.mp3' })
   @ApiProduces('audio/mpeg')
   serveAudio(@Param('filename') filename: string, @Res() res: Response) {
-    if (!filename || filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    if (!filename || !/^[A-Za-z0-9._-]{1,120}$/.test(filename) || filename.includes('..')) {
       throw new NotFoundException('Invalid filename');
     }
     const audioDir = path.join(process.cwd(), 'public', 'audio');

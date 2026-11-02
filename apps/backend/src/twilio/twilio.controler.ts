@@ -19,7 +19,9 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from 'src/auth/guards/jwtAuthGuard';
-import { Public } from 'src/auth/decorators/public.decorator';
+import { Roles } from 'src/auth/decorators/roles.decorator';
+import { TwilioWebhook } from 'src/auth/decorators/twilio-webhook.decorator';
+import { signStreamToken } from './stream-auth';
 import { Response } from 'express';
 import { TwilioService } from './twilio.service';
 import { ElevenLabsService } from '../voice/elevenlabs.service';
@@ -70,6 +72,25 @@ function escapeXmlText(value: string): string {
 }
 
 /** Conference room names we generate for barge-in (prevent arbitrary TwiML injection). */
+function withStreamToken(
+  streamUrl: string,
+  patientId: string,
+  appointmentId?: string,
+  mode?: string,
+): string {
+  const token = signStreamToken({ patientId, appointmentId, mode });
+  if (!token) return streamUrl;
+  return `${streamUrl}&token=${encodeURIComponent(token)}`;
+}
+
+function assertSafeQueryId(value: string, label: string): string {
+  const trimmed = value?.trim() ?? '';
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(trimmed)) {
+    throw new BadRequestException(`Invalid ${label}`);
+  }
+  return trimmed;
+}
+
 function assertConferenceRoom(room: string): string {
   const r = room?.trim() ?? '';
   if (!/^eva-barge-[A-Za-z0-9]+$/.test(r)) {
@@ -107,9 +128,10 @@ export class TwilioController {
   /**
    * IVR inbound — when a call comes in, play menu and gather 1–4.
    * Configure Twilio phone number webhook: POST {{BACKEND_URL}}/twilio/inbound
-   * Flow: 1 = complaint, 2 = register insurance, 3 = latest offers, 4 = hold 10s then dial agent (e.g. 9515663123).
+   * Flow: 1 = complaint, 2 = register insurance, 3 = latest offers, 4 = hold 10s then dial the configured agent number.
    */
   @Post('inbound')
+  @TwilioWebhook()
   @ApiOperation({
     summary: 'IVR inbound — main menu (TwiML)',
     description:
@@ -135,6 +157,7 @@ export class TwilioController {
    * IVR menu handler — branch on digit (1–4). Option 4: hold 10 seconds then dial agent number.
    */
   @Post('ivr-menu')
+  @TwilioWebhook()
   @ApiOperation({
     summary: 'IVR digit handler (TwiML)',
     description:
@@ -177,17 +200,26 @@ export class TwilioController {
         return;
       }
       case '4': {
-        // Agent number: env (IVR_AGENT_PHONE_NUMBER or TWILIO_AGENT_PHONE_NUMBER) or default +919515663123
         const agentNumber = (
           process.env.IVR_AGENT_PHONE_NUMBER ||
           process.env.TWILIO_AGENT_PHONE_NUMBER ||
-          '+919515663123'
+          ''
         ).trim();
+        const callerId = (process.env.TWILIO_PHONE_NUMBER || '').trim();
+        if (!/^\+?[0-9]{8,15}$/.test(agentNumber) || !/^\+?[0-9]{8,15}$/.test(callerId)) {
+          res.type('text/xml').send(`
+            <Response>
+              <Say voice="alice">An agent is not available right now. Please try again later. Goodbye.</Say>
+              <Hangup/>
+            </Response>
+          `);
+          return;
+        }
         res.type('text/xml').send(`
           <Response>
             <Say voice="alice">Please hold while we connect you to our customer agent. This may take a few seconds.</Say>
             <Pause length="10"/>
-            <Dial timeout="30" callerId="${process.env.TWILIO_PHONE_NUMBER || ''}">${agentNumber}</Dial>
+            <Dial timeout="30" callerId="${escapeXmlAttr(callerId)}">${escapeXmlText(agentNumber)}</Dial>
             <Say voice="alice">The agent could not be reached. Please try again later. Goodbye.</Say>
             <Hangup/>
           </Response>
@@ -212,6 +244,7 @@ export class TwilioController {
    * interruptions, update backend, respond with TTS. Accepts GET (outbound) and POST (inbound).
    */
   @Post('inbound-stream')
+  @TwilioWebhook()
   @ApiOperation({
     summary: 'Connect call to EVA media stream (TwiML)',
     description:
@@ -257,6 +290,7 @@ export class TwilioController {
   }
 
   @Get('inbound-stream')
+  @TwilioWebhook()
   @ApiOperation({
     summary: 'Same as POST inbound-stream (GET for some Twilio configs)',
   })
@@ -298,12 +332,16 @@ export class TwilioController {
       : '';
     const modeQ =
       streamMode === 'tpa-ivr' ? '&mode=' + encodeURIComponent('tpa-ivr') : '';
-    const streamUrl =
+    const streamUrl = withStreamToken(
       getStreamBaseUrl() +
-      '/twilio/media-stream?patientId=' +
-      encodeURIComponent(externalPatientId) +
-      apptQ +
-      modeQ;
+        '/twilio/media-stream?patientId=' +
+        encodeURIComponent(externalPatientId) +
+        apptQ +
+        modeQ,
+      externalPatientId,
+      appointmentId,
+      streamMode,
+    );
 
     res.type('text/xml').send(`
       <Response>
@@ -320,6 +358,7 @@ export class TwilioController {
    */
   @Get('tpa-ivr-dtmf')
   @Post('tpa-ivr-dtmf')
+  @TwilioWebhook()
   @ApiOperation({
     summary: 'Send DTMF then reconnect TPA IVR stream',
     description:
@@ -348,12 +387,16 @@ export class TwilioController {
     const apptQ = appointmentId?.trim()
       ? '&appointmentId=' + encodeURIComponent(appointmentId.trim())
       : '';
-    const streamUrl =
+    const streamUrl = withStreamToken(
       getStreamBaseUrl() +
-      '/twilio/media-stream?patientId=' +
-      encodeURIComponent(pid) +
-      apptQ +
-      '&mode=tpa-ivr';
+        '/twilio/media-stream?patientId=' +
+        encodeURIComponent(pid) +
+        apptQ +
+        '&mode=tpa-ivr',
+      pid,
+      appointmentId,
+      'tpa-ivr',
+    );
 
     res.type('text/xml').send(`
       <Response>
@@ -370,6 +413,7 @@ export class TwilioController {
    * Acknowledge with 200; optionally log CallSid, CallStatus, etc.
    */
   @Post('status')
+  @TwilioWebhook()
   @ApiOperation({
     summary: 'Twilio call status callback',
     description: 'Twilio posts `CallSid`, `CallStatus`, etc. Returns `{}`.',
@@ -385,6 +429,8 @@ export class TwilioController {
 
   // STEP 1: Initiate outbound call
   @Post('call')
+  @Roles('ADMIN')
+  @ApiBearerAuth('jwt-auth')
   @ApiOperation({
     summary: 'Outbound verification call',
     description:
@@ -407,7 +453,7 @@ export class TwilioController {
    */
   @Get('hold-music')
   @Post('hold-music')
-  @Public()
+  @TwilioWebhook()
   @ApiOperation({
     summary: 'Hold music (TwiML)',
     description:
@@ -417,7 +463,7 @@ export class TwilioController {
   holdMusic(@Res() res: Response) {
     const moh = (
       process.env.TWILIO_HOLD_MUSIC_URL?.trim() ||
-      'http://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3'
+      'https://com.twilio.music.classical.s3.amazonaws.com/BusyStrings.mp3'
     ).trim();
     res.type('text/xml').send(`
       <Response>
@@ -432,7 +478,7 @@ export class TwilioController {
    */
   @Get('conference-join')
   @Post('conference-join')
-  @Public()
+  @TwilioWebhook()
   @ApiOperation({
     summary: 'Join barge-in conference (TwiML)',
     description:
@@ -481,7 +527,7 @@ export class TwilioController {
   }
 
   @Post('barge-supervisor-status')
-  @Public()
+  @TwilioWebhook()
   @ApiOperation({
     summary: 'Supervisor outbound call status (barge-in bridge)',
     description:
@@ -520,8 +566,7 @@ export class TwilioController {
         body.supervisorPhone,
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Barge-in failed';
-      throw new BadRequestException(message);
+      throw new BadRequestException('Barge-in failed');
     }
     const payeeKey = body.payeeId?.trim();
     if (payeeKey) {
@@ -567,6 +612,7 @@ export class TwilioController {
 
   // STEP 2: Main IVR step handler
   @Post('step')
+  @TwilioWebhook()
   @ApiOperation({
     summary: 'Legacy IVR step (TwiML)',
     description:
@@ -584,26 +630,27 @@ export class TwilioController {
     @Query('payeeId') payeeId: string,
     @Res() res: Response,
   ) {
-    if (!payeeId) {
+    if (!payeeId || !/^[A-Za-z0-9_-]{1,80}$/.test(payeeId)) {
       const errorAudio = await this.elevenLabsService.synthesize(
         'Sorry, there was an error processing this call.',
       );
 
       res.type('text/xml').send(`
         <Response>
-          <Play>${errorAudio}</Play>
+          <Play>${escapeXmlText(errorAudio)}</Play>
           <Hangup/>
         </Response>
       `);
       return;
     }
+    const safePayeeId = assertSafeQueryId(payeeId, 'payeeId');
 
     try {
       const recordingUrl = body?.RecordingUrl;
 
       // Handle previous step recording
       if (recordingUrl) {
-        await this.twilioService.handleRecording(recordingUrl, payeeId);
+        await this.twilioService.handleRecording(recordingUrl, safePayeeId);
       }
 
       const currentStep = parseInt(step || '0', 10);
@@ -616,7 +663,7 @@ export class TwilioController {
 
         res.type('text/xml').send(`
           <Response>
-            <Play>${goodbyeAudio}</Play>
+            <Play>${escapeXmlText(goodbyeAudio)}</Play>
             <Hangup/>
           </Response>
         `);
@@ -632,13 +679,13 @@ export class TwilioController {
 
       res.type('text/xml').send(`
         <Response>
-          <Play>${audioUrl}</Play>
+          <Play>${escapeXmlText(audioUrl)}</Play>
 
           <Record
             timeout="5"
             maxLength="20"
             playBeep="true"
-            action="${backendBaseUrl}/twilio/step?step=${currentStep + 1}&payeeId=${payeeId}"
+            action="${escapeXmlAttr(`${backendBaseUrl}/twilio/step?step=${currentStep + 1}&payeeId=${encodeURIComponent(safePayeeId)}`)}"
             method="POST"
           />
         </Response>
@@ -650,7 +697,7 @@ export class TwilioController {
 
       res.type('text/xml').send(`
         <Response>
-          <Play>${errorAudio}</Play>
+          <Play>${escapeXmlText(errorAudio)}</Play>
           <Hangup/>
         </Response>
       `);
@@ -659,34 +706,38 @@ export class TwilioController {
 
   // STEP 3: Explicit recording webhook (optional, still supported)
   @Post('call-recording')
+  @TwilioWebhook()
   @ApiOperation({
     summary: 'Recording webhook',
     description: 'Twilio posts `RecordingUrl`; processes with `payeeId` query.',
   })
   @ApiQuery({ name: 'payeeId', required: true })
   async handleRecording(@Body() body: any, @Query('payeeId') payeeId: string) {
+    const safePayeeId = assertSafeQueryId(payeeId, 'payeeId');
     const recordingUrl = body?.RecordingUrl;
     if (!recordingUrl) {
       throw new BadRequestException('Missing RecordingUrl from Twilio');
     }
 
-    return this.twilioService.handleRecording(recordingUrl, payeeId);
+    return this.twilioService.handleRecording(recordingUrl, safePayeeId);
   }
 
   // STEP 4: Ask "Is that all?" using ElevenLabs
   @Post('recording-done')
+  @TwilioWebhook()
   @ApiOperation({ summary: 'Post-recording confirmation TwiML' })
   @ApiQuery({ name: 'payeeId', required: true })
   async postRecordingConfirmation(
     @Body() body: any,
     @Query('payeeId') payeeId: string,
   ) {
+    const safePayeeId = assertSafeQueryId(payeeId, 'payeeId');
     const recordingUrl = body?.RecordingUrl;
     if (!recordingUrl) {
       throw new BadRequestException('Missing RecordingUrl');
     }
 
-    await this.twilioService.handleRecording(recordingUrl, payeeId);
+    await this.twilioService.handleRecording(recordingUrl, safePayeeId);
 
     const questionAudio = await this.elevenLabsService.synthesize(
       'Is that all the information you would like to provide?',
@@ -694,12 +745,12 @@ export class TwilioController {
 
     return `
       <Response>
-        <Play>${questionAudio}</Play>
+        <Play>${escapeXmlText(questionAudio)}</Play>
 
         <Gather
           input="speech"
           timeout="5"
-          action="${backendBaseUrl}/twilio/gather-response?payeeId=${payeeId}"
+          action="${escapeXmlAttr(`${backendBaseUrl}/twilio/gather-response?payeeId=${encodeURIComponent(safePayeeId)}`)}"
           method="POST"
         />
       </Response>
@@ -708,9 +759,11 @@ export class TwilioController {
 
   // STEP 5: Handle Gather response
   @Post('gather-response')
+  @TwilioWebhook()
   @ApiOperation({ summary: 'Speech gather result (yes/no branch)' })
   @ApiQuery({ name: 'payeeId', required: true })
   async handleGather(@Body() body: any, @Query('payeeId') payeeId: string) {
+    const safePayeeId = assertSafeQueryId(payeeId, 'payeeId');
     const speechResult = body?.SpeechResult?.toLowerCase() ?? '';
 
     if (speechResult.includes('yes')) {
@@ -720,7 +773,7 @@ export class TwilioController {
 
       return `
         <Response>
-          <Play>${byeAudio}</Play>
+          <Play>${escapeXmlText(byeAudio)}</Play>
           <Hangup/>
         </Response>
       `;
@@ -732,9 +785,9 @@ export class TwilioController {
 
     return `
       <Response>
-        <Play>${continueAudio}</Play>
+        <Play>${escapeXmlText(continueAudio)}</Play>
         <Redirect method="POST">
-          ${backendBaseUrl}/twilio/step?step=0&payeeId=${payeeId}
+          ${escapeXmlText(`${backendBaseUrl}/twilio/step?step=0&payeeId=${encodeURIComponent(safePayeeId)}`)}
         </Redirect>
       </Response>
     `;

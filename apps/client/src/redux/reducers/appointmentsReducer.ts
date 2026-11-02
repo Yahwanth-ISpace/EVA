@@ -32,6 +32,14 @@ export const appointmentsReducer = (
     case appTypes.appointments.FETCH_APPOINTMENTS_SUCCESS:
       return { ...state, appointments: action.payload };
 
+    case appTypes.appointments.DELETE_APPOINTMENT_SUCCESS:
+      return {
+        ...state,
+        appointments: state.appointments.filter(
+          (item) => item.id !== action.payload?.id,
+        ),
+      };
+
     case appTypes.appointments.CREATE_APPOINTMENT_SUCCESS:
       return {
         ...state,

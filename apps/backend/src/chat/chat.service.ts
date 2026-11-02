@@ -13,7 +13,7 @@ export class ChatService {
    * Ask a question to the chat system
    */
   async askQuestion(userId: string, question: string): Promise<string> {
-    this.logger.debug(`User ${userId} asked: ${question}`);
+    this.logger.debug(`User ${userId} asked a question`);
 
     // Step 1: Fetch relevant context from DB or vector store
     const relevantData = await this.fetchFromDatabase(question);

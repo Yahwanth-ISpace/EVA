@@ -1,6 +1,7 @@
 // src/utils/api.ts
 import store from "../redux/store";
 import { LOGOUT } from "../redux/types/authTypes";
+import { csrfHeaders, tryRefresh } from "./authSession";
 import { withNgrokBypass } from "./ngrokHeaders";
 import { isPublicAuthRequest, redirectToSessionExpired } from "./session";
 
@@ -8,16 +9,18 @@ interface ErrorResponse {
   message: string;
 }
 
+type RequestOptions = {
+  redirectOn401?: boolean;
+};
+
 const resolveBase = (baseUrl?: string) =>
   baseUrl || import.meta.env.VITE_BACKEND_URL || "";
 
-const getAuthHeaders = (baseUrl?: string) => {
-  const { token } = store.getState().authState;
-  return withNgrokBypass(resolveBase(baseUrl), {
+const getAuthHeaders = (baseUrl?: string) =>
+  withNgrokBypass(resolveBase(baseUrl), {
     "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...csrfHeaders(),
   });
-};
 
 const parseErrorMessage = (text: string): string => {
   try {
@@ -36,13 +39,38 @@ const parseErrorMessage = (text: string): string => {
   return "Request failed";
 };
 
-const handleResponse = async <T>(res: Response, url: string): Promise<T> => {
+const handleResponse = async <T>(
+  res: Response,
+  url: string,
+  retry: () => Promise<Response>,
+  options?: RequestOptions,
+): Promise<T> => {
+  if (
+    res.status === 401 &&
+    options?.redirectOn401 !== false &&
+    !isPublicAuthRequest(url)
+  ) {
+    const refreshed = await tryRefresh();
+    if (refreshed) {
+      return handleResponse<T>(await retry(), url, retry, {
+        redirectOn401: false,
+      });
+    }
+    store.dispatch({ type: LOGOUT });
+    redirectToSessionExpired();
+    throw new Error("Session expired");
+  }
+
   const text = await res.text();
 
   if (!res.ok) {
     const message = text ? parseErrorMessage(text) : "Request failed";
 
-    if (res.status === 401 && !isPublicAuthRequest(url)) {
+    if (
+      res.status === 401 &&
+      options?.redirectOn401 !== false &&
+      !isPublicAuthRequest(url)
+    ) {
       store.dispatch({ type: LOGOUT });
       redirectToSessionExpired();
     } else if (res.status === 403) {
@@ -64,48 +92,66 @@ const handleResponse = async <T>(res: Response, url: string): Promise<T> => {
 };
 
 export const api = {
-  get: async <T>(url: string, baseUrl?: string): Promise<T> => {
+  get: async <T>(
+    url: string,
+    baseUrl?: string,
+    options?: RequestOptions,
+  ): Promise<T> => {
     const base = resolveBase(baseUrl);
-    const res = await fetch(`${base}${url}`, {
-      headers: getAuthHeaders(baseUrl),
-    });
-    return handleResponse<T>(res, url);
+    const send = () =>
+      fetch(`${base}${url}`, {
+        credentials: "include",
+        headers: getAuthHeaders(baseUrl),
+      });
+    return handleResponse<T>(await send(), url, send, options);
   },
 
   post: async <TResponse, TRequest = unknown>(
     url: string,
     body: TRequest,
-    baseUrl?: string
+    baseUrl?: string,
+    options?: RequestOptions,
   ): Promise<TResponse> => {
     const base = resolveBase(baseUrl);
-    const res = await fetch(`${base}${url}`, {
-      method: "POST",
-      headers: getAuthHeaders(baseUrl),
-      body: JSON.stringify(body),
-    });
-    return handleResponse<TResponse>(res, url);
+    const send = () =>
+      fetch(`${base}${url}`, {
+        method: "POST",
+        credentials: "include",
+        headers: getAuthHeaders(baseUrl),
+        body: JSON.stringify(body),
+      });
+    return handleResponse<TResponse>(await send(), url, send, options);
   },
 
   put: async <TResponse, TRequest = unknown>(
     url: string,
     body: TRequest,
-    baseUrl?: string
+    baseUrl?: string,
+    options?: RequestOptions,
   ): Promise<TResponse> => {
     const base = resolveBase(baseUrl);
-    const res = await fetch(`${base}${url}`, {
-      method: "PUT",
-      headers: getAuthHeaders(baseUrl),
-      body: JSON.stringify(body),
-    });
-    return handleResponse<TResponse>(res, url);
+    const send = () =>
+      fetch(`${base}${url}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: getAuthHeaders(baseUrl),
+        body: JSON.stringify(body),
+      });
+    return handleResponse<TResponse>(await send(), url, send, options);
   },
 
-  delete: async <T>(url: string, baseUrl?: string): Promise<T> => {
+  delete: async <T>(
+    url: string,
+    baseUrl?: string,
+    options?: RequestOptions,
+  ): Promise<T> => {
     const base = resolveBase(baseUrl);
-    const res = await fetch(`${base}${url}`, {
-      method: "DELETE",
-      headers: getAuthHeaders(baseUrl),
-    });
-    return handleResponse<T>(res, url);
+    const send = () =>
+      fetch(`${base}${url}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: getAuthHeaders(baseUrl),
+      });
+    return handleResponse<T>(await send(), url, send, options);
   },
 };

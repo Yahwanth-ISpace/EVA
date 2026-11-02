@@ -1,16 +1,15 @@
+import { Transform } from 'class-transformer';
 import {
   IsEmail,
-  IsString,
-  MinLength,
-  IsEnum,
-  ValidateIf,
-  IsObject,
-  IsOptional,
-  ValidateNested,
   IsNotEmpty,
+  IsString,
+  MaxLength,
+  MinLength,
+  IsOptional,
   IsInt,
+  IsBoolean,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { PasswordPolicy } from '../../common/security/password';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export enum Role {
@@ -58,43 +57,30 @@ export class PayerDto {
 }
 
 export class RegisterDto {
+  @ApiProperty({
+    example: 'Jane Operator',
+    description: 'Operator display name. This does not link a patient record.',
+  })
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value,
+  )
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  fullName: string;
+
   @ApiProperty({ example: 'patient@example.com' })
   @IsEmail()
   email: string;
 
-  @ApiProperty({ example: 'SecurePass1!', minLength: 6 })
+  @ApiProperty({
+    example: 'SecurePass1!word',
+    minLength: 12,
+    description: 'At least 12 characters with upper, lower, and a number. Role is always OPERATOR.',
+  })
   @IsString()
-  @MinLength(6)
+  @PasswordPolicy()
   password: string;
-
-  @ApiProperty({ example: 'Jane' })
-  @IsString()
-  firstName: string;
-
-  @ApiProperty({ example: 'Doe' })
-  @IsString()
-  lastName: string;
-
-  @ApiProperty({ enum: Role, example: Role.OPERATOR })
-  @IsEnum(Role)
-  role: Role;
-
-  @ApiPropertyOptional({ example: '1990-05-15', description: 'Required context for OPERATOR role.' })
-  @ValidateIf((o) => o.role === Role.OPERATOR)
-  @IsOptional()
-  dob?: Date;
-
-  @ApiPropertyOptional({ example: '123-45-6789', description: 'OPERATOR only.' })
-  @ValidateIf((o) => o.role === Role.OPERATOR)
-  ssn?: string;
-
-  @ApiPropertyOptional({ type: PayerDto, description: 'Required when role is OPERATOR.' })
-  @ValidateIf((o) => o.role === Role.OPERATOR)
-  @IsNotEmpty()
-  @IsObject()
-  @ValidateNested()
-  @Type(() => PayerDto)
-  payer?: PayerDto;
 }
 
 export class LoginDto {
@@ -102,8 +88,13 @@ export class LoginDto {
   @IsEmail()
   email: string;
 
-  @ApiProperty({ example: 'SecurePass1!' })
+  @ApiProperty({ example: 'SecurePass1!word' })
   @IsString()
-  @MinLength(6)
+  @MinLength(1)
   password: string;
+
+  @ApiPropertyOptional({ description: 'Keep the refresh cookie for 7 days instead of 12 hours.' })
+  @IsOptional()
+  @IsBoolean()
+  rememberMe?: boolean;
 }

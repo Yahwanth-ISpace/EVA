@@ -4,7 +4,6 @@ import {
   UploadedFile,
   UseInterceptors,
   UseGuards,
-  Get,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -14,11 +13,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import * as path from 'path';
-import * as fs from 'fs';
-import { v4 as uuidv4 } from 'uuid';
 import { TranscriptionService } from './transcription.service';
+import { audioUploadOptions } from '../common/upload/audio-upload';
 import { JwtAuthGuard } from '../auth/guards/jwtAuthGuard';
 import { AiService } from '../ai/ai.service';
 import { Express } from 'express';
@@ -49,17 +45,7 @@ export class TranscriptionController {
       },
     },
   })
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: diskStorage({
-        destination: './uploads',
-        filename: (req, file, cb) => {
-          const ext = path.extname(file.originalname);
-          cb(null, `${uuidv4()}${ext}`);
-        },
-      }),
-    }),
-  )
+  @UseInterceptors(FileInterceptor('file', audioUploadOptions()))
   async transcribe(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
       return {
@@ -84,51 +70,5 @@ export class TranscriptionController {
       transcript: transcriptResult,
       extracted,
     };
-  };
-
-  @Get('transcribe-test')
-  @ApiOperation({
-    summary: 'Dev: run transcription on bundled test audio',
-    description: 'Looks for `src/assets/audio/audioTest.mp3` (or dist path). Returns transcript or error if file missing.',
-  })
-  async test() {
-    // Try to find the test audio file in different possible locations
-    const possiblePaths = [
-      path.join(process.cwd(), 'src', 'assets', 'audio', 'audioTest.mp3'),
-      path.join(process.cwd(), 'dist', 'assets', 'audio', 'audioTest.mp3'),
-      path.join(__dirname, '..', 'assets', 'audio', 'audioTest.mp3'),
-    ];
-
-    let audioFilePath: string | null = null;
-    for (const testPath of possiblePaths) {
-      if (fs.existsSync(testPath)) {
-        audioFilePath = testPath;
-        break;
-      }
-    }
-
-    if (!audioFilePath) {
-      return {
-        error: 'Test audio file not found. Tried paths:',
-        paths: possiblePaths,
-      };
-    }
-
-    try {
-      const result = await this.transcriptionService.transcribeAudio(
-        audioFilePath,
-      );
-      return {
-        success: true,
-        filePath: audioFilePath,
-        transcript: result.transcript,
-      };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message,
-        filePath: audioFilePath,
-      };
-    }
   }
 }

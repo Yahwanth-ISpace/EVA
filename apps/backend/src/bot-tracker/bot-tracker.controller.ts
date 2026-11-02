@@ -6,7 +6,6 @@ import {
   Param,
   Put,
   Delete,
-  UseGuards,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -20,11 +19,9 @@ import {
 import { BotTrackerService } from './bot-tracker.service';
 import { BotTrackerDto } from './dto/bot-tracker.dto';
 import { CreateBotTrackerDto } from './dto/create-bot-tracker.dto';
-// import { JwtAuthGuard } from 'src/auth/guards/jwtAuthGuard';
 
 @ApiTags('bot-trackers')
 @ApiBearerAuth('jwt-auth')
-// @UseGuards(JwtAuthGuard)
 @Controller('bot-trackers')
 export class BotTrackerController {
   constructor(private readonly botTrackerService: BotTrackerService) {}

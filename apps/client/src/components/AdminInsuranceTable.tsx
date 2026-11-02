@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useDispatch } from "react-redux";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { FaSearch } from "react-icons/fa";
@@ -19,6 +20,8 @@ import {
 } from "../utils/adminTableLayout";
 import { getVerificationFieldRows } from "../utils/verificationDisplay";
 import StatusBadge from "./StatusBadges";
+import { deleteVerification } from "../redux/actions/verificationActions";
+import type { AppDispatch } from "../redux/store";
 
 interface Props {
   records: VerificationRecord[];
@@ -35,6 +38,7 @@ export default function AdminInsuranceTable({
   appointments,
   loading,
 }: Props) {
+  const dispatch = useDispatch<AppDispatch>();
   const [searchQuery, setSearchQuery] = useState("");
 
   // Latest by default
@@ -372,6 +376,17 @@ export default function AdminInsuranceTable({
                             View details
                             <span className="ml-1.5">→</span>
                           </Link>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm("Delete this verification?")) {
+                                dispatch(deleteVerification(record.id));
+                              }
+                            }}
+                            className="ml-2 inline-flex items-center rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 shadow-sm transition hover:bg-red-50"
+                          >
+                            Delete
+                          </button>
                         </td>
                       </tr>
                     );

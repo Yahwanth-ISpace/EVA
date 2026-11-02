@@ -37,9 +37,9 @@ export function clearAuthStorage() {
 
 export function hasValidSession(
   user: unknown,
-  token: string | null | undefined
+  isAuthenticated?: boolean
 ): boolean {
-  return Boolean(user && token && !isJwtExpired(token));
+  return Boolean(user && isAuthenticated);
 }
 
 function redirectOnce(path: string) {
@@ -60,6 +60,12 @@ export function redirectToSessionExpired() {
 }
 
 export function isPublicAuthRequest(url: string) {
-  return url.includes("/auth/login") || url.includes("/auth/register");
+  return (
+    url.includes("/auth/login") ||
+    url.includes("/auth/register") ||
+    url.includes("/auth/refresh") ||
+    url.includes("/auth/csrf") ||
+    url.includes("/auth/logout")
+  );
 }
 

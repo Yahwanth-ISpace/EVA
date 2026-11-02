@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+.git
+*.env
+**/*.wav
+**/*.mp3
+**/__pycache__
+desktop.ini
+uploads

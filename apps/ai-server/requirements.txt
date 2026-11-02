@@ -1,6 +1,5 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-
-# Core dependencies
+# Install CPU torch from PyPI. Do not add --extra-index-url here; it lets every
+# package resolve from a second index (dependency confusion).
 torch
 torchaudio
 

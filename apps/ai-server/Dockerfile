@@ -1,21 +1,26 @@
-# Base image
-FROM python:3.10-slim
+FROM python:3.12-slim
 
-# Install ffmpeg
-RUN apt-get update && apt-get install -y ffmpeg && apt-get clean
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd --create-home --uid 10001 appuser
 
-# Set working dir
 WORKDIR /app
 
-# Copy code
-COPY . .
-
-# Install deps
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose Railway default port
+COPY . .
+RUN mkdir -p uploads /app/.cache \
+  && chown -R appuser:appuser /app
+
+ENV AI_REQUIRE_AUTH=true \
+    HF_HOME=/app/.cache \
+    TRANSFORMERS_CACHE=/app/.cache
+
+USER appuser
+
 EXPOSE 8000
 
-# Start app
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-

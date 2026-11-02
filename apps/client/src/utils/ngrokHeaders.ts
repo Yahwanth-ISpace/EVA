@@ -8,6 +8,7 @@ export function withNgrokBypass(
   apiBaseUrl: string | undefined,
   headers: Record<string, string>,
 ): Record<string, string> {
+  if (!import.meta.env.DEV) return headers;
   const base = (apiBaseUrl ?? "").toLowerCase();
   if (!base.includes("ngrok")) return headers;
   return { ...headers, [NGROK_SKIP_BROWSER_WARNING]: "true" };

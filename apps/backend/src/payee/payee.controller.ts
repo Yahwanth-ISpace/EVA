@@ -17,6 +17,7 @@ import {
 import { PayeeService } from './payee.service';
 import { CreatePayeeDto } from './dto/create-payee.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwtAuthGuard';
+import { Roles } from 'src/auth/decorators/roles.decorator';
 
 @ApiTags('payees')
 @ApiBearerAuth('jwt-auth')
@@ -26,6 +27,7 @@ export class PayeeController {
   constructor(private readonly payeeService: PayeeService) {}
 
   @Post()
+  @Roles('ADMIN')
   @ApiOperation({
     summary: 'Create payee',
     description:
@@ -37,7 +39,10 @@ export class PayeeController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List payees', description: 'Returns payees visible to the current user.' })
+  @ApiOperation({
+    summary: 'List payees',
+    description: 'Administrators and operators both see every patient record.',
+  })
   findAll() {
     return this.payeeService.findAll();
   }
@@ -50,6 +55,7 @@ export class PayeeController {
   }
 
   @Put(':id')
+  @Roles('ADMIN')
   @ApiOperation({ summary: 'Update payee' })
   @ApiParam({ name: 'id', example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
   update(@Param('id') id: string, @Body() dto: CreatePayeeDto) {

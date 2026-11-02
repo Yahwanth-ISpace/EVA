@@ -1,5 +1,6 @@
 import {
   Controller,
+  Delete,
   Post,
   Body,
   Get,
@@ -24,7 +25,8 @@ import { TwilioService } from 'src/twilio/twilio.service';
 import { AgentStatus } from 'src/prisma/enums';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AgentDto } from 'src/schedular/dto/agent.dto';
-import { Public } from 'src/auth/decorators/public.decorator';
+import { Roles } from 'src/auth/decorators/roles.decorator';
+import { TwilioWebhook } from 'src/auth/decorators/twilio-webhook.decorator';
 
 /** Twilio terminal CallStatus values (call leg ended — agent should be released). */
 const TWILIO_TERMINAL_CALL_STATUSES = new Set([
@@ -48,6 +50,7 @@ export class AppointmentController {
   ) {}
 
   @Post()
+  @Roles('ADMIN')
   @ApiOperation({
     summary: 'Formated appointment',
     description:
@@ -61,31 +64,22 @@ export class AppointmentController {
   }
 
   @Post('status-callback')
-  @Public()
+  @TwilioWebhook()
   @HttpCode(200)
   async statusCallback(@Body() body: any) {
-    this.logger.log('==============================');
-    this.logger.log('STATUS CALLBACK RECEIVED');
-    this.logger.log(JSON.stringify(body));
-
-    const callStatus = String(body.CallStatus ?? '').toLowerCase();
+    const callSid = String(body?.CallSid ?? '');
+    const callStatus = String(body?.CallStatus ?? '').toLowerCase();
+    this.logger.log(`Status callback sid=${callSid} status=${callStatus}`);
     if (!TWILIO_TERMINAL_CALL_STATUSES.has(callStatus)) {
-      this.logger.log(`Ignoring non-terminal status ${callStatus}`);
       return { success: true };
     }
 
-    this.logger.log(`Call ended with status ${callStatus}`);
-
     const context = this.twilioService.getStreamContextForCall(body.CallSid);
-
-    this.logger.log(`Context: ${JSON.stringify(context)}`);
 
     if (!context) {
       this.logger.warn(`No stream context found for ${body.CallSid}`);
       return { success: true };
     }
-
-    this.logger.log(`Updating agent ${context.AgentId}`);
 
     try {
       const db = await this.prisma.client();
@@ -96,7 +90,7 @@ export class AppointmentController {
         endTime: new Date(),
       });
 
-      this.logger.log(`Updated Agent: ${JSON.stringify(updated)}`);
+      this.logger.log(`Released agent ${context.AgentId}`);
     } catch (err) {
       this.logger.error('Failed to update agent', err);
     }
@@ -107,17 +101,29 @@ export class AppointmentController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List appointments for current user' })
-  findAll(@Req() req) {
-    const user = req.user;
-    return this.appointmentService.findAll(user);
+  @ApiOperation({
+    summary: 'List appointments',
+    description: 'Administrators and operators both see every appointment. Access is not limited to the signed-in person.',
+  })
+  findAll() {
+    return this.appointmentService.findAll();
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Delete an appointment',
+    description: 'Available to administrators and operators.',
+  })
+  @ApiParam({ name: 'id', example: 'appointment-uuid-here' })
+  remove(@Param('id') id: string) {
+    return this.appointmentService.remove(id);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get appointment by ID' })
   @ApiParam({ name: 'id', example: 'appointment-uuid-here' })
-  findOne(@Param('id') id: string, @Req() req) {
-    return this.appointmentService.findOne(id, req.user);
+  findOne(@Param('id') id: string) {
+    return this.appointmentService.findOne(id);
   }
 
   @Post(':id/save-eligibility')

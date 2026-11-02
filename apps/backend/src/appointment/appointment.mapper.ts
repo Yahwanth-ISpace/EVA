@@ -1,4 +1,5 @@
 import { ObjectId } from 'mongodb';
+import { documentHasSsn, redactSsnFields } from '../common/security/ssn';
 
 function splitName(full: string): { firstName: string; lastName: string } {
   const parts = String(full ?? '').trim().split(/\s+/).filter(Boolean);
@@ -34,7 +35,12 @@ export function mapMongoAppointmentToClient(
     typeof doc.payee === 'object' &&
     doc.id
   ) {
-    return doc;
+    const safe = redactSsnFields(doc);
+    const payee = {
+      ...(safe.payee as Record<string, unknown>),
+      ssn: '',
+    };
+    return { ...safe, payee, ssnOnFile: documentHasSsn(doc) };
   }
 
   const patient =
@@ -60,12 +66,15 @@ export function mapMongoAppointmentToClient(
     String(provider.providerName ?? ''),
   );
 
-  const savedAtIso = toIsoTimestamp(doc.savedAt ?? doc.createdAt);
+  const ssnOnFile = documentHasSsn(doc);
+  const safe = redactSsnFields(doc);
+  const savedAtIso = toIsoTimestamp(safe.savedAt ?? safe.createdAt);
   const appointmentDate =
     doc.appointmentDate ?? doc.date ?? savedAtIso;
 
   return {
-    ...doc,
+    ...safe,
+    ssnOnFile,
     savedAt: savedAtIso,
     id: resolveId(doc),
     appointmentId:

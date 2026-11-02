@@ -7,42 +7,17 @@ import {
   LOGOUT,
   type AuthState,
 } from "../types/authTypes";
-import {
-  clearAuthStorage,
-  isJwtExpired,
-  loggedOutAuthState,
-} from "../../utils/session";
+import { clearAuthStorage, loggedOutAuthState } from "../../utils/session";
+import { sanitizeStoredUser } from "../../utils/sanitizeUser";
 
 interface Action {
   type: string;
   payload?: any;
 }
 
-const readStoredSession = (): AuthState => {
-  const token = localStorage.getItem("token");
-  const userRaw = localStorage.getItem("user");
+clearAuthStorage();
 
-  if (!token || !userRaw || isJwtExpired(token)) {
-    if (token || userRaw) clearAuthStorage();
-    return loggedOutAuthState();
-  }
-
-  try {
-    const user = JSON.parse(userRaw);
-    return {
-      ...loggedOutAuthState(),
-      user,
-      token,
-      isAuthenticated: true,
-      role: user.role ?? null,
-    };
-  } catch {
-    clearAuthStorage();
-    return loggedOutAuthState();
-  }
-};
-
-const initialState: AuthState = readStoredSession();
+const initialState: AuthState = { ...loggedOutAuthState(), loading: true };
 
 export const authReducer = (
   state = initialState,
@@ -57,27 +32,22 @@ export const authReducer = (
 
     case AUTH_ERROR:
       return {
-        ...state,
-        loading: false,
-        user: null,
-        token: null,
-        isAuthenticated: false,
-        role: null,
+        ...loggedOutAuthState(),
         error: action.payload,
       };
 
-    case LOGIN_SUCCESS:
-      localStorage.setItem("user", JSON.stringify(action.payload.user));
-      localStorage.setItem("token", action.payload.access_token);
+    case LOGIN_SUCCESS: {
+      const user = sanitizeStoredUser(action.payload.user);
       return {
         ...state,
         loading: false,
-        user: action.payload.user,
-        token: action.payload.access_token,
+        user,
+        token: null,
         isAuthenticated: true,
         role: action.payload.user.role,
         error: null,
       };
+    }
 
     case LOGOUT:
       clearAuthStorage();

@@ -2,6 +2,23 @@ import type { AiService } from '../ai/ai.service';
 
 export type EligibilityExtracted = Record<string, string | null | undefined>;
 
+const FIELD_KEY = /^[A-Za-z0-9_().-]{1,80}$/;
+
+/** Drop unexpected keys and cap values before a model result is stored or posted. */
+export function sanitizeExtracted(extracted?: EligibilityExtracted): EligibilityExtracted {
+  const out: EligibilityExtracted = {};
+  if (!extracted) return out;
+  for (const [key, value] of Object.entries(extracted)) {
+    if (!FIELD_KEY.test(key)) continue;
+    if (value == null) {
+      out[key] = value;
+      continue;
+    }
+    out[key] = String(value).replace(/[\u0000-\u001F]/g, '').slice(0, 500);
+  }
+  return out;
+}
+
 export class EligibilityPayloadUtil {
   private static buildSpecialitiesFromHistory(
     historyItems: Array<Record<string, any>> | undefined,
@@ -38,6 +55,7 @@ export class EligibilityPayloadUtil {
     if (!aiService) {
       throw new Error('AiService is required to build eligibility payload');
     }
+    extracted = sanitizeExtracted(extracted);
 
     const numericFields = new Set([
       'individualMetAmount',

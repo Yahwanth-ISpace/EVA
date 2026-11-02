@@ -8,10 +8,10 @@ This guide walks you through the full setup for the IVR with **two Twilio accoun
 
 You have:
 
-- **Twilio EVA** (call trigger): number **+14847598215**, Account SID `AC57e2f9f7957037e3bbd666b074b8eb4d`. Used to **place the call** to the IVR and to **send DTMF 4**.
-- **Twilio IVR**: number **+15158825548**, Account SID `AC772fedd62d65d0e08dd81d4696bd64f5`. This number **plays the IVR menu** when someone calls it.
+- **Twilio EVA** (call trigger): number **+1XXXXXXXXXX**, Account SID `ACxxxxxxxx`. Used to **place the call** to the IVR and to **send DTMF 4**.
+- **Twilio IVR**: number **+1YYYYYYYYYY**, Account SID `ACyyyyyyyy`. This number **plays the IVR menu** when someone calls it.
 
-**Flow:** Trigger a call from EVA → backend uses **EVA credentials** to dial **+15158825548** → IVR account answers with the IVR menu → backend **streams** that audio, runs **ElevenLabs STT (Whisper fallback)** → when it hears “customer agent” it **sends DTMF 4** → IVR runs option 4 (10s hold, then dial **IVR_AGENT_PHONE_NUMBER**).
+**Flow:** Trigger a call from EVA → backend uses **EVA credentials** to dial the IVR number → IVR account answers with the IVR menu → backend **streams** that audio, runs **ElevenLabs STT (Whisper fallback)** → when it hears “customer agent” it **sends DTMF 4** → IVR runs option 4 (10s hold, then dial **IVR_AGENT_PHONE_NUMBER**).
 
 ### Backend `.env` (EVA account only)
 
@@ -20,28 +20,28 @@ The backend uses **only the EVA account** for placing the call and redirecting t
 ```env
 BACKEND_URL=https://your-backend-url.com
 
-# EVA account (call trigger from +14847598215)
-TWILIO_ACCOUNT_SID=AC57e2f9f7957037e3bbd666b074b8eb4d
+# EVA account (call trigger)
+TWILIO_ACCOUNT_SID=<eva-account-sid>
 TWILIO_AUTH_TOKEN=<your-EVA-auth-token>
-TWILIO_PHONE_NUMBER=+14847598215
+TWILIO_PHONE_NUMBER=+1XXXXXXXXXX
 
 # IVR number that EVA will call (on the other account)
-TWILIO_IVR_PHONE_NUMBER=+15158825548
+TWILIO_IVR_PHONE_NUMBER=+1YYYYYYYYYY
 
-# Where option 4 redirects the call (customer agent)
-IVR_AGENT_PHONE_NUMBER=+919515663123
+# Where option 4 redirects the call (customer agent). Required. No built-in number.
+IVR_AGENT_PHONE_NUMBER=+1ZZZZZZZZZZ
 ```
 
-Do **not** put the IVR account’s auth token in the backend; the IVR account is only used in the Twilio Console to set the webhook on +15158825548.
+Do **not** put the IVR account’s auth token in the backend; the IVR account is only used in the Twilio Console to set the webhook on the IVR number.
 
-### IVR account Console (number +15158825548)
+### IVR account Console
 
-1. Log in to the **IVR** Twilio account (SID `AC772fedd62d65d0e08dd81d4696bd64f5`).
-2. Go to **Phone Numbers** → **Manage** → **Active Numbers** → click **+15158825548**.
+1. Log in to the **IVR** Twilio account.
+2. Go to **Phone Numbers** → **Manage** → **Active Numbers** → click the IVR number.
 3. Under **Voice** → **A CALL COMES IN**: set **Webhook** to `https://YOUR_BACKEND_URL/twilio/inbound`, **HTTP POST**.
 4. Save.
 
-When EVA (or anyone) calls +15158825548, this IVR account will request your backend and get the IVR menu (Press 1–4). After we send DTMF 4, the IVR returns option 4 TwiML (hold 10s, dial `IVR_AGENT_PHONE_NUMBER`).
+When EVA (or anyone) calls the IVR number, this IVR account will request your backend and get the IVR menu (Press 1–4). After we send DTMF 4, the IVR returns option 4 TwiML (hold 10s, dial `IVR_AGENT_PHONE_NUMBER`).
 
 ### How to trigger the TPA IVR navigation flow
 
@@ -56,7 +56,7 @@ Use **`POST /twilio/call`** with **`navigateTpaIvr: true`** (see `TwilioInitiate
 | **1** | Regarding complaint | Message: complaint selected; team will note; email support@wentdentals.com. Then hang up. |
 | **2** | Register insurance | Message: insurance registration; visit website or call during business hours. Then hang up. |
 | **3** | Fetch latest insurance offers | Message: latest offers on website. Then hang up. |
-| **4** | Talk to customer agent | “Please hold…” → **hold 10 seconds** → call is **redirected to 9515663123** (or your configured agent number). If no answer in 30s, message and hang up. |
+| **4** | Talk to customer agent | “Please hold…” → **hold 10 seconds** → call is **redirected to `IVR_AGENT_PHONE_NUMBER`**. If no answer in 30s, message and hang up. |
 
 **Menu (played on every inbound call):**  
 *“Thank you for calling. Press 1 regarding complaint. Press 2 to register insurance. Press 3 to fetch latest insurance offers. Press 4 to talk to our customer agent.”*
@@ -80,9 +80,9 @@ Set these in `apps/backend/.env` (or your deployment environment).
 
 | Variable | Description | Example |
 |----------|-------------|--------|
-| `IVR_AGENT_PHONE_NUMBER` or `TWILIO_AGENT_PHONE_NUMBER` | Number to which **option 4** redirects the call (customer agent). Use E.164 (e.g. `+919515663123` for India). | `+919515663123` |
+| `IVR_AGENT_PHONE_NUMBER` or `TWILIO_AGENT_PHONE_NUMBER` | Number to which **option 4** redirects the call (customer agent). Use E.164. Required. | none |
 
-- If **neither** is set, the backend uses the default **+919515663123** (9515663123 with India +91).
+- If neither is set, option 4 tells the caller an agent is unavailable and hangs up. There is no built-in phone number.
 - To use a different number (e.g. US), set `IVR_AGENT_PHONE_NUMBER=+1XXXXXXXXXX`.
 
 ### EVA outbound to a payer IVR (TPA navigation)
@@ -148,9 +148,9 @@ In `.env` you set **one** set of Twilio credentials:
 Result:
 
 - Incoming calls to **either** number play the same IVR (1–4).
-- Option 4 (hold 10s, then redirect) uses the **single** `TWILIO_PHONE_NUMBER` as caller ID and dials `IVR_AGENT_PHONE_NUMBER` (or default 9515663123). So **both** numbers transfer to the same agent number.
+- Option 4 (hold 10s, then redirect) uses `TWILIO_PHONE_NUMBER` as caller ID and dials `IVR_AGENT_PHONE_NUMBER`.
 
-Use this when both accounts should behave the same and transfer to the same agent (9515663123).
+Use this when both accounts should behave the same and transfer to the same configured agent number.
 
 ### Option B: Two backends (one per account)
 
@@ -177,7 +177,7 @@ Each account’s calls are handled by its own backend and its own agent number.
 | URL | When | Purpose |
 |-----|------|--------|
 | `POST {{BACKEND_URL}}/twilio/inbound` | Inbound call to your Twilio number | Plays IVR menu and gathers 1 digit. |
-| `POST {{BACKEND_URL}}/twilio/ivr-menu` | After caller presses 1, 2, 3, or 4 | Handles the chosen option (message + hangup, or hold 10s + dial 9515663123 for option 4). |
+| `POST {{BACKEND_URL}}/twilio/ivr-menu` | After caller presses 1, 2, 3, or 4 | Handles the chosen option (message + hangup, or hold 10s + dial `IVR_AGENT_PHONE_NUMBER` for option 4). |
 
 Ensure:
 
@@ -191,11 +191,11 @@ Ensure:
 - [ ] `BACKEND_URL` set and reachable over HTTPS.
 - [ ] `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` set (for the account you use for caller ID / dial-out).
 - [ ] `TWILIO_PHONE_NUMBER` set (caller ID when transferring to agent).
-- [ ] Agent number: either leave unset (default **+919515663123**) or set `IVR_AGENT_PHONE_NUMBER` (e.g. `+919515663123` or `+1XXXXXXXXXX`).
+- [ ] Agent number: set `IVR_AGENT_PHONE_NUMBER` to an E.164 number you control.
 - [ ] **Account 1**: Phone number → Voice → A CALL COMES IN → Webhook → `https://YOUR_BACKEND_URL/twilio/inbound`, POST → Save.
 - [ ] **Account 2**: Phone number → Voice → A CALL COMES IN → Webhook → `https://YOUR_BACKEND_URL/twilio/inbound`, POST → Save.
 
-After this, calling **either** Twilio number will play the IVR; pressing **4** will hold for 10 seconds and then redirect the call to 9515663123 (or your configured agent number).
+After this, calling either Twilio number will play the IVR; pressing **4** will hold for 10 seconds and then redirect the call to `IVR_AGENT_PHONE_NUMBER`.
 
 ---
 

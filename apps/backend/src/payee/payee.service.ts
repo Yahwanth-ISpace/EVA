@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePayeeDto } from './dto/create-payee.dto';
 import { PayerDto } from 'src/auth/dto/auth.dto';
+import { encryptSsn, presentPayee } from '../common/security/ssn';
 
 @Injectable()
 export class PayeeService {
@@ -20,18 +21,17 @@ export class PayeeService {
       firstName: data.firstName,
       lastName: data.lastName,
       dob: data.dob ?? null,
-      ssn: data.ssn ?? null,
+      ssn: encryptSsn(data.ssn),
       userId: null,
       payerId,
     });
-    return this.prisma.withIds(payee);
+    return this.present(payee);
   }
 
   async findAll() {
     const db = await this.prisma.client();
-    return this.prisma.withIds(
-      await db.orm.Payee.include('payer').include('user').all(),
-    );
+    const rows = await db.orm.Payee.include('payer').include('user').all();
+    return (Array.isArray(rows) ? rows : []).map((row) => this.present(row));
   }
 
   async findOne(id: string) {
@@ -40,7 +40,8 @@ export class PayeeService {
       .include('payer')
       .include('user')
       .first();
-    return payee ? this.prisma.withIds(payee) : null;
+    if (!payee) return null;
+    return this.present(payee);
   }
 
   async update(id: string, data: Partial<CreatePayeeDto>) {
@@ -54,18 +55,27 @@ export class PayeeService {
     if (data.firstName !== undefined) updateData.firstName = data.firstName;
     if (data.lastName !== undefined) updateData.lastName = data.lastName;
     if (data.dob !== undefined) updateData.dob = data.dob ?? null;
-    if (data.ssn !== undefined) updateData.ssn = data.ssn ?? null;
+    if (data.ssn !== undefined) updateData.ssn = encryptSsn(data.ssn);
     if (data.payer) {
       updateData.payerId = await this.resolvePayerId(db, data.payer);
     }
 
     await db.orm.Payee.where({ _id: id }).update(updateData);
-    return this.prisma.withIds(
+    return this.present(
       await db.orm.Payee.where({ _id: id })
         .include('payer')
         .include('user')
         .first(),
     );
+  }
+
+  private present<T>(payee: T): T {
+    const withIds = this.prisma.withIds(payee) as Record<string, unknown> | null;
+    if (withIds?.user && typeof withIds.user === 'object') {
+      const { password: _password, ...user } = withIds.user as Record<string, unknown>;
+      withIds.user = user;
+    }
+    return presentPayee(withIds) as T;
   }
 
   private async resolvePayerId(db: Awaited<ReturnType<PrismaService['client']>>, payer: PayerDto) {

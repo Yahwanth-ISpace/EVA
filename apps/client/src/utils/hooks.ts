@@ -12,11 +12,11 @@ export const useAppDispatch = () =>
   useDispatch<ThunkDispatch<RootState, any, AnyAction>>();
 
 export const useAuth = () => {
-  const { token, user, loading, error } = useSelector(
+  const { token, user, loading, error, isAuthenticated: stateIsAuthenticated } = useSelector(
     (state: RootState) => state.authState
   );
 
-  const isAuthenticated = !!token;
+  const isAuthenticated = stateIsAuthenticated;
   const isAdmin = user?.role === "ADMIN";
   const isPayee = user?.role === "OPERATOR";
 

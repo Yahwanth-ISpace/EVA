@@ -1,5 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from rag.schemas import ChatRequest, ChatResponse, IngestText, Query
+from security import require_service_token, RESERVED_METADATA_KEYS
 from rag.embeddings import init_embedder, embed
 from rag.qdrant_client import qc, ensure_collection
 from rag.llm import generate_answer
@@ -7,7 +8,7 @@ from rag.session_manager import session_manager
 import uuid
 from typing import List, Dict
 
-router = APIRouter(tags=["RAG"])
+router = APIRouter(tags=["RAG"], dependencies=[Depends(require_service_token)])
 
 # -------------------- Initialization --------------------
 init_embedder()
@@ -30,8 +31,13 @@ def ingest_text(payload: IngestText):
     Each chunk is embedded and stored with payerId and verification_id.
     """
     
-    tenant = payload.metadata.get("payerId", payload.tenant_id)  
-    doc_id = payload.metadata.get("verificationId", payload.doc_id)
+    metadata = {
+        key: value
+        for key, value in (payload.metadata or {}).items()
+        if key not in RESERVED_METADATA_KEYS
+    }
+    tenant = payload.payerId or payload.tenant_id
+    doc_id = payload.doc_id or metadata.get("verificationId")
     
     chunks = chunk_text(payload.text) if len(payload.text.split()) > 150 else [payload.text]
     vectors = embed(chunks)
@@ -46,7 +52,9 @@ def ingest_text(payload: IngestText):
                 "chunk_id": i,
                 "title": payload.title,
                 "text": chunk,
-                **payload.metadata,
+                **metadata,
+                "tenant_id": tenant,
+                "doc_id": doc_id,
             },
         }
         for i, (chunk, vec) in enumerate(zip(chunks, vectors))

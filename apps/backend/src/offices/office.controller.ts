@@ -1,14 +1,17 @@
 import { Controller, Post, Body, Get, Param } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { OfficeService } from './office.service';
 import { CreateOfficeDto } from './dto/create-office.dto';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 @ApiTags('offices')
+@ApiBearerAuth('jwt-auth')
 @Controller('offices')
 export class OfficeController {
   constructor(private readonly officeService: OfficeService) {}
 
   @Post()
+  @Roles('ADMIN')
   @ApiOperation({ summary: 'Create office', description: 'Office location linked to a provider.' })
   create(@Body() dto: CreateOfficeDto) {
     return this.officeService.create(dto);

@@ -2,6 +2,7 @@
 import axios from "axios";
 import store from "../redux/store";
 import { LOGOUT } from "../redux/types/authTypes";
+import { csrfHeaders } from "./authSession";
 import { isPublicAuthRequest, redirectToSessionExpired } from "./session";
 
 const backendBase = import.meta.env.VITE_BACKEND_URL || "";
@@ -13,6 +14,14 @@ const axiosInstance = axios.create({
     backendBase.toLowerCase().includes("ngrok")
       ? { "ngrok-skip-browser-warning": "true" }
       : undefined,
+});
+
+axiosInstance.interceptors.request.use((config) => {
+  const headers = csrfHeaders();
+  for (const [key, value] of Object.entries(headers)) {
+    config.headers.set(key, value);
+  }
+  return config;
 });
 
 axiosInstance.interceptors.response.use(

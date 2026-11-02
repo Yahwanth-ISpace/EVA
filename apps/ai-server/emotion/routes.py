@@ -5,8 +5,9 @@ import os
 import shutil
 import uuid
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import JSONResponse
+from security import require_service_token, safe_audio_destination, write_upload_limited
 
 from config import (
     EMOTION_ANGER_MARGIN_OVER_NEUTRAL,
@@ -86,17 +87,13 @@ def health():
     return {"ok": True, "service": "emotion"}
 
 
-@router.post("/classify", summary="TPA speech emotion (SUPERB wav2vec2 ER)")
+@router.post("/classify", summary="TPA speech emotion (SUPERB wav2vec2 ER)", dependencies=[Depends(require_service_token)])
 async def classify(file: UploadFile = File(...)):
     if not file.filename:
         return JSONResponse(status_code=400, content={"error": "Missing file"})
 
-    ext = os.path.splitext(file.filename)[1] or ".wav"
-    safe_name = f"emotion_{uuid.uuid4().hex}{ext}"
-    filepath = os.path.join(UPLOAD_FOLDER, safe_name)
-
-    with open(filepath, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    filepath = safe_audio_destination(UPLOAD_FOLDER, file.filename)
+    await write_upload_limited(file, filepath)
 
     try:
         pipe = get_classifier()
@@ -114,7 +111,7 @@ async def classify(file: UploadFile = File(...)):
         }
     except Exception as e:
         logging.exception("Emotion classification failed")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "Classification failed"})
     finally:
         if os.path.exists(filepath):
             try:

@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { IsObject } from 'class-validator';
 
 export class SaveEligibilityDto {
   @ApiProperty({
@@ -10,5 +11,6 @@ export class SaveEligibilityDto {
       'history.D0120': '01/15/2024',
     },
   })
+  @IsObject()
   extractedData!: Record<string, string | null>;
 }

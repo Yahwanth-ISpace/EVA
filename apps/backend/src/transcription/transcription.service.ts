@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import FormData from 'form-data';
 import * as path from 'path';
 import mime from 'mime';
+import { aiServiceAuthHeaders } from '../common/security/ai-client';
 
 const ai_server_url = process.env.AI_SERVER_URL;
 const ELEVENLABS_STT_URL = 'https://api.elevenlabs.io/v1/speech-to-text';
@@ -224,6 +225,7 @@ export class TranscriptionService {
       {
         headers: {
           ...form.getHeaders(),
+          ...aiServiceAuthHeaders(),
         },
         maxContentLength: Infinity,
         maxBodyLength: Infinity,

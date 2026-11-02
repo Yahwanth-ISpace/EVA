@@ -1,4 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Allow, IsOptional, IsString } from 'class-validator';
 
 export interface VerificationField {
   question: string;
@@ -95,51 +96,72 @@ export interface EvaVerification {
 }
 
 export class AppointmentDetailsDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  agentId?: string;
+
+  @Allow()
   @ApiProperty()
   appointmentId: string;
 
+  @Allow()
   @ApiProperty()
   appointmentDate: string;
 
+  @Allow()
   @ApiProperty()
   eligibilityResult: string;
 
+  @Allow()
   @ApiProperty()
   status: string;
 
+  @Allow()
   @ApiProperty({ type: OfficeDto })
   office: OfficeDto;
 
+  @Allow()
   @ApiProperty({ type: InsuranceDto })
   insurance: InsuranceDto;
 
+  @Allow()
   @ApiProperty({ type: PatientDto })
   patient: PatientDto;
 
+  @Allow()
   @ApiProperty({ type: SubscriberDto })
   subscriber: SubscriberDto;
 
+  @Allow()
   @ApiProperty({ type: ProviderDto })
   provider: ProviderDto;
 
+  @Allow()
   @ApiProperty()
   tenantName: string;
 
+  @Allow()
   @ApiProperty()
   userName: string;
 
+  @Allow()
   @ApiProperty()
   source: string;
 
+  @Allow()
   @ApiProperty()
   savedAt: string;
 
+  @Allow()
   @ApiProperty()
   InsuranceCompany_Phone: string | undefined;
 
+  @Allow()
   @ApiProperty()
   InsuranceCompany_Phone_Ext: string | undefined;
 
+  @Allow()
   @ApiProperty({
     description: 'Benefit fields to be verified',
     example: {
@@ -157,6 +179,7 @@ export class AppointmentDetailsDto {
   })
   benefitsInfo?: BenefitsInfo;
 
+  @Allow()
   @ApiProperty({
     description: 'EVA verification details',
     example: {

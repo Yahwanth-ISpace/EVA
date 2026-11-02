@@ -34,6 +34,14 @@ export const verificationsReducer = (
     case appTypes.verifications.FETCH_VERIFICATIONS_SUCCESS:
       return { ...state, verifications: action.payload };
 
+    case appTypes.verifications.DELETE_VERIFICATION_SUCCESS:
+      return {
+        ...state,
+        verifications: state.verifications.filter(
+          (item) => item.id !== action.payload?.id,
+        ),
+      };
+
     case appTypes.verifications.CREATE_VERIFICATION_SUCCESS:
       return {
         ...state,
