@@ -89,10 +89,28 @@ async function bootstrap() {
     );
   }
 
+  // Twilio's stream URL is `${BACKEND_URL}/twilio/media-stream`. When BACKEND_URL
+  // includes an `/api` prefix, the upgrade path is `/api/twilio/media-stream`.
+  // `ws` rejects any other path with HTTP 400, which Twilio reports as 31920.
+  const mediaStreamPaths = new Set([
+    '/twilio/media-stream',
+    '/api/twilio/media-stream',
+  ]);
   const wss = new WebSocket.Server({
-    server,
-    path: '/twilio/media-stream',
+    noServer: true,
     maxPayload: 1_000_000,
+  });
+  server.on('upgrade', (req, socket, head) => {
+    const rawUrl = req.url || '/';
+    const queryAt = rawUrl.indexOf('?');
+    const pathname = queryAt === -1 ? rawUrl : rawUrl.slice(0, queryAt);
+    if (!mediaStreamPaths.has(pathname)) {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
   });
   const mediaHandler = app.get(MediaStreamHandlerService);
   let openConnections = 0;
