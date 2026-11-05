@@ -79,8 +79,10 @@ async function bootstrap() {
     ],
     credentials: true,
   });
-  const port = process.env.PORT ?? 3000;
-  const server = await app.listen(port);
+  const port = Number(process.env.PORT ?? 3000);
+  const host = process.env.HOST ?? '0.0.0.0';
+  const server = await app.listen(port, host);
+  console.log(`[EVA] Backend http://127.0.0.1:${port}`);
 
   if (!isFfmpegAvailable()) {
     console.warn(
