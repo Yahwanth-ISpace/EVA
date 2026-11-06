@@ -125,6 +125,9 @@ async function bootstrap() {
     const queryAt = rawUrl.indexOf('?');
     const pathname = queryAt === -1 ? rawUrl : rawUrl.slice(0, queryAt);
     if (!mediaStreamPaths.has(pathname)) {
+      console.warn(
+        `[MediaStream] rejected upgrade path=${pathname} (Twilio reports this as 31920)`,
+      );
       socket.destroy();
       return;
     }
@@ -140,6 +143,9 @@ async function bootstrap() {
     const ip = req.socket?.remoteAddress || 'unknown';
     const ipCount = perIp.get(ip) ?? 0;
     if (openConnections >= MEDIA_STREAM_MAX_CONNECTIONS || ipCount >= MEDIA_STREAM_MAX_PER_IP) {
+      console.warn(
+        `[MediaStream] closing websocket 1013 capacity ip=${ip} open=${openConnections} ipCount=${ipCount}`,
+      );
       ws.close(1013, 'capacity');
       return;
     }
@@ -163,12 +169,19 @@ async function bootstrap() {
     ws.on('close', () => idle && clearTimeout(idle));
 
     const url = new URL(req.url || '', 'http://localhost');
-    const claims = verifyStreamToken(url.searchParams.get('token'));
+    const token = url.searchParams.get('token');
+    const claims = verifyStreamToken(token);
     if (streamAuthEnforced()) {
       if (!claims) {
+        console.error(
+          `[MediaStream] closing websocket 1008 unauthorized path=${url.pathname} token=${token ? 'present' : 'missing'} patientId=${url.searchParams.get('patientId') ?? url.searchParams.get('PatientID') ?? 'none'} appointmentId=${url.searchParams.get('appointmentId') ?? 'none'}`,
+        );
         ws.close(1008, 'unauthorized');
         return;
       }
+      console.log(
+        `[MediaStream] websocket authorized path=${url.pathname} patientId=${claims.patientId} appointmentId=${claims.appointmentId ?? 'none'} mode=${claims.mode ?? 'eva'}`,
+      );
       mediaHandler.handleConnection(
         ws,
         claims.patientId,

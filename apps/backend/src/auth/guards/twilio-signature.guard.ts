@@ -23,12 +23,23 @@ export class TwilioSignatureGuard implements CanActivate {
     const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
     const base = (process.env.BACKEND_URL || '').trim().replace(/\/+$/, '');
     if (!authToken || !base) {
+      this.logger.error(
+        `Twilio webhook auth is not configured authToken=${authToken ? 'set' : 'missing'} BACKEND_URL=${base || 'missing'}`,
+      );
       throw new UnauthorizedException('Twilio webhook authentication is not configured');
     }
 
     const req = context.switchToHttp().getRequest();
+    const headerNames = Object.keys(req.headers ?? {}).join(',');
+    this.logger.warn(
+      `Twilio guard: ${req.method} ${req.originalUrl} headers=${headerNames}`,
+    );
+
     const signature = req.headers?.['x-twilio-signature'];
     if (!signature || typeof signature !== 'string') {
+      this.logger.error(
+        `Twilio signature missing method=${req.method} url=${req.originalUrl} ip=${req.ip ?? 'unknown'}`,
+      );
       throw new UnauthorizedException('Missing Twilio signature');
     }
 
@@ -37,8 +48,16 @@ export class TwilioSignatureGuard implements CanActivate {
       req.method === 'GET' || req.method === 'HEAD' ? {} : (req.body ?? {});
     const valid = twilio.validateRequest(authToken, signature, url, params);
     if (!valid) {
+      const bodyKeys =
+        params && typeof params === 'object' ? Object.keys(params).join(',') : '';
+      this.logger.error(
+        `Twilio signature invalid method=${req.method} requestUrl=${req.originalUrl} validatedUrl=${url} bodyKeys=${bodyKeys || 'none'}`,
+      );
       throw new UnauthorizedException('Invalid Twilio signature');
     }
+    this.logger.log(
+      `Twilio signature accepted method=${req.method} url=${req.originalUrl}`,
+    );
     return true;
   }
 }
