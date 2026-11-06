@@ -83,6 +83,34 @@ function withStreamToken(
   return `${streamUrl}&token=${encodeURIComponent(token)}`;
 }
 
+/**
+ * Azure Application Gateway drops the WebSocket query string, which removes the
+ * stream token and makes the server close the call (Twilio 31921 / close 1008).
+ * Twilio still delivers `<Parameter>` values on the stream `start` message.
+ */
+function streamParameters(
+  patientId: string,
+  appointmentId?: string,
+  mode?: string,
+): Array<[string, string]> {
+  const rows: Array<[string, string]> = [['patientId', patientId]];
+  if (appointmentId?.trim()) rows.push(['appointmentId', appointmentId.trim()]);
+  if (mode?.trim()) rows.push(['mode', mode.trim()]);
+  const token = signStreamToken({ patientId, appointmentId, mode });
+  if (token) rows.push(['token', token]);
+  return rows;
+}
+
+function streamElement(streamUrl: string, parameters: Array<[string, string]>): string {
+  const params = parameters
+    .map(
+      ([name, value]) =>
+        `<Parameter name="${escapeXmlAttr(name)}" value="${escapeXmlAttr(value)}" />`,
+    )
+    .join('');
+  return `<Stream url="${escapeXmlAttr(streamUrl)}">${params}</Stream>`;
+}
+
 function assertSafeQueryId(value: string, label: string): string {
   const trimmed = value?.trim() ?? '';
   if (!/^[A-Za-z0-9_-]{1,80}$/.test(trimmed)) {
@@ -346,7 +374,7 @@ export class TwilioController {
     res.type('text/xml').send(`
       <Response>
         <Connect>
-          <Stream url="${escapeXmlAttr(streamUrl)}" />
+          ${streamElement(streamUrl, streamParameters(externalPatientId, appointmentId, streamMode))}
         </Connect>
       </Response>
     `);
@@ -402,7 +430,7 @@ export class TwilioController {
       <Response>
         <Play digits="${escapeXmlAttr(raw)}" />
         <Connect>
-          <Stream url="${escapeXmlAttr(streamUrl)}" />
+          ${streamElement(streamUrl, streamParameters(pid, appointmentId, 'tpa-ivr'))}
         </Connect>
       </Response>
     `);

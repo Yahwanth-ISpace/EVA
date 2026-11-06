@@ -8,7 +8,11 @@ import { MediaStreamHandlerService } from './twilio/media-stream.handler';
 import { isFfmpegAvailable } from './voice/ffmpeg-check';
 import { setupSwagger } from './swagger/swagger.setup';
 import { assertProductionConfig } from './config/assert-production-config';
-import { streamAuthEnforced, verifyStreamToken } from './twilio/stream-auth';
+import {
+  streamAuthEnforced,
+  verifyStreamToken,
+  type StreamClaims,
+} from './twilio/stream-auth';
 import { csrfMiddleware } from './auth/csrf.middleware';
 import * as WebSocket from 'ws';
 
@@ -41,6 +45,103 @@ const MEDIA_STREAM_MAX_CONNECTIONS = Number(
   process.env.MEDIA_STREAM_MAX_CONNECTIONS || 50,
 );
 const MEDIA_STREAM_MAX_PER_IP = Number(process.env.MEDIA_STREAM_MAX_PER_IP || 8);
+
+type UpgradeRequest = {
+  url?: string;
+  headers?: Record<string, string | string[] | undefined>;
+  socket?: { remoteAddress?: string };
+};
+
+function headerValue(req: UpgradeRequest, name: string): string {
+  const value = req.headers?.[name];
+  if (Array.isArray(value)) return value[0] ?? '';
+  return typeof value === 'string' ? value : '';
+}
+
+/** Query string is often stripped on the upgrade. Azure keeps the original URL in a header. */
+function streamRequestUrl(req: UpgradeRequest): URL {
+  const direct = new URL(req.url || '/', 'http://localhost');
+  if (direct.search) return direct;
+  const original =
+    headerValue(req, 'x-original-url') || headerValue(req, 'x-original-uri');
+  if (!original) return direct;
+  try {
+    const recovered = /^https?:\/\//i.test(original)
+      ? new URL(original)
+      : new URL(original, 'http://localhost');
+    if (recovered.search) {
+      console.log(
+        `[MediaStream] recovered stream query from forwarding header path=${recovered.pathname} token=${recovered.searchParams.has('token') ? 'present' : 'missing'}`,
+      );
+      return recovered;
+    }
+  } catch {
+    // Malformed forwarding header. Fall back to the upgrade path.
+  }
+  return direct;
+}
+
+function frameText(data: unknown): string | null {
+  if (typeof data === 'string') return data;
+  if (Buffer.isBuffer(data)) return data.toString('utf8');
+  return null;
+}
+
+/**
+ * The upgrade URL lost its query string. Twilio still sends the signed token in
+ * the first `start` message when TwiML included `<Parameter name="token">`.
+ * Frames received before the handler is attached are replayed so `start` is not lost.
+ */
+function acceptStreamFromStart(
+  ws: WebSocket,
+  mediaHandler: MediaStreamHandlerService,
+): void {
+  const buffered: Array<Buffer | string> = [];
+  let timer: NodeJS.Timeout;
+  const onMessage = (data: Buffer | string) => {
+    buffered.push(data);
+    const text = frameText(data);
+    if (!text) return;
+    let msg: { event?: string; start?: { customParameters?: Record<string, string> } };
+    try {
+      msg = JSON.parse(text);
+    } catch {
+      return;
+    }
+    if (msg?.event !== 'start') return;
+    clearTimeout(timer);
+    ws.off('message', onMessage);
+    const params = msg.start?.customParameters ?? {};
+    const startToken = typeof params.token === 'string' ? params.token : '';
+    const claims: StreamClaims | null = verifyStreamToken(startToken);
+    if (!claims) {
+      console.error(
+        `[MediaStream] closing websocket 1008 unauthorized reason=start-token-${startToken ? 'invalid' : 'missing'}`,
+      );
+      ws.close(1008, 'unauthorized');
+      return;
+    }
+    console.log(
+      `[MediaStream] websocket authorized from start parameters patientId=${claims.patientId} appointmentId=${claims.appointmentId ?? 'none'} mode=${claims.mode ?? 'eva'}`,
+    );
+    mediaHandler.handleConnection(
+      ws,
+      claims.patientId,
+      claims.mode ?? null,
+      claims.appointmentId ?? null,
+    );
+    for (const frame of buffered) ws.emit('message', frame);
+  };
+  timer = setTimeout(() => {
+    ws.off('message', onMessage);
+    console.error(
+      '[MediaStream] closing websocket 1008 unauthorized reason=start-token-timeout',
+    );
+    ws.close(1008, 'unauthorized');
+  }, 10_000);
+  ws.on('close', () => clearTimeout(timer));
+  ws.on('message', onMessage);
+}
 
 async function bootstrap() {
   assertProductionConfig();
@@ -168,26 +269,33 @@ async function bootstrap() {
     ws.on('message', bumpIdle);
     ws.on('close', () => idle && clearTimeout(idle));
 
-    const url = new URL(req.url || '', 'http://localhost');
+    const url = streamRequestUrl(req);
     const token = url.searchParams.get('token');
     const claims = verifyStreamToken(token);
     if (streamAuthEnforced()) {
-      if (!claims) {
+      if (claims) {
+        console.log(
+          `[MediaStream] websocket authorized path=${url.pathname} patientId=${claims.patientId} appointmentId=${claims.appointmentId ?? 'none'} mode=${claims.mode ?? 'eva'}`,
+        );
+        mediaHandler.handleConnection(
+          ws,
+          claims.patientId,
+          claims.mode ?? null,
+          claims.appointmentId ?? null,
+        );
+        return;
+      }
+      if (token) {
         console.error(
-          `[MediaStream] closing websocket 1008 unauthorized path=${url.pathname} token=${token ? 'present' : 'missing'} patientId=${url.searchParams.get('patientId') ?? url.searchParams.get('PatientID') ?? 'none'} appointmentId=${url.searchParams.get('appointmentId') ?? 'none'}`,
+          `[MediaStream] closing websocket 1008 unauthorized path=${url.pathname} token=invalid patientId=${url.searchParams.get('patientId') ?? url.searchParams.get('PatientID') ?? 'none'} appointmentId=${url.searchParams.get('appointmentId') ?? 'none'}`,
         );
         ws.close(1008, 'unauthorized');
         return;
       }
-      console.log(
-        `[MediaStream] websocket authorized path=${url.pathname} patientId=${claims.patientId} appointmentId=${claims.appointmentId ?? 'none'} mode=${claims.mode ?? 'eva'}`,
+      console.warn(
+        `[MediaStream] stream query missing on upgrade path=${url.pathname}; waiting for Twilio start parameters`,
       );
-      mediaHandler.handleConnection(
-        ws,
-        claims.patientId,
-        claims.mode ?? null,
-        claims.appointmentId ?? null,
-      );
+      acceptStreamFromStart(ws, mediaHandler);
       return;
     }
 
