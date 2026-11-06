@@ -19,10 +19,10 @@ export function assertProductionConfig(): void {
   if (missing.length) {
     throw new Error(`Missing required production configuration: ${missing.join(', ')}`);
   }
-  // const backend = process.env.BACKEND_URL?.trim() ?? '';
-  // if (!backend.startsWith('https://')) {
-  //   throw new Error('BACKEND_URL must use https in production');
-  // }
+  const backend = process.env.BACKEND_URL?.trim() ?? '';
+  if (!backend.startsWith('https://')) {
+    throw new Error('BACKEND_URL must use https in production');
+  }
   const sabrina = process.env.SABRINA_API_URL?.trim() ?? '';
   if (!sabrina.startsWith('https://')) {
     throw new Error('SABRINA_API_URL must use https in production');

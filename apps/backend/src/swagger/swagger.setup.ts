@@ -2,7 +2,8 @@ import { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 /**
- * OpenAPI (Swagger) UI at `/api` — interactive "Try it out" for all HTTP routes.
+ * OpenAPI (Swagger) UI at `/api` in production only.
+ * Service routes stay at the host root (`/auth`, `/payees`, …) with no `/api` prefix.
  *
  * **Authentication**
  * - **JWT** (`jwt-auth`): Obtain via `POST /auth/login`. Click **Authorize**, choose **jwt-auth**, paste `Bearer <access_token>`.

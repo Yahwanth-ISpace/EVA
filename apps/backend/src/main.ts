@@ -49,11 +49,29 @@ async function bootstrap() {
   app.use(urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());
   app.use(csrfMiddleware);
-  app.use(
-    helmet({
-      contentSecurityPolicy: process.env.NODE_ENV === 'production',
-    }),
-  );
+  const isProduction = process.env.NODE_ENV === 'production';
+  app.use((req, res, next) => {
+    const path = req.path || '/';
+    const swaggerDocs =
+      isProduction &&
+      (path === '/api' ||
+        path.startsWith('/api/') ||
+        path === '/api-json' ||
+        path === '/api-yaml');
+    return helmet({
+      contentSecurityPolicy: swaggerDocs
+        ? {
+            directives: {
+              defaultSrc: ["'self'"],
+              scriptSrc: ["'self'", "'unsafe-inline'"],
+              styleSrc: ["'self'", "'unsafe-inline'"],
+              imgSrc: ["'self'", 'data:', 'https://validator.swagger.io'],
+              fontSrc: ["'self'", 'data:'],
+            },
+          }
+        : isProduction,
+    })(req, res, next);
+  });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -63,7 +81,7 @@ async function bootstrap() {
   );
   const http = app.getHttpAdapter().getInstance();
   http.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
-  if (process.env.NODE_ENV !== 'production') {
+  if (isProduction) {
     setupSwagger(app);
   }
   app.enableCors({
