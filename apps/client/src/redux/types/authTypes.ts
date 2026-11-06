@@ -14,7 +14,7 @@ export interface User {
   firstName: string | null;
   lastName: string | null;
   email: string;
-  dob: Date | null;
+  dob?: Date | null;
   role: UserRole;
   payeeId?: string; // present only if role === OPERATOR
 }

@@ -38,10 +38,7 @@ export const getPayeeById = (id: string) => async (dispatch: any) =>
   withLoading<Payee>(
     dispatch,
     () =>
-      api.get(`/payees/${id}`).then((res: any) => {
-        console.log(res);
-        return res as Payee;
-      }),
+      api.get(`/payees/${id}`).then((res: any) => res as Payee),
     payeeTypes.FETCH_PAYEE_SUCCESS,
     "Payee fetched",
     payeeTypes.FETCH_PAYEE_FAILURE

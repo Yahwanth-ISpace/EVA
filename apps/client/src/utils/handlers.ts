@@ -6,14 +6,9 @@ import type { Dispatch } from "redux";
 export const handleSuccess = (
   dispatch: Dispatch,
   type: string,
-  message: string,
-  showToast: boolean = false
+  message: string
 ) => {
   dispatch({ type, payload: message });
-  if (showToast) {
-    // toast.success(message);
-    console.log("SUCCESS:", message); // Replace with toast if using
-  }
 };
 
 export const handleError = (

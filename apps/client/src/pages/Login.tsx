@@ -1,6 +1,6 @@
 // src/pages/Login.tsx
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 
 import { login } from "../redux/actions/authActions";
@@ -11,6 +11,7 @@ import RightCoverBg from "../assets/reception.png";
 
 export default function Login() {
   const navigate = useNavigate();
+  const notice = (useLocation().state as { notice?: string } | null)?.notice;
   const dispatch = useDispatch<AppDispatch>();
 
   const { loading, error } = useSelector((state: RootState) => state.authState);
@@ -124,6 +125,12 @@ export default function Login() {
                 <span className="text-gray-700 font-medium">Remember me</span>
               </label>
             </div>
+
+            {notice && !error && (
+              <p className="text-center text-indigo-700 text-sm font-semibold">
+                {notice}
+              </p>
+            )}
 
             {error && (
               <p className="text-center text-red-600 text-sm font-semibold">

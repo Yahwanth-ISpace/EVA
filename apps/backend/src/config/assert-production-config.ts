@@ -1,6 +1,9 @@
+import { jwtSecret } from './jwt-config';
+
 const REQUIRED_IN_PRODUCTION = [
   'JWT_SECRET',
   'SSN_ENCRYPTION_KEY',
+  'LOGIN_RSA_PRIVATE_KEY',
   'TWILIO_AUTH_TOKEN',
   'TWILIO_ACCOUNT_SID',
   'TWILIO_PHONE_NUMBER',
@@ -14,6 +17,10 @@ const REQUIRED_IN_PRODUCTION = [
 ];
 
 export function assertProductionConfig(): void {
+  jwtSecret();
+  if (process.env.SSN_ENCRYPTION_KEY?.trim() && process.env.SSN_ENCRYPTION_KEY.trim() === process.env.JWT_SECRET?.trim()) {
+    throw new Error('SSN_ENCRYPTION_KEY must not reuse JWT_SECRET');
+  }
   if (process.env.NODE_ENV !== 'production') return;
   const missing = REQUIRED_IN_PRODUCTION.filter((key) => !process.env[key]?.trim());
   if (missing.length) {

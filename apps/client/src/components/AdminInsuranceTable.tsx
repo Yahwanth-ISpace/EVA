@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useDispatch } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { FaSearch } from "react-icons/fa";
@@ -21,7 +21,7 @@ import {
 import { getVerificationFieldRows } from "../utils/verificationDisplay";
 import StatusBadge from "./StatusBadges";
 import { deleteVerification } from "../redux/actions/verificationActions";
-import type { AppDispatch } from "../redux/store";
+import type { AppDispatch, RootState } from "../redux/store";
 
 interface Props {
   records: VerificationRecord[];
@@ -39,6 +39,9 @@ export default function AdminInsuranceTable({
   loading,
 }: Props) {
   const dispatch = useDispatch<AppDispatch>();
+  const isAdmin = useSelector(
+    (state: RootState) => state.authState.user?.role === "ADMIN",
+  );
   const [searchQuery, setSearchQuery] = useState("");
 
   // Latest by default
@@ -376,6 +379,7 @@ export default function AdminInsuranceTable({
                             View details
                             <span className="ml-1.5">→</span>
                           </Link>
+                          {isAdmin && (
                           <button
                             type="button"
                             onClick={() => {
@@ -387,6 +391,7 @@ export default function AdminInsuranceTable({
                           >
                             Delete
                           </button>
+                          )}
                         </td>
                       </tr>
                     );

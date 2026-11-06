@@ -19,12 +19,6 @@ export default function Layout() {
     }
   }, [dispatch, user]);
 
-  useEffect(() => {
-    if (payee) {
-      console.log("Fetched payee:", payee.payerId);
-    }
-  }, [payee]);
-
   // Close chat on ESC key
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {

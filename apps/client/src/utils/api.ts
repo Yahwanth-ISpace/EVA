@@ -73,7 +73,7 @@ const handleResponse = async <T>(
     ) {
       store.dispatch({ type: LOGOUT });
       redirectToSessionExpired();
-    } else if (res.status === 403) {
+    } else if (res.status === 403 && !isPublicAuthRequest(url)) {
       window.location.href = "/unauthorized";
     }
 

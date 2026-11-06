@@ -41,6 +41,39 @@ function corsOrigin():
   return ['http://localhost:5173', 'http://127.0.0.1:5173'];
 }
 
+const API_CSP = {
+  defaultSrc: ["'none'"],
+  frameAncestors: ["'none'"],
+  baseUri: ["'none'"],
+  formAction: ["'none'"],
+};
+
+const SWAGGER_CSP = {
+  defaultSrc: ["'self'"],
+  scriptSrc: ["'self'", "'unsafe-inline'"],
+  styleSrc: ["'self'", "'unsafe-inline'"],
+  imgSrc: ["'self'", 'data:', 'https://validator.swagger.io'],
+  fontSrc: ["'self'", 'data:'],
+  frameAncestors: ["'none'"],
+  objectSrc: ["'none'"],
+  baseUri: ["'self'"],
+};
+
+const PERMISSIONS_POLICY =
+  'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()';
+const FEATURE_POLICY = "camera 'none'; microphone 'none'; geolocation 'none'; payment 'none'; usb 'none'";
+
+function securityHeaders(directives: Record<string, string[]>): Parameters<typeof helmet>[0] {
+  return {
+    contentSecurityPolicy: { useDefaults: false, directives },
+    frameguard: { action: 'deny' },
+    strictTransportSecurity: { maxAge: 31_536_000, includeSubDomains: true, preload: true },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    crossOriginResourcePolicy: { policy: 'same-site' },
+    xXssProtection: false,
+  };
+}
+
 const MEDIA_STREAM_MAX_CONNECTIONS = Number(
   process.env.MEDIA_STREAM_MAX_CONNECTIONS || 50,
 );
@@ -151,6 +184,8 @@ async function bootstrap() {
   app.use(cookieParser());
   app.use(csrfMiddleware);
   const isProduction = process.env.NODE_ENV === 'production';
+  const swaggerHelmet = helmet(securityHeaders(SWAGGER_CSP));
+  const apiHelmet = helmet(securityHeaders(API_CSP));
   app.use((req, res, next) => {
     const path = req.path || '/';
     const swaggerDocs =
@@ -159,19 +194,15 @@ async function bootstrap() {
         path.startsWith('/api/') ||
         path === '/api-json' ||
         path === '/api-yaml');
-    return helmet({
-      contentSecurityPolicy: swaggerDocs
-        ? {
-            directives: {
-              defaultSrc: ["'self'"],
-              scriptSrc: ["'self'", "'unsafe-inline'"],
-              styleSrc: ["'self'", "'unsafe-inline'"],
-              imgSrc: ["'self'", 'data:', 'https://validator.swagger.io'],
-              fontSrc: ["'self'", 'data:'],
-            },
-          }
-        : isProduction,
-    })(req, res, next);
+    res.setHeader('Permissions-Policy', PERMISSIONS_POLICY);
+    res.setHeader('Feature-Policy', FEATURE_POLICY);
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    if (!swaggerDocs && !path.startsWith('/audio')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+    return (swaggerDocs ? swaggerHelmet : apiHelmet)(req, res, next);
   });
   app.useGlobalPipes(
     new ValidationPipe({

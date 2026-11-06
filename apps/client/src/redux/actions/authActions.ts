@@ -1,6 +1,7 @@
 import type { Dispatch } from "redux";
 import { api } from "../../utils/api";
 import { setCsrfToken, tryRefresh } from "../../utils/authSession";
+import { postEncrypted } from "../../utils/credentialCrypto";
 import {
   AUTH_LOADING,
   AUTH_SUCCESS,
@@ -28,11 +29,11 @@ export const login =
   async (dispatch: Dispatch) => {
     dispatch({ type: AUTH_LOADING });
     try {
-      const res = await api.post<LoginResult>("/auth/login", {
-        email,
-        password,
-        rememberMe,
-      });
+      const res = await postEncrypted<LoginResult>(
+        "/auth/login",
+        { email, password },
+        { rememberMe },
+      );
 
       acceptSession(dispatch, res);
       return res;
@@ -74,12 +75,12 @@ export const register =
   async (dispatch: Dispatch) => {
     dispatch({ type: AUTH_LOADING });
     try {
-      const res = await api.post("/auth/register", {
+      const res = await postEncrypted<{ message: string }>("/auth/register", {
         fullName: data.fullName,
         email: data.email,
         password: data.password,
       });
-      dispatch({ type: AUTH_SUCCESS, payload: "Registration successful" });
+      dispatch({ type: AUTH_SUCCESS, payload: res.message });
       return res;
     } catch (err: any) {
       dispatch({ type: AUTH_ERROR, payload: err.message });

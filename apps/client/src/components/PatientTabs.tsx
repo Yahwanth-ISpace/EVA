@@ -128,6 +128,9 @@ export default function PatientTabs() {
   const { verifications, loading: loadingVerifications } = useSelector(
     (state: RootState) => state.verificationsState,
   );
+  const isAdmin = useSelector(
+    (state: RootState) => state.authState.user?.role === "ADMIN",
+  );
 
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("date_desc");
@@ -517,6 +520,7 @@ export default function PatientTabs() {
                           </span>
                         </td>
                         <td className="px-2 py-2 text-center">
+                          {isAdmin && (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -534,6 +538,7 @@ export default function PatientTabs() {
                           >
                             <FaTrashAlt className="w-4 h-4" />
                           </button>
+                          )}
                         </td>
                       </tr>
                     );

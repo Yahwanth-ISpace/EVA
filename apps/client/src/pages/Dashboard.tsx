@@ -6,12 +6,13 @@ import { getVerifications } from "../redux/actions/verificationActions";
 
 import AdminInsuranceTable from "../components/AdminInsuranceTable";
 import AdminAgentsTable from "../components/AdminAgentsTable";
+import AdminAccountsTable from "../components/AdminAccountsTable";
 import Container from "../components/Container";
 import Navbar from "../components/Navbar";
 import PatientTabs from "../components/PatientTabs";
 import type { AppDispatch, RootState } from "../redux/store";
 
-type AdminTab = "appointments" | "verifications" | "agents";
+type AdminTab = "appointments" | "verifications" | "agents" | "accounts";
 
 export default function Dashboard() {
   const dispatch = useDispatch<AppDispatch>();
@@ -103,6 +104,20 @@ export default function Dashboard() {
                     Agents
                   </button>
                   ) : null}
+
+                  {isAdmin ? (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("accounts")}
+                    className={`border-b-2 px-1 pb-3 text-sm font-semibold transition ${
+                      activeTab === "accounts"
+                        ? "border-blue-600 text-blue-600"
+                        : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                    }`}
+                  >
+                    Accounts
+                  </button>
+                  ) : null}
                 </div>
               </div>
 
@@ -134,6 +149,12 @@ export default function Dashboard() {
               {isAdmin && activeTab === "agents" && (
                 <div className="mt-5 flex min-h-0 flex-1 flex-col">
                   <AdminAgentsTable />
+                </div>
+              )}
+
+              {isAdmin && activeTab === "accounts" && (
+                <div className="mt-5 flex min-h-0 flex-1 flex-col">
+                  <AdminAccountsTable />
                 </div>
               )}
             </section>

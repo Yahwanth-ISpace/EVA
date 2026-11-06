@@ -19,6 +19,7 @@ import {
 import { BotTrackerService } from './bot-tracker.service';
 import { BotTrackerDto } from './dto/bot-tracker.dto';
 import { CreateBotTrackerDto } from './dto/create-bot-tracker.dto';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 @ApiTags('bot-trackers')
 @ApiBearerAuth('jwt-auth')
@@ -31,6 +32,7 @@ export class BotTrackerController {
    * Accepts payeeId and callLog in the request body
    */
   @Post()
+  @Roles('ADMIN')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Create bot tracker record asynchronously',
@@ -93,6 +95,7 @@ export class BotTrackerController {
    * Update a tracker record
    */
   @Put(':id')
+  @Roles('ADMIN')
   @ApiOperation({
     summary: 'Update bot tracker record',
     description: 'Updates an existing bot tracker record with new data.',
@@ -113,6 +116,7 @@ export class BotTrackerController {
    * Delete a tracker record
    */
   @Delete(':id')
+  @Roles('ADMIN')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Delete bot tracker record',

@@ -37,7 +37,7 @@ export default function SignUp() {
     const res = await dispatch(
       register({ fullName: fullName.trim(), email, password })
     );
-    if (res) navigate("/login");
+    if (res) navigate("/login", { state: { notice: res.message } });
   };
 
   return (
@@ -49,8 +49,8 @@ export default function SignUp() {
               Create an account
             </h2>
             <p className="text-sm text-gray-500 mt-1 font-medium">
-              Sign up as an operator. An administrator links your patient
-              profile after registration.
+              Request an operator account. An administrator must approve it
+              before you can sign in.
             </p>
           </div>
 
@@ -161,7 +161,7 @@ export default function SignUp() {
               disabled={loading}
               className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-md font-semibold transition shadow-md hover:shadow-lg disabled:opacity-60"
             >
-              {loading ? "Creating account..." : "Sign Up"}
+              {loading ? "Submitting request..." : "Request Access"}
             </button>
           </form>
 

@@ -6,6 +6,7 @@ import {
 
 import { BargeInService } from './barge-in.service';
 import { BargeInDto } from './dto/barge-in.dto';
+import { Roles } from '../auth/decorators/roles.decorator';
 
 @Controller('barge-in')
 export class BargeInController {
@@ -14,6 +15,7 @@ export class BargeInController {
   ) {}
 
   @Post()
+  @Roles('ADMIN')
   async triggerBargeIn(
     @Body() dto: BargeInDto,
   ) {

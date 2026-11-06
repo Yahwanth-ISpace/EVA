@@ -16,14 +16,7 @@ function encryptionKey(): Buffer {
     if (asHex?.length === 32) return asHex;
     return createHash('sha256').update(raw).digest();
   }
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('SSN_ENCRYPTION_KEY is required in production');
-  }
-  const fallback = process.env.JWT_SECRET?.trim();
-  if (!fallback) {
-    throw new Error('Set SSN_ENCRYPTION_KEY or JWT_SECRET before storing an SSN');
-  }
-  return createHash('sha256').update(`eva-ssn:${fallback}`).digest();
+  throw new Error('SSN_ENCRYPTION_KEY is required to store or read an SSN');
 }
 
 /** Encrypt a patient SSN for storage. Legacy plaintext is encrypted on write. */

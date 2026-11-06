@@ -3,7 +3,7 @@ import {
   randomBytes,
 } from 'crypto';
 import {
-  BadRequestException,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -13,9 +13,10 @@ import type { Request, Response } from 'express';
 import { Role } from '../prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { MongoService } from '../mongo/mongo.service';
+import { AuditService } from '../audit/audit.service';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
 import { BCRYPT_ROUNDS } from '../common/security/password';
-import { presentPayee } from '../common/security/ssn';
+import { AccountApprovalService, AccountStatus } from './account-approval.service';
 import {
   REFRESH_COOKIE,
   REFRESH_MS,
@@ -46,6 +47,21 @@ function splitOperatorName(fullName: string): {
   return { firstName, lastName: lastName || null };
 }
 
+export const INVALID_LOGIN_MESSAGE = 'Login failed; invalid email or password.';
+export const REGISTRATION_MESSAGE =
+  'Registration request received. If the email can be registered, an administrator will review it before you can sign in.';
+
+let dummyHashPromise: Promise<string> | undefined;
+function dummyHash(): Promise<string> {
+  dummyHashPromise ??= bcrypt.hash(randomBytes(32).toString('hex'), BCRYPT_ROUNDS);
+  return dummyHashPromise;
+}
+
+function requestMeta(req?: Request) {
+  if (!req) return {};
+  return { ip: req.ip ?? null, userAgent: req.get?.('user-agent') ?? null };
+}
+
 type RefreshDoc = {
   familyId: string;
   userId: string;
@@ -61,48 +77,89 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private mongo: MongoService,
+    private approvals: AccountApprovalService,
+    private audit: AuditService,
   ) {}
 
-  async register(dto: RegisterDto) {
+  /**
+   * Always answers the same way so the response does not reveal whether the
+   * email is already registered. New accounts cannot sign in until approved.
+   */
+  async register(dto: RegisterDto, req?: Request) {
     const db = await this.prisma.client();
-    const existingUser = await db.orm.User.where({ email: dto.email }).first();
+    const email = dto.email.trim().toLowerCase();
+    const existingUser = await this.findByEmailAnyCase(dto.email);
+    const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
 
-    if (existingUser) {
-      throw new BadRequestException('Unable to complete registration');
+    if (!existingUser) {
+      const { firstName, lastName } = splitOperatorName(dto.fullName);
+      const created = await db.orm.User.create({
+        email,
+        password: hashedPassword,
+        role: Role.OPERATOR,
+        dob: null,
+        firstName,
+        lastName,
+      });
+      const user = this.prisma.withIds(created) as { id: string };
+      await this.approvals.setStatus(user.id, AccountStatus.PENDING);
+      await this.audit.record({
+        action: 'auth.register',
+        outcome: 'success',
+        targetId: user.id,
+        ...requestMeta(req),
+      });
+    } else {
+      await this.audit.record({
+        action: 'auth.register',
+        outcome: 'failure',
+        detail: { reason: 'email-exists' },
+        ...requestMeta(req),
+      });
     }
 
-    const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
-    const { firstName, lastName } = splitOperatorName(dto.fullName);
-    const created = await db.orm.User.create({
-      email: dto.email,
-      password: hashedPassword,
-      role: Role.OPERATOR,
-      dob: null,
-      firstName,
-      lastName,
-    });
-    const user = this.prisma.withIds(created);
-
-    return {
-      message: 'User registered successfully',
-      user: {
-        id: user.id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        dob: user.dob,
-        role: user.role,
-      },
-    };
+    return { message: REGISTRATION_MESSAGE };
   }
 
-  async login(dto: LoginDto, res: Response) {
-    const user = await this.findByEmail(dto.email);
-    if (!user) throw new UnauthorizedException('Invalid credentials');
+  async login(dto: LoginDto, res: Response, req?: Request) {
+    const user = await this.findByEmailAnyCase(dto.email);
+    // Compare against a dummy hash for unknown emails so timing does not reveal which accounts exist.
+    const isValid = await bcrypt.compare(dto.password, user?.password ?? (await dummyHash()));
+    if (!user || !isValid) {
+      await this.audit.record({
+        action: 'auth.login',
+        outcome: 'failure',
+        actorId: user?.id ?? null,
+        detail: { reason: 'invalid-credentials' },
+        ...requestMeta(req),
+      });
+      throw new UnauthorizedException(INVALID_LOGIN_MESSAGE);
+    }
 
-    const isValid = await bcrypt.compare(dto.password, user.password);
-    if (!isValid) throw new UnauthorizedException('Invalid credentials');
+    const status = await this.approvals.statusFor(user.id, user.role);
+    if (status !== AccountStatus.APPROVED) {
+      await this.audit.record({
+        action: 'auth.login',
+        outcome: 'denied',
+        actorId: user.id,
+        actorRole: user.role,
+        detail: { reason: `account-${status.toLowerCase()}` },
+        ...requestMeta(req),
+      });
+      throw new ForbiddenException(
+        status === AccountStatus.PENDING
+          ? 'Your account is awaiting administrator approval.'
+          : 'Your account is not active. Contact an administrator.',
+      );
+    }
 
+    await this.audit.record({
+      action: 'auth.login',
+      outcome: 'success',
+      actorId: user.id,
+      actorRole: user.role,
+      ...requestMeta(req),
+    });
     const remember = dto.rememberMe === true;
     return this.issueSession(res, user, remember);
   }
@@ -113,8 +170,15 @@ export class AuthService {
     const rotated = await this.rotateRefresh(presented);
     if (!rotated) throw new UnauthorizedException('Session expired');
     const user = await this.findById(rotated.userId);
-    if (!user) throw new UnauthorizedException('Session expired');
+    if (!user || !(await this.isApproved(user))) {
+      await this.revokeRefresh(rotated.refresh);
+      throw new UnauthorizedException('Session expired');
+    }
     return this.issueSession(res, user, rotated.remember, rotated);
+  }
+
+  private async isApproved(user: SessionUser) {
+    return (await this.approvals.statusFor(user.id, user.role)) === AccountStatus.APPROVED;
   }
 
   async logout(req: Request, res: Response) {
@@ -133,7 +197,7 @@ export class AuthService {
 
   async session(userId: string) {
     const user = await this.findById(userId);
-    if (!user) throw new UnauthorizedException('Session expired');
+    if (!user || !(await this.isApproved(user))) throw new UnauthorizedException('Session expired');
     const csrfToken = randomBytes(32).toString('base64url');
     return { user: this.publicUser(user), csrfToken, setCsrf: csrfToken };
   }
@@ -156,21 +220,16 @@ export class AuthService {
     return { user: this.publicUser(user), csrfToken };
   }
 
+  /** Only what the UI needs. Patient details (DOB, SSN, payer) are fetched on demand. */
   private publicUser(user: SessionUser) {
-    const payee = presentPayee(user.payee ?? null);
+    const payeeId = (user.payee as { id?: string } | null | undefined)?.id;
     return {
       id: user.id,
       firstName: user.firstName,
       lastName: user.lastName,
-      dob: user.dob ?? (payee as { dob?: unknown } | null)?.dob,
       email: user.email,
       role: user.role,
-      ...(user.role === Role.OPERATOR &&
-        payee &&
-        (payee as { id?: string }).id && {
-          payeeId: (payee as { id: string }).id,
-          payee,
-        }),
+      ...(user.role === Role.OPERATOR && payeeId && { payeeId }),
     };
   }
 
@@ -178,6 +237,14 @@ export class AuthService {
     const db = await this.prisma.client();
     const found = await db.orm.User.where({ email }).include('payee').first();
     return found ? (this.prisma.withIds(found) as SessionUser) : null;
+  }
+
+  private async findByEmailAnyCase(email: string): Promise<SessionUser | null> {
+    const trimmed = email.trim();
+    return (
+      (await this.findByEmail(trimmed)) ??
+      (trimmed.toLowerCase() !== trimmed ? await this.findByEmail(trimmed.toLowerCase()) : null)
+    );
   }
 
   private async findById(id: string): Promise<SessionUser | null> {

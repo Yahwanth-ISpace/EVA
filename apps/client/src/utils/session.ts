@@ -65,6 +65,7 @@ export function isPublicAuthRequest(url: string) {
     url.includes("/auth/register") ||
     url.includes("/auth/refresh") ||
     url.includes("/auth/csrf") ||
+    url.includes("/auth/credential-key") ||
     url.includes("/auth/logout")
   );
 }

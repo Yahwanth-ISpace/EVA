@@ -456,14 +456,7 @@ export default function AppointmentDetail() {
   const [saveEligibilitySuccess, setSaveEligibilitySuccess] = useState<
     string | null
   >(null);
-  const [supervisorPhone, setSupervisorPhone] = useState(() => {
-    if (typeof window === "undefined") return "";
-    return (
-      window.localStorage.getItem("eva_supervisor_test_phone") ??
-      import.meta.env.VITE_EVA_SUPERVISOR_TEST_PHONE ??
-      ""
-    );
-  });
+  const [supervisorPhone, setSupervisorPhone] = useState("");
   const liveScrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const liveTailRef = useRef<{ len: number; tailId: string }>({
@@ -673,11 +666,8 @@ export default function AppointmentDetail() {
   }, [appointmentPayeeId]);
 
   useEffect(() => {
-    const trimmed = supervisorPhone.trim();
-    if (trimmed) {
-      window.localStorage.setItem("eva_supervisor_test_phone", trimmed);
-    }
-  }, [supervisorPhone]);
+    window.localStorage.removeItem("eva_supervisor_test_phone");
+  }, []);
 
   const isCallInProgress = useMemo(
     () => isCallActiveFromTrackers(liveLogs),

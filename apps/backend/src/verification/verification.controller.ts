@@ -27,6 +27,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { TranscriptionService } from 'src/transcription/transcription.service';
 import { ApiTokenGuard } from 'src/auth/guards/apiTokenGuard';
 import { Public } from 'src/auth/decorators/public.decorator';
+import { Roles } from 'src/auth/decorators/roles.decorator';
 import { audioUploadOptions } from '../common/upload/audio-upload';
 import {
   VerifyPayeeTranscriptDto,
@@ -209,10 +210,11 @@ export class VerificationController {
 
   @UseGuards(JwtAuthGuard)
   @Delete(':id')
+  @Roles('ADMIN')
   @ApiBearerAuth('jwt-auth')
   @ApiOperation({
     summary: 'Delete a verification',
-    description: 'Available to administrators and operators.',
+    description: 'Administrators only.',
   })
   async delete(@Param('id') id: string) {
     return this.verificationService.delete(id);

@@ -110,9 +110,10 @@ export class AppointmentController {
   }
 
   @Delete(':id')
+  @Roles('ADMIN')
   @ApiOperation({
     summary: 'Delete an appointment',
-    description: 'Available to administrators and operators.',
+    description: 'Administrators only.',
   })
   @ApiParam({ name: 'id', example: 'appointment-uuid-here' })
   remove(@Param('id') id: string) {
