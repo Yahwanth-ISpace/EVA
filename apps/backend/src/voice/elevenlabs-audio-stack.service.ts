@@ -92,6 +92,12 @@ export class ElevenLabsAudioStackService {
       ['-i', 'pipe:0', '-f', 'mulaw', '-ar', '8000', '-ac', '1', '-'],
       { stdio: ['pipe', 'pipe', 'pipe'] },
     );
+    // Without this listener, a missing ffmpeg binary (ENOENT) is an unhandled
+    // 'error' event and crashes the whole backend process. Destroying stdout
+    // with the error makes the loop below throw, so speak() can fall back.
+    child.on('error', (err) => {
+      child.stdout?.destroy(new Error(getFfmpegErrorMessage(err, '')));
+    });
     mp3Stream.pipe(child.stdin);
     child.stdin.on('error', () => {}); // EPIPE when ffmpeg closes early
     child.stderr?.on('data', () => {}); // discard ffmpeg progress to stderr
