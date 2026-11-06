@@ -2,12 +2,8 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 
 function origin(url: string | undefined): string | null {
-  if (!url) return null;
-  try {
-    return new URL(url).origin;
-  } catch {
-    return null;
-  }
+  const match = url?.trim().match(/^(https?:\/\/[^/\s]+)/i);
+  return match ? match[1] : null;
 }
 
 function contentSecurityPolicy(apiOrigins: string[]): string {
@@ -44,7 +40,7 @@ const baseSecurityHeaders = {
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), "VITE_");
+  const env = loadEnv(mode, ".", "VITE_");
   const apiOrigins = [
     ...new Set(
       [env.VITE_BACKEND_URL, env.VITE_CHAT_BACKEND_URL]
