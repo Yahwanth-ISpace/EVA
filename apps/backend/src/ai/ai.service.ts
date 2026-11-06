@@ -13,7 +13,7 @@ import {
 } from '../twilio/media-stream/guardrails';
 
 /** Stable Pro model for conversation, extraction, and classification. */
-const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-pro';
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 
 /**
  * Gemini 2.5+ can use an internal "thinking" step before responding, which adds latency.
