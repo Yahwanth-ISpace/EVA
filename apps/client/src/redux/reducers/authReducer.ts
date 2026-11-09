@@ -37,14 +37,21 @@ export const authReducer = (
       };
 
     case LOGIN_SUCCESS: {
-      const user = sanitizeStoredUser(action.payload.user);
+      const raw = action.payload?.user;
+      if (!raw?.role) {
+        return {
+          ...loggedOutAuthState(),
+          error: "Session could not be verified",
+        };
+      }
+      const user = sanitizeStoredUser(raw);
       return {
         ...state,
         loading: false,
         user,
         token: null,
         isAuthenticated: true,
-        role: action.payload.user.role,
+        role: user.role,
         error: null,
       };
     }

@@ -8,7 +8,6 @@ import {
   AUTH_ERROR,
   LOGIN_SUCCESS,
   LOGOUT,
-  type User,
 } from "../types/authTypes";
 import { persistor } from "../store";
 import { redirectToLogin } from "../../utils/session";
@@ -16,7 +15,6 @@ import { redirectToLogin } from "../../utils/session";
 export interface LoginResult {
   profileToken?: string | null;
   csrfToken?: string;
-  user?: User;
 }
 
 async function acceptSession(dispatch: Dispatch, res: LoginResult) {
