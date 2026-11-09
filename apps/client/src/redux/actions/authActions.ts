@@ -1,7 +1,7 @@
 import type { Dispatch } from "redux";
 import { api } from "../../utils/api";
 import { setCsrfToken, tryRefresh } from "../../utils/authSession";
-import { postEncrypted } from "../../utils/credentialCrypto";
+import { postEncrypted, verifyProfile } from "../../utils/credentialCrypto";
 import {
   AUTH_LOADING,
   AUTH_SUCCESS,
@@ -14,14 +14,18 @@ import { persistor } from "../store";
 import { redirectToLogin } from "../../utils/session";
 
 export interface LoginResult {
-  user?: User;
+  profileToken?: string | null;
   csrfToken?: string;
+  user?: User;
 }
 
-function acceptSession(dispatch: Dispatch, res: LoginResult) {
+async function acceptSession(dispatch: Dispatch, res: LoginResult) {
+  if (!res.profileToken) throw new Error("Session could not be verified");
+  const user = await verifyProfile(res.profileToken);
   if (res.csrfToken) setCsrfToken(res.csrfToken);
-  dispatch({ type: LOGIN_SUCCESS, payload: res });
+  dispatch({ type: LOGIN_SUCCESS, payload: { user } });
   dispatch({ type: AUTH_SUCCESS, payload: "Login successful" });
+  return user;
 }
 
 export const login =
@@ -35,8 +39,8 @@ export const login =
         { rememberMe },
       );
 
-      acceptSession(dispatch, res);
-      return res;
+      const user = await acceptSession(dispatch, res);
+      return { user };
     } catch (err: any) {
       dispatch({ type: AUTH_ERROR, payload: err.message });
       throw err;
@@ -49,8 +53,8 @@ export const restoreSession = () => async (dispatch: Dispatch) => {
     const session = await api.get<LoginResult>("/auth/session", undefined, {
       redirectOn401: false,
     });
-    if (!session.user) throw new Error("No session");
-    acceptSession(dispatch, session);
+    if (!session.profileToken) throw new Error("No session");
+    await acceptSession(dispatch, session);
   };
   try {
     await load();

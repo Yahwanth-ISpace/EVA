@@ -19,7 +19,12 @@ interface PublicKeyResponse {
   key: string;
 }
 
-let cachedKey: Promise<{ kid: string; key: CryptoKey }> | null = null;
+let cachedKey: Promise<{ kid: string; encryptKey: CryptoKey; verifyKey: CryptoKey }> | null = null;
+
+const fromBase64Url = (value: string) => {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4);
+  return fromBase64(padded);
+};
 
 const toBase64 = (buf: ArrayBuffer | Uint8Array) => {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
@@ -40,14 +45,22 @@ function serverKey() {
       if (res.alg !== "RSA-OAEP-256+A256GCM" || !res.key || !res.kid) {
         throw new Error("Unsupported credential encryption key");
       }
-      const key = await crypto.subtle.importKey(
+      const spki = fromBase64(res.key);
+      const encryptKey = await crypto.subtle.importKey(
         "spki",
-        fromBase64(res.key),
+        spki,
         { name: "RSA-OAEP", hash: "SHA-256" },
         false,
         ["encrypt"],
       );
-      return { kid: res.kid, key };
+      const verifyKey = await crypto.subtle.importKey(
+        "spki",
+        spki,
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+        false,
+        ["verify"],
+      );
+      return { kid: res.kid, encryptKey, verifyKey };
     })
     .catch((err) => {
       cachedKey = null;
@@ -66,7 +79,7 @@ export async function encryptCredentials(
   if (!globalThis.crypto?.subtle) {
     throw new Error("Secure connection required to sign in");
   }
-  const { kid, key: rsaKey } = await serverKey();
+  const { kid, encryptKey: rsaKey } = await serverKey();
   const aesKey = await crypto.subtle.generateKey(
     { name: "AES-GCM", length: 256 },
     true,
@@ -88,6 +101,55 @@ export async function encryptCredentials(
     key: toBase64(wrapped),
     iv: toBase64(iv),
     data: toBase64(sealed),
+  };
+}
+
+export interface VerifiedProfile {
+  id: string;
+  email: string;
+  role: "ADMIN" | "OPERATOR";
+  firstName: string | null;
+  lastName: string | null;
+  payeeId?: string;
+}
+
+/** Accepts a profile only when the server's key signed it and the role was not edited. */
+export async function verifyProfile(token: string): Promise<VerifiedProfile> {
+  const dot = token.indexOf(".");
+  if (dot <= 0) throw new Error("Session could not be verified");
+  const body = token.slice(0, dot);
+  const signature = token.slice(dot + 1);
+  const { verifyKey } = await serverKey();
+  const valid = await crypto.subtle.verify(
+    "RSASSA-PKCS1-v1_5",
+    verifyKey,
+    fromBase64Url(signature),
+    new TextEncoder().encode(body),
+  );
+  if (!valid) throw new Error("Session could not be verified");
+
+  let profile: Record<string, unknown>;
+  try {
+    profile = JSON.parse(new TextDecoder().decode(fromBase64Url(body))) as Record<string, unknown>;
+  } catch {
+    throw new Error("Session could not be verified");
+  }
+  if (
+    (profile.role !== "ADMIN" && profile.role !== "OPERATOR") ||
+    typeof profile.id !== "string" ||
+    typeof profile.email !== "string" ||
+    typeof profile.exp !== "number" ||
+    profile.exp <= Date.now()
+  ) {
+    throw new Error("Session could not be verified");
+  }
+  return {
+    id: profile.id,
+    email: profile.email,
+    role: profile.role,
+    firstName: typeof profile.firstName === "string" ? profile.firstName : null,
+    lastName: typeof profile.lastName === "string" ? profile.lastName : null,
+    ...(typeof profile.payeeId === "string" ? { payeeId: profile.payeeId } : {}),
   };
 }
 

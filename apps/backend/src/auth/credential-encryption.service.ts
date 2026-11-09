@@ -7,6 +7,7 @@ import {
   generateKeyPairSync,
   KeyObject,
   privateDecrypt,
+  sign,
 } from 'crypto';
 import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { MongoService } from '../mongo/mongo.service';
@@ -72,6 +73,17 @@ export class CredentialEncryptionService implements OnModuleInit {
 
   publicKey() {
     return { kid: this.keyId, alg: CREDENTIAL_ALGORITHM, key: this.publicSpki };
+  }
+
+  /**
+   * Signs a profile the browser can check with the public key from
+   * `GET /auth/credential-key`. Editing the role after the response leaves
+   * the server breaks this signature.
+   */
+  signProfile(payload: Record<string, unknown>): string {
+    const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+    const signature = sign('sha256', Buffer.from(body, 'utf8'), this.privateKey).toString('base64url');
+    return `${body}.${signature}`;
   }
 
   /** Decrypt an envelope, reject stale or replayed ones, and return the inner JSON object. */

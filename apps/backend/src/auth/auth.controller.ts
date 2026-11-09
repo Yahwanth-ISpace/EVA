@@ -99,10 +99,10 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const userId = req.user?.userId;
-    if (!userId) return { user: null };
+    if (!userId) return { profileToken: null };
     const result = await this.authService.session(userId);
     setCsrfCookie(res, result.setCsrf);
-    return { user: result.user, csrfToken: result.csrfToken };
+    return { profileToken: result.profileToken, csrfToken: result.csrfToken };
   }
 
   private async decryptInto<T extends object>(

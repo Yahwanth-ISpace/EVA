@@ -17,7 +17,9 @@ import { AuditService } from '../audit/audit.service';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
 import { BCRYPT_ROUNDS } from '../common/security/password';
 import { AccountApprovalService, AccountStatus } from './account-approval.service';
+import { CredentialEncryptionService } from './credential-encryption.service';
 import {
+  ACCESS_MS,
   REFRESH_COOKIE,
   REFRESH_MS,
   REMEMBER_MS,
@@ -79,6 +81,7 @@ export class AuthService {
     private mongo: MongoService,
     private approvals: AccountApprovalService,
     private audit: AuditService,
+    private credentials: CredentialEncryptionService,
   ) {}
 
   /**
@@ -199,7 +202,7 @@ export class AuthService {
     const user = await this.findById(userId);
     if (!user || !(await this.isApproved(user))) throw new UnauthorizedException('Session expired');
     const csrfToken = randomBytes(32).toString('base64url');
-    return { user: this.publicUser(user), csrfToken, setCsrf: csrfToken };
+    return { profileToken: this.signedProfile(user), csrfToken, setCsrf: csrfToken };
   }
 
   private async issueSession(
@@ -209,7 +212,7 @@ export class AuthService {
     existing?: { refresh: string; familyId: string },
   ) {
     const access = this.jwtService.sign(
-      { sub: user.id, email: user.email, role: user.role },
+      { sub: user.id, email: user.email },
       { expiresIn: '15m' },
     );
     const refresh = existing?.refresh ?? randomBytes(32).toString('base64url');
@@ -217,7 +220,15 @@ export class AuthService {
     if (!existing) await this.storeRefresh(user.id, refresh, familyId, remember);
     const csrfToken = randomBytes(32).toString('base64url');
     setAuthCookies(res, access, refresh, csrfToken, remember);
-    return { user: this.publicUser(user), csrfToken };
+    return { profileToken: this.signedProfile(user), csrfToken };
+  }
+
+  /** Role is signed here and loaded from the database on every API call. */
+  private signedProfile(user: SessionUser) {
+    return this.credentials.signProfile({
+      ...this.publicUser(user),
+      exp: Date.now() + ACCESS_MS,
+    });
   }
 
   /** Only what the UI needs. Patient details (DOB, SSN, payer) are fetched on demand. */

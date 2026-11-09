@@ -125,14 +125,14 @@ export default function AdminAccountsTable() {
 
       <div className={ADMIN_TABLE_SCROLL}>
         <div className={ADMIN_TABLE_CARD}>
-          <table className="min-w-full text-sm">
+          <table className="w-full table-fixed text-sm">
             <thead>
               <tr className={ADMIN_TABLE_HEAD_ROW}>
                 <th className={`${ADMIN_TABLE_HEAD_CELL} text-left`}>Name</th>
                 <th className={`${ADMIN_TABLE_HEAD_CELL} text-left`}>Email</th>
-                <th className={`${ADMIN_TABLE_HEAD_CELL} text-left`}>Role</th>
-                <th className={`${ADMIN_TABLE_HEAD_CELL} text-left`}>Status</th>
-                <th className={`${ADMIN_TABLE_HEAD_CELL} text-left`}>Actions</th>
+                <th className={`${ADMIN_TABLE_HEAD_CELL} w-24 text-left`}>Role</th>
+                <th className={`${ADMIN_TABLE_HEAD_CELL} w-36 text-left`}>Status</th>
+                <th className={`${ADMIN_TABLE_HEAD_CELL} w-40 text-left`}>Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -152,21 +152,34 @@ export default function AdminAccountsTable() {
                 sorted.map((account) => {
                   const isSelf = account.id === currentUserId;
                   const busy = busyId === account.id;
+                  const name =
+                    [account.firstName, account.lastName].filter(Boolean).join(" ") || "—";
                   return (
                     <tr key={account.id} className="text-slate-700">
-                      <td className="px-4 py-3 font-medium text-slate-800">
-                        {[account.firstName, account.lastName].filter(Boolean).join(" ") || "—"}
+                      <td className="overflow-hidden px-3 py-3 font-medium text-slate-800">
+                        <span className="block truncate" title={name}>
+                          {name}
+                        </span>
                       </td>
-                      <td className="px-4 py-3">{account.email}</td>
-                      <td className="px-4 py-3">{account.role}</td>
-                      <td className="px-4 py-3">
+                      <td className="overflow-hidden px-3 py-3">
+                        <span className="block truncate" title={account.email}>
+                          {account.email}
+                        </span>
+                      </td>
+                      <td className="overflow-hidden px-3 py-3">
+                        <span className="block truncate" title={account.role}>
+                          {account.role}
+                        </span>
+                      </td>
+                      <td className="overflow-hidden px-3 py-3">
                         <span
-                          className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-semibold ${STATUS_STYLE[account.status]}`}
+                          className={`inline-block max-w-full truncate rounded-full border px-2.5 py-0.5 text-xs font-semibold ${STATUS_STYLE[account.status]}`}
+                          title={STATUS_LABEL[account.status]}
                         >
                           {STATUS_LABEL[account.status]}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="whitespace-nowrap px-3 py-3">
                         <div className="flex flex-wrap gap-2">
                           {account.status !== "APPROVED" && (
                             <button
