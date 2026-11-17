@@ -184,12 +184,14 @@ async function bootstrap() {
   app.use(cookieParser());
   app.use(csrfMiddleware);
   const isProduction = process.env.NODE_ENV === 'production';
+  // Swagger examples include phones, identifiers, and credential shapes. Keep the HTML docs off production and UAT.
+  const swaggerEnabled = !isProduction;
   const swaggerHelmet = helmet(securityHeaders(SWAGGER_CSP));
   const apiHelmet = helmet(securityHeaders(API_CSP));
   app.use((req, res, next) => {
     const path = req.path || '/';
     const swaggerDocs =
-      isProduction &&
+      swaggerEnabled &&
       (path === '/api' ||
         path.startsWith('/api/') ||
         path === '/api-json' ||
@@ -213,9 +215,15 @@ async function bootstrap() {
   );
   const http = app.getHttpAdapter().getInstance();
   http.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
-  if (isProduction) {
+  if (swaggerEnabled) {
     setupSwagger(app);
   }
+  app.use((req, res, next) => {
+    if (req.method !== 'OPTIONS') return next();
+    if (req.headers.origin && req.headers['access-control-request-method']) return next();
+    res.setHeader('Allow', 'GET, HEAD, POST, PUT, PATCH, DELETE');
+    return res.status(405).json({ message: 'Method not allowed' });
+  });
   app.enableCors({
     origin: corsOrigin(),
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],

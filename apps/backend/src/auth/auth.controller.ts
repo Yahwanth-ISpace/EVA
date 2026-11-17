@@ -15,6 +15,7 @@ import {
 import { Public } from './decorators/public.decorator';
 import { setCsrfCookie } from './cookies';
 import { CredentialEncryptionService } from './credential-encryption.service';
+import { CaptchaService } from './captcha.service';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -23,7 +24,16 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly credentials: CredentialEncryptionService,
+    private readonly captcha: CaptchaService,
   ) {}
+
+  @Public()
+  @Get('captcha')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Login captcha image' })
+  loginCaptcha() {
+    return this.captcha.issue();
+  }
 
   @Public()
   @Get('credential-key')
@@ -67,6 +77,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
+    this.captcha.assert(body.captchaToken, body.captchaAnswer);
     const dto = await this.decryptInto(LoginDto, body.credentials, { rememberMe: body.rememberMe });
     return this.authService.login(dto, res, req);
   }

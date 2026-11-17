@@ -27,14 +27,20 @@ async function acceptSession(dispatch: Dispatch, res: LoginResult) {
 }
 
 export const login =
-  (email: string, password: string, rememberMe = false) =>
+  (
+    email: string,
+    password: string,
+    rememberMe = false,
+    captchaToken = "",
+    captchaAnswer = "",
+  ) =>
   async (dispatch: Dispatch) => {
     dispatch({ type: AUTH_LOADING });
     try {
       const res = await postEncrypted<LoginResult>(
         "/auth/login",
         { email, password },
-        { rememberMe },
+        { rememberMe, captchaToken, captchaAnswer },
       );
 
       const user = await acceptSession(dispatch, res);

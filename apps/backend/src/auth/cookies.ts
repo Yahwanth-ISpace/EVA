@@ -37,16 +37,16 @@ export function setAuthCookies(
   const refreshMs = remember ? REMEMBER_MS : REFRESH_MS;
   res.cookie(ACCESS_COOKIE, access, baseOptions(ACCESS_MS, true));
   res.cookie(REFRESH_COOKIE, refresh, { ...baseOptions(refreshMs, true), path: '/auth' });
-  res.cookie(CSRF_COOKIE, csrf, baseOptions(refreshMs, false));
+  res.cookie(CSRF_COOKIE, csrf, baseOptions(refreshMs, true));
 }
 
 export function setCsrfCookie(res: Response, csrf: string) {
-  res.cookie(CSRF_COOKIE, csrf, baseOptions(REMEMBER_MS, false));
+  res.cookie(CSRF_COOKIE, csrf, baseOptions(REMEMBER_MS, true));
 }
 
 export function clearAuthCookies(res: Response) {
   const expired = baseOptions(0, true);
   res.clearCookie(ACCESS_COOKIE, { ...expired, path: '/' });
   res.clearCookie(REFRESH_COOKIE, { ...expired, path: '/auth' });
-  res.clearCookie(CSRF_COOKIE, { ...baseOptions(0, false), path: '/' });
+  res.clearCookie(CSRF_COOKIE, { ...baseOptions(0, true), path: '/' });
 }

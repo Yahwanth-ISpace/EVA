@@ -8,6 +8,7 @@ import { MongoModule } from '../mongo/mongo.module';
 import { JwtStrategy } from './jwt.strategy';
 import { AccountApprovalService } from './account-approval.service';
 import { CredentialEncryptionService } from './credential-encryption.service';
+import { CaptchaService } from './captcha.service';
 import { JWT_ALGORITHM, JWT_AUDIENCE, JWT_ISSUER, jwtSecret } from '../config/jwt-config';
 
 @Module({
@@ -32,7 +33,7 @@ import { JWT_ALGORITHM, JWT_AUDIENCE, JWT_ISSUER, jwtSecret } from '../config/jw
       }),
     }),
   ],
-  providers: [AuthService, JwtStrategy, AccountApprovalService, CredentialEncryptionService],
+  providers: [AuthService, JwtStrategy, AccountApprovalService, CredentialEncryptionService, CaptchaService],
   controllers: [AuthController],
   exports: [AuthService, AccountApprovalService],
 })

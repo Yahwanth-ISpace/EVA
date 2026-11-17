@@ -3,7 +3,7 @@ import { ApiProperty } from '@nestjs/swagger';
 
 /** Body for POST /bot-trackers — live call lines are stored as JSON (usually a string). */
 export class CreateBotTrackerDto {
-  @ApiProperty({ example: '90560891', description: 'External PatientID (same as media-stream `patientId` / legacy `payeeId`).' })
+  @ApiProperty({ example: 'patient-1001', description: 'External PatientID (same as media-stream `patientId` / legacy `payeeId`).' })
   @IsNotEmpty()
   @IsString()
   PatientID: string;

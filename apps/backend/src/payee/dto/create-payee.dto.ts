@@ -33,7 +33,10 @@ export class CreatePayeeDto {
   @Type(() => Date)
   dob?: Date;
 
-  @ApiPropertyOptional({ example: '987-65-4321' })
+  @ApiPropertyOptional({
+    description: 'Accepted on write only. Responses never include a full SSN.',
+    example: '***-**-1234',
+  })
   @IsOptional()
   @IsString()
   ssn?: string;

@@ -1,5 +1,24 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import type { IncomingMessage, ServerResponse } from "http";
+
+function rejectOptions(): Plugin {
+  const reject = (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+    if (req.method !== "OPTIONS") return next();
+    res.statusCode = 405;
+    res.setHeader("Allow", "GET, HEAD");
+    res.end();
+  };
+  return {
+    name: "reject-options",
+    configureServer(server) {
+      server.middlewares.use(reject);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(reject);
+    },
+  };
+}
 
 function origin(url: string | undefined): string | null {
   const match = url?.trim().match(/^(https?:\/\/[^/\s]+)/i);
@@ -50,7 +69,7 @@ export default defineConfig(({ mode }) => {
   ];
 
   return {
-    plugins: [react()],
+    plugins: [react(), rejectOptions()],
     build: {
       outDir: "dist",
       emptyOutDir: true,

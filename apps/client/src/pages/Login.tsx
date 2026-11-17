@@ -1,10 +1,11 @@
 // src/pages/Login.tsx
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 
 import { login } from "../redux/actions/authActions";
 import type { RootState, AppDispatch } from "../redux/store";
+import { api } from "../utils/api";
 
 import Logo from "../assets/logo1.png";
 import RightCoverBg from "../assets/reception.png";
@@ -21,6 +22,30 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [passwordError, setPasswordError] = useState("");
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaImage, setCaptchaImage] = useState("");
+  const [captchaAnswer, setCaptchaAnswer] = useState("");
+  const [captchaError, setCaptchaError] = useState("");
+
+  const loadCaptcha = async () => {
+    try {
+      const res = await api.get<{ token: string; image: string }>(
+        "/auth/captcha",
+        undefined,
+        { redirectOn401: false },
+      );
+      setCaptchaToken(res.token);
+      setCaptchaImage(res.image);
+      setCaptchaAnswer("");
+      setCaptchaError("");
+    } catch {
+      setCaptchaError("Captcha could not be loaded");
+    }
+  };
+
+  useEffect(() => {
+    void loadCaptcha();
+  }, []);
 
   const validatePassword = (pwd: string) => {
     if (!pwd) {
@@ -36,14 +61,20 @@ export default function Login() {
     if (!validatePassword(password)) {
       return;
     }
+    if (!captchaToken || !captchaAnswer.trim()) {
+      setCaptchaError("Enter the characters from the image");
+      return;
+    }
 
     try {
-      const res = await dispatch(login(email, password, rememberMe));
+      const res = await dispatch(
+        login(email, password, rememberMe, captchaToken, captchaAnswer.trim()),
+      );
       if (res?.user) {
         navigate("/dashboard");
       }
     } catch {
-      // error is already in Redux store
+      void loadCaptcha();
     }
   };
 
@@ -111,6 +142,43 @@ export default function Login() {
               </div>
               {passwordError && (
                 <p className="text-red-600 text-sm mt-1">{passwordError}</p>
+              )}
+            </div>
+
+            <div>
+              <label htmlFor="captcha" className="block text-sm font-medium mb-1">
+                Captcha
+              </label>
+              <div className="flex items-center gap-3 mb-2">
+                {captchaImage ? (
+                  <img
+                    alt="Captcha"
+                    className="h-[52px] w-[160px] rounded border border-gray-300"
+                    src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(captchaImage)}`}
+                  />
+                ) : (
+                  <div className="h-[52px] w-[160px] rounded border border-gray-300 bg-gray-100" />
+                )}
+                <button
+                  type="button"
+                  onClick={() => void loadCaptcha()}
+                  className="text-indigo-600 text-sm font-semibold hover:underline"
+                >
+                  Refresh
+                </button>
+              </div>
+              <input
+                id="captcha"
+                type="text"
+                autoComplete="off"
+                placeholder="Enter the characters"
+                value={captchaAnswer}
+                onChange={(e) => setCaptchaAnswer(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 placeholder-gray-400"
+                required
+              />
+              {captchaError && (
+                <p className="text-red-600 text-sm mt-1">{captchaError}</p>
               )}
             </div>
 

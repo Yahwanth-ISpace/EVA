@@ -9,13 +9,13 @@ export class BotTrackerDto {
 
   @ApiProperty({
     description: 'External patient id (stored as payeeId in DB; same as stream payeeId query param)',
-    example: '90560891',
+    example: 'patient-1001',
   })
   PatientID: string;
 
   @ApiProperty({
     description: 'Same as PatientID (dashboard polling key)',
-    example: '90560891',
+    example: 'patient-1001',
   })
   payeeId: string;
 

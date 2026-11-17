@@ -217,7 +217,10 @@ export class AuthService {
     );
     const refresh = existing?.refresh ?? randomBytes(32).toString('base64url');
     const familyId = existing?.familyId ?? randomBytes(16).toString('hex');
-    if (!existing) await this.storeRefresh(user.id, refresh, familyId, remember);
+    if (!existing) {
+      await this.revokeUserSessions(user.id);
+      await this.storeRefresh(user.id, refresh, familyId, remember);
+    }
     const csrfToken = randomBytes(32).toString('base64url');
     setAuthCookies(res, access, refresh, csrfToken, remember);
     return { profileToken: this.signedProfile(user), csrfToken };
@@ -329,6 +332,12 @@ export class AuthService {
   private async revokeRefresh(presented: string) {
     const col = await this.sessionCollection();
     await col.deleteOne({ tokenHash: this.tokenHash(presented) });
+  }
+
+  /** A new login replaces every other session for that account. */
+  private async revokeUserSessions(userId: string) {
+    const col = await this.sessionCollection();
+    await col.deleteMany({ userId });
   }
 
 }

@@ -139,6 +139,16 @@ export class EncryptedLoginDto {
   @IsOptional()
   @IsBoolean()
   rememberMe?: boolean;
+
+  @ApiProperty({ description: 'Token from GET /auth/captcha' })
+  @IsString()
+  @MaxLength(1024)
+  captchaToken: string;
+
+  @ApiProperty({ description: 'Characters shown in the captcha image' })
+  @IsString()
+  @MaxLength(12)
+  captchaAnswer: string;
 }
 
 export class EncryptedRegisterDto {

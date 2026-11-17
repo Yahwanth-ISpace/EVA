@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 /**
- * OpenAPI (Swagger) UI at `/api` in production only.
+ * OpenAPI (Swagger) UI at `/api` outside production only.
  * Service routes stay at the host root (`/auth`, `/payees`, …) with no `/api` prefix.
  *
  * **Authentication**
