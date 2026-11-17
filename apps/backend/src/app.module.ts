@@ -25,6 +25,8 @@ import { SchedulerModule } from './schedular/scheduler.module';
 import { BotTrackerModule } from './bot-tracker/bot-tracker.module';
 import { BargeInModule } from './barge-in/barge-in.module';
 import { AgentModule } from './agent/agent.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 
 @Module({
   imports: [
@@ -49,7 +51,9 @@ import { AgentModule } from './agent/agent.module';
     BargeInModule,
     AgentModule,
   ],
+  controllers: [AppController],
   providers: [
+    AppService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
