@@ -2,12 +2,9 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
 function rejectOptions(): Plugin {
-  const reject = (
-    req: { method?: string },
-    res: { statusCode: number; setHeader(name: string, value: string): void; end(): void },
-    next: () => void,
-  ) => {
-    if (req.method !== "OPTIONS") {
+  const reject = (req: unknown, res: { statusCode: number; setHeader(name: string, value: string): void; end(): void }, next: () => void) => {
+    const method = (req as { method?: string }).method;
+    if (method !== "OPTIONS") {
       next();
       return;
     }
@@ -18,10 +15,10 @@ function rejectOptions(): Plugin {
   return {
     name: "reject-options",
     configureServer(server) {
-      server.middlewares.use(reject);
+      server.middlewares.use((req, res, next) => reject(req, res, next));
     },
     configurePreviewServer(server) {
-      server.middlewares.use(reject);
+      server.middlewares.use((req, res, next) => reject(req, res, next));
     },
   };
 }
