@@ -1,10 +1,16 @@
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
-import type { IncomingMessage, ServerResponse } from "http";
 
 function rejectOptions(): Plugin {
-  const reject = (req: IncomingMessage, res: ServerResponse, next: () => void) => {
-    if (req.method !== "OPTIONS") return next();
+  const reject = (
+    req: { method?: string },
+    res: { statusCode: number; setHeader(name: string, value: string): void; end(): void },
+    next: () => void,
+  ) => {
+    if (req.method !== "OPTIONS") {
+      next();
+      return;
+    }
     res.statusCode = 405;
     res.setHeader("Allow", "GET, HEAD");
     res.end();
